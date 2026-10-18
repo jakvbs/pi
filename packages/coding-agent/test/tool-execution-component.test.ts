@@ -128,6 +128,28 @@ describe("ToolExecutionComponent parity", () => {
 		expect(component.render(120)).toEqual([]);
 	});
 
+	test("hidden tool rows take no layout space until shown again", () => {
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-hidden",
+			{},
+			{ hidden: true },
+			undefined,
+			createFakeTui(),
+			process.cwd(),
+		);
+		component.updateResult({ content: [{ type: "text", text: "done" }], isError: false });
+		expect(component.render(120)).toEqual([]);
+
+		component.setHidden(false);
+		const rendered = stripAnsi(component.render(120).join("\n"));
+		expect(rendered).toContain("custom_tool");
+		expect(rendered).toContain("done");
+
+		component.setHidden(true);
+		expect(component.render(120)).toEqual([]);
+	});
+
 	test("uses built-in rendering for built-in overrides without custom renderers", () => {
 		const overrideDefinition: ToolDefinition = {
 			...createBaseToolDefinition("edit"),

@@ -52,6 +52,10 @@ const APP_KEYBINDINGS = {
 		defaultKeys: "ctrl+t",
 		description: "Toggle thinking blocks",
 	},
+	"app.tools.toggle": {
+		defaultKeys: windowsKeybindings ? "alt+t" : "shift+ctrl+t",
+		description: "Toggle tool call visibility",
+	},
 	"app.session.toggleNamedFilter": {
 		defaultKeys: "ctrl+n",
 		description: "Toggle named session filter",
