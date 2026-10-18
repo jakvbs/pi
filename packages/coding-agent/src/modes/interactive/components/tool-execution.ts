@@ -26,6 +26,8 @@ export interface ToolExecutionOptions {
 	showImages?: boolean;
 	imageWidthCells?: number;
 	outputPad?: number;
+	/** Hide the whole row (call and result) while keeping its state, so it can be shown again. */
+	hidden?: boolean;
 }
 
 export class ToolExecutionComponent extends Container {
@@ -63,6 +65,7 @@ export class ToolExecutionComponent extends Container {
 		durationMs?: number;
 	};
 	private hideComponent = false;
+	private hidden: boolean;
 
 	constructor(
 		toolName: string,
@@ -81,6 +84,7 @@ export class ToolExecutionComponent extends Container {
 		this.showImages = options.showImages ?? true;
 		this.imageWidthCells = options.imageWidthCells ?? 60;
 		this.outputPad = options.outputPad ?? 1;
+		this.hidden = options.hidden ?? false;
 		this.ui = ui;
 		this.cwd = cwd;
 
@@ -226,6 +230,11 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	setHidden(hidden: boolean): void {
+		this.hidden = hidden;
+		this.invalidate();
+	}
+
 	override invalidate(): void {
 		super.invalidate();
 		this.updateDisplay();
@@ -233,7 +242,7 @@ export class ToolExecutionComponent extends Container {
 
 	override render(width: number): string[] {
 		if (this.argsPending) this.updateDisplay();
-		if (this.hideComponent) {
+		if (this.hidden || this.hideComponent) {
 			return [];
 		}
 
@@ -266,6 +275,7 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override handleMouse(event: TuiMouseEvent): ReturnType<Container["handleMouse"]> {
+		if (this.hidden) return undefined;
 		if (!this.hasRendererDefinition() || this.getRenderShell() !== "self") return super.handleMouse(event);
 		if (event.y <= 0 || event.y > this.selfRenderHeight) return undefined;
 		return this.selfRenderContainer.handleMouse({
