@@ -176,7 +176,7 @@ import {
 } from "./components/status-indicator.ts";
 import { ThemedText } from "./components/themed-text.ts";
 import { ThinkingSelectorComponent } from "./components/thinking-selector.ts";
-import { ToolExecutionComponent } from "./components/tool-execution.ts";
+import { type ToolDisplayMode, ToolExecutionComponent } from "./components/tool-execution.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
@@ -511,7 +511,10 @@ export class InteractiveMode {
 	private pendingTools = new Map<string, ToolExecutionComponent>();
 
 	// Tool output expansion state
-	private toolOutputExpanded = false;
+	private toolDisplayMode: ToolDisplayMode = "collapsed";
+	private get toolOutputExpanded(): boolean {
+		return this.toolDisplayMode === "expanded";
+	}
 
 	// Thinking block visibility state
 	private hideThinkingBlock = false;
@@ -3504,7 +3507,7 @@ export class InteractiveMode {
 									this.ui,
 									this.sessionManager.getCwd(),
 								);
-								component.setExpanded(this.toolOutputExpanded);
+								component.setDisplayMode(this.toolDisplayMode);
 								this.chatContainer.addChild(component);
 								this.pendingTools.set(content.id, component);
 							} else {
@@ -3584,7 +3587,7 @@ export class InteractiveMode {
 						this.ui,
 						this.sessionManager.getCwd(),
 					);
-					component.setExpanded(this.toolOutputExpanded);
+					component.setDisplayMode(this.toolDisplayMode);
 					this.chatContainer.addChild(component);
 					this.pendingTools.set(event.toolCallId, component);
 				}
@@ -4029,7 +4032,7 @@ export class InteractiveMode {
 							this.ui,
 							this.sessionManager.getCwd(),
 						);
-						component.setExpanded(this.toolOutputExpanded);
+						component.setDisplayMode(this.toolDisplayMode);
 						this.chatContainer.addChild(component);
 
 						if (message.stopReason === "aborted" || message.stopReason === "error") {
@@ -4554,25 +4557,37 @@ export class InteractiveMode {
 	}
 
 	private toggleToolOutputExpansion(): void {
-		this.setToolsExpanded(!this.toolOutputExpanded);
+		const next: Record<ToolDisplayMode, ToolDisplayMode> = {
+			collapsed: "expanded",
+			expanded: "compact",
+			compact: "collapsed",
+		};
+		this.setToolDisplayMode(next[this.toolDisplayMode]);
 	}
 
 	private setToolsExpanded(expanded: boolean): void {
-		if (expanded === this.toolOutputExpanded) return;
+		this.setToolDisplayMode(expanded ? "expanded" : "collapsed");
+	}
 
-		this.toolOutputExpanded = expanded;
+	private setToolDisplayMode(mode: ToolDisplayMode): void {
+		if (mode === this.toolDisplayMode) return;
+
+		this.toolDisplayMode = mode;
+		const expanded = this.toolOutputExpanded;
 		const activeHeader = this.customHeader ?? this.builtInHeader;
 		if (isExpandable(activeHeader)) {
 			activeHeader.setExpanded(expanded);
 		}
 		for (const container of [this.loadedResourcesContainer, this.chatContainer]) {
 			for (const child of container.children) {
-				if (isExpandable(child)) {
+				if (child instanceof ToolExecutionComponent) {
+					child.setDisplayMode(mode);
+				} else if (isExpandable(child)) {
 					child.setExpanded(expanded);
 				}
 			}
 		}
-		this.showStatus(`Tool output: ${expanded ? "expanded" : "collapsed"}`);
+		this.showStatus(`Tool output: ${mode}`);
 	}
 
 	/** Update rendered assistant messages without rebuilding live tool components. */
