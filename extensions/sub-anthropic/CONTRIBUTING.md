@@ -6,19 +6,14 @@ code in this repository.
 ## Setup
 
 ```bash
-git clone git@github.com:spksoft/pi-sub-anthropic.git
-cd pi-sub-anthropic
-npm install          # or: npm run link:dev  — reuse an installed pi's node_modules
-pi install "$PWD"    # load this checkout into pi; the path is recorded, nothing is copied
+npm install --ignore-scripts   # in the pi monorepo root; this package has no node_modules of its own
+pi install "$PWD"              # from extensions/sub-anthropic; the path is recorded, nothing is copied
 ```
 
-`npm run link:dev` symlinks `node_modules` at an installed pi, which is an
-alternative to `npm install` for type resolution. Point it at a package
-explicitly if auto-detection fails:
-
-```bash
-npm run link:dev -- /path/to/@earendil-works/pi-coding-agent
-```
+`npm run typecheck` checks against the fork's `packages/*/src` through the root
+`tsconfig.json` paths, and `npm test` loads them through
+`packages/coding-agent/src/experimental/source-resolver.ts`, so both see the pi
+this extension runs on.
 
 `pi remove "$PWD"` unloads it again; `/reload` in a running pi picks up edits.
 
@@ -38,19 +33,18 @@ There are no runtime npm dependencies. The Messages API is spoken directly over
 | `oauth.ts` | OAuth login/refresh (PKCE, callback port 54545) + bootstrap identity |
 | `stream.ts` | Messages streaming: headers, token clamp, tool prefixing, SSE parsing, system-prompt relocation |
 | `fingerprint.ts` | pinned wire constants, beta profiles, billing header, XXH64, `cch` patch |
-| `wire-test.ts` | 66 assertions against a mock Anthropic HTTP server; no credentials, no network |
+| `wire-test.ts` | assertions against a mock Anthropic HTTP server; no credentials, no network |
 | `compare-bun.ts` / `verify-xxhash.ts` | XXH64 conformance (vs bun native / canonical vectors) |
 | `diagnostics/*.ts` | one-off probes that need a **live** credential; not part of `npm test` |
-| `scripts/link-dev.mjs` | symlinks `node_modules` at an installed pi |
 
 ## Tests
 
 ```bash
-npm run test          # wire-test.ts   -> 66 passed, 0 failed
+npm run test          # wire-test.ts   -> 0 failed
 npm run test:xxhash   # canonical XXH64 vectors, seed 0
 npm run test:bun      # 836/836 match bun's native xxHash64  (needs bun)
 npm run test:all      # all three
-npm run typecheck     # tsc --noEmit, 0 errors
+npm run typecheck     # tsc --noEmit against the fork's packages/*/src, 0 errors
 ```
 
 `wire-test.ts` starts a local HTTP server impersonating the Messages API, points
@@ -83,14 +77,15 @@ not part of `npm test`.
    tools, cloak `metadata.user_id`, relocate pi's system prompt into a leading
    `<system-reminder>` user turn. API-key requests keep the full ceiling and the
    prompt in `system`. Tests assert both paths.
-4. **TypeScript style is constrained by `tsconfig.json`**: `erasableSyntaxOnly`
-   (no enums, namespaces, parameter properties), `verbatimModuleSyntax`
-   (`import type` for types), explicit `./foo.ts` import specifiers,
-   `noUnusedLocals`/`noUnusedParameters`. Tabs for indentation.
+4. **TypeScript style is constrained by `tsconfig.json`**, which extends the
+   monorepo root config: `erasableSyntaxOnly` (no enums, namespaces, parameter
+   properties), `verbatimModuleSyntax` (`import type` for types), explicit
+   `./foo.ts` import specifiers. Tabs for indentation.
 5. **No `@ts-ignore` / `@ts-expect-error`.** The tree currently has zero; keep it
    that way.
-6. **Zero runtime dependencies.** Only `typescript` and `@types/node` as
-   devDependencies, `@earendil-works/*` as peers. Do not add runtime packages.
+6. **Zero dependencies of its own.** `@earendil-works/*` are peers. Typecheck
+   and tests resolve them, `typescript` and `@types/node` from the monorepo root
+   `node_modules` and the fork's `packages/*/src`. Do not add packages.
 
 ## Changing wire behaviour
 

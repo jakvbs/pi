@@ -12,12 +12,11 @@
     ]
   },
   "scripts": {
-    "test": "node --experimental-strip-types wire-test.ts",
+    "test": "node --experimental-strip-types --import ../../packages/coding-agent/src/experimental/source-resolver.ts wire-test.ts",
     "test:xxhash": "node --experimental-strip-types verify-xxhash.ts",
     "test:bun": "bun compare-bun.ts",
     "test:all": "npm run test && npm run test:xxhash && npm run test:bun",
-    "typecheck": "tsc --noEmit",
-    "link:dev": "node scripts/link-dev.mjs"
+    "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=22.6.0"
@@ -25,10 +24,6 @@
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*"
-  },
-  "devDependencies": {
-    "@types/node": "22.20.1",
-    "typescript": "6.0.3"
   },
   "keywords": [
     "pi",

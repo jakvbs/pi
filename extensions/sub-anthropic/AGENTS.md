@@ -15,9 +15,11 @@ its own provider id, its own `auth.json` entry, its own env vars.
 
 Copied from the `jakvbs/pi-sub-anthropic` fork (branch `fix/refusal-diagnostics`,
 commit `bbefba5`) of `spksoft/pi-sub-anthropic`, without git history. It is a
-standalone package outside the root npm workspaces: it has its own
-`package-lock.json`, is `private`, is not published, and no CI runs it. pi loads
-it by path from `settings.json` `packages`. Upstream changes are ported by hand.
+standalone package outside the root npm workspaces with no dependencies or
+lockfile of its own: typecheck and tests use the monorepo root `node_modules`
+and the fork's `packages/*/src`. It is `private`, is not published, and no CI
+runs it. pi loads it by path from `settings.json` `packages`. Upstream changes
+are ported by hand.
 
 Docs are split by audience: `README.md` is user-facing only (install, use, env
 vars, troubleshooting), `docs/internals.md` holds the design rationale and the
@@ -32,20 +34,18 @@ its fix), and `CONTRIBUTING.md` holds setup, tests and hard rules. Read `docs/in
 | `stream.ts` | Messages streaming over `fetch`: headers, 64k clamp, tool prefixing, SSE parsing, system-prompt relocation |
 | `fingerprint.ts` | pinned omp wire constants, beta profiles, billing header, pure-BigInt XXH64, `cch` patch |
 | `oauth.ts` | OAuth login/refresh (PKCE, callback port 54545) + bootstrap identity |
-| `wire-test.ts` | 66 assertions against a mock Anthropic HTTP server; no credentials, no network |
+| `wire-test.ts` | assertions against a mock Anthropic HTTP server; no credentials, no network |
 | `compare-bun.ts` / `verify-xxhash.ts` | XXH64 conformance (vs bun native / canonical vectors) |
 | `diagnostics/*.ts` | one-off probes that need a **live** credential; not part of `npm test` |
-| `scripts/link-dev.mjs` | symlinks `node_modules` at an installed pi |
 
 ## Commands
 
 ```bash
-npm test          # wire-test.ts  -> expect "66 passed, 0 failed"
+npm test          # wire-test.ts  -> expect "0 failed"
 npm run test:xxhash
 npm run test:bun  # needs bun
 npm run test:all
-npm run typecheck # tsc --noEmit, must stay at 0 errors
-npm run link:dev  # alternative to npm install for type resolution
+npm run typecheck # tsc --noEmit against the fork's packages/*/src, must stay at 0 errors
 ```
 
 Everything runs under `node --experimental-strip-types` (Node >= 22.6). There is
@@ -65,14 +65,15 @@ Everything runs under `node --experimental-strip-types` (Node >= 22.6). There is
    tools, cloak `metadata.user_id`, relocate pi's system prompt into a leading
    `<system-reminder>` user turn. API-key requests keep the full ceiling and the
    prompt in `system`. Tests assert both paths.
-4. **TypeScript style is constrained by `tsconfig.json`**: `erasableSyntaxOnly`
-   (no enums, namespaces, parameter properties), `verbatimModuleSyntax`
-   (`import type` for types), explicit `./foo.ts` import specifiers,
-   `noUnusedLocals`/`noUnusedParameters`. Tabs for indentation.
+4. **TypeScript style is constrained by `tsconfig.json`**, which extends the
+   monorepo root config: `erasableSyntaxOnly` (no enums, namespaces, parameter
+   properties), `verbatimModuleSyntax` (`import type` for types), explicit
+   `./foo.ts` import specifiers. Tabs for indentation.
 5. **No `@ts-ignore` / `@ts-expect-error`.** The tree currently has zero; keep it
    that way.
-6. **Zero runtime dependencies.** Only `typescript` and `@types/node` as
-   devDependencies, `@earendil-works/*` as peers. Do not add runtime packages.
+6. **Zero dependencies of its own.** `@earendil-works/*` are peers. Typecheck
+   and tests resolve them, `typescript` and `@types/node` from the monorepo root
+   `node_modules` and the fork's `packages/*/src`. Do not add packages.
 
 ## Changing wire behaviour
 
