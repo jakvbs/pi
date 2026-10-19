@@ -18,9 +18,14 @@ function userMessage(id: string): TestEntry {
 	return rawMessage(id, TEXT);
 }
 
-function assistantMessage(id: string): TestEntry {
+function assistantMessage(id: string, totalTokens?: number): TestEntry {
 	return rawMessage(id, TEXT, {
-		message: { role: "assistant", content: [{ type: "text", text: TEXT }], stopReason: "end_turn" },
+		message: {
+			role: "assistant",
+			content: [{ type: "text", text: TEXT }],
+			stopReason: "end_turn",
+			...(totalTokens === undefined ? {} : { usage: { totalTokens } }),
+		},
 	});
 }
 
@@ -141,6 +146,28 @@ describe("turn_end memory activation", () => {
 		expect(draft.summary).toContain("[aaaaaaaaaaaa] 2026-05-02T10:00:00.000Z [medium] Observation aaaaaaaaaaaa");
 		expect(ctx.ui.notify).toHaveBeenCalledWith(
 			"Observational memory: activated memory over ~600 source tokens; ~200 kept as history",
+			"info",
+		);
+	});
+
+	it("counts the history in provider tokens when assistant replies carry usage", async () => {
+		// Estimated at 600 tokens, but the provider reports 300 tokens per message after a0.
+		const entries = [
+			userMessage("u0"),
+			assistantMessage("a0", 1_000),
+			userMessage("u1"),
+			assistantMessage("a1", 1_600),
+			toolResultMessage("t1"),
+			assistantMessage("a2", 2_200),
+			coverage("om-a2", "a2", "aaaaaaaaaaaa"),
+		];
+		const { run, ctx } = setup({ entries, compactAfterTokens: 1_000 });
+
+		const [draft] = (await run()).entries;
+
+		expect(draft.firstKeptEntryId).toBe("a2");
+		expect(ctx.ui.notify).toHaveBeenCalledWith(
+			"Observational memory: activated memory over ~1,100 source tokens; ~300 kept as history",
 			"info",
 		);
 	});

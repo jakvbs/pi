@@ -446,6 +446,38 @@ function validAssistantContextTokens(entry) {
   if (msg.role !== "assistant" || msg.stopReason === "aborted" || msg.stopReason === "error") return void 0;
   return contextTokensFromUsage(msg.usage);
 }
+function scaleSegment(tokens, start, end, measured) {
+  let estimated = 0;
+  for (let i = start; i <= end; i++) estimated += tokens[i];
+  if (estimated === 0) {
+    tokens[end] = measured;
+    return;
+  }
+  for (let i = start; i <= end; i++) tokens[i] = tokens[i] * measured / estimated;
+}
+function measuredSourceTokens(entries) {
+  const tokens = entries.map((entry) => isSourceEntry(entry) ? estimateEntryTokens(entry) : 0);
+  let baseline;
+  let segmentStart = 0;
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry.type === "compaction" || entry.type === "context_edit") {
+      baseline = void 0;
+      continue;
+    }
+    const usage = validAssistantContextTokens(entry);
+    if (usage === void 0) continue;
+    if (baseline !== void 0 && usage >= baseline) scaleSegment(tokens, segmentStart, i, usage - baseline);
+    baseline = usage;
+    segmentStart = i + 1;
+  }
+  return tokens;
+}
+function sumTokensAfterIndex(tokens, index) {
+  let total = 0;
+  for (let i = Math.max(0, index + 1); i < tokens.length; i++) total += tokens[i];
+  return Math.round(total);
+}
 function realContextTokensAfterCompaction(entries, compactionIdx) {
   for (let i = compactionIdx + 1; i < entries.length; i++) {
     const t = validAssistantContextTokens(entries[i]);
@@ -484,17 +516,16 @@ function compactionRangeStartIndex(entries) {
   return firstKeptIndex === -1 ? compactionIndex + 1 : firstKeptIndex;
 }
 function rawTokensSinceLastCompaction(entries) {
-  return rawTokensAfterIndex(entries, compactionRangeStartIndex(entries) - 1);
+  return sumTokensAfterIndex(measuredSourceTokens(entries), compactionRangeStartIndex(entries) - 1);
 }
 function observedTokensSinceLastCompaction(entries) {
   const start = compactionRangeStartIndex(entries);
   const coverageIndex2 = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
   if (coverageIndex2 < start) return 0;
+  const tokens = measuredSourceTokens(entries);
   let total = 0;
-  for (let i = start; i <= coverageIndex2; i++) {
-    if (isSourceEntry(entries[i])) total += estimateEntryTokens(entries[i]);
-  }
-  return total;
+  for (let i = start; i <= coverageIndex2; i++) total += tokens[i];
+  return Math.round(total);
 }
 function unobservedSourceSpanBefore(entries, cutIndex) {
   const coverageIndex2 = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
@@ -2049,23 +2080,24 @@ function registerCompactionHook(pi, runtime) {
 // src/hooks/activation.ts
 var ACTIVATION_KEEP_RECENT_RATIO = 0.2;
 var ACTIVATION_BLOCK_AFTER_RATIO = 1.2;
-function keepRecentCutIndex(entries, rangeStart, keepRecentTokens) {
+function keepRecentCutIndex(entries, tokens, rangeStart, keepRecentTokens) {
   let kept = 0;
   for (let i = entries.length - 1; i > rangeStart; i--) {
-    if (isSourceEntry(entries[i])) kept += estimateEntryTokens(entries[i]);
+    kept += tokens[i];
     if (kept >= keepRecentTokens) return findCutPointAtOrBefore(entries, i, rangeStart + 1);
   }
   return -1;
 }
 function planActivation(entries, keepRecentTokens) {
+  const tokens = measuredSourceTokens(entries);
   const rangeStart = compactionRangeStartIndex(entries);
-  const tailTokens = rawTokensAfterIndex(entries, rangeStart - 1);
-  const proposed = keepRecentCutIndex(entries, rangeStart, keepRecentTokens);
+  const tailTokens = sumTokensAfterIndex(tokens, rangeStart - 1);
+  const proposed = keepRecentCutIndex(entries, tokens, rangeStart, keepRecentTokens);
   if (proposed === -1) return { retainedTokens: tailTokens };
   const resolution = resolveCompactionCut(entries, entries[proposed].id, { maxRetainedTokens: Number.POSITIVE_INFINITY });
   if (resolution.kind === "uncovered") return { resolution, retainedTokens: tailTokens };
   const cutIndex = entryIndexForId(entries, resolution.cut.firstKeptEntryId);
-  return { resolution, retainedTokens: rawTokensAfterIndex(entries, cutIndex - 1) };
+  return { resolution, retainedTokens: sumTokensAfterIndex(tokens, cutIndex - 1) };
 }
 function branch(ctx) {
   return ctx.sessionManager.getBranch();
@@ -2076,7 +2108,7 @@ async function activate(pi, runtime, event, ctx) {
   let entries = branch(ctx);
   const contextWindow = typeof ctx.model?.contextWindow === "number" ? ctx.model.contextWindow : void 0;
   const threshold = resolveCompactAfterTokens(runtime.config, contextWindow);
-  const tailTokens = rawTokensAfterIndex(entries, compactionRangeStartIndex(entries) - 1);
+  const tailTokens = rawTokensSinceLastCompaction(entries);
   if (tailTokens < threshold) return void 0;
   const keepRecentTokens = Math.floor(threshold * ACTIVATION_KEEP_RECENT_RATIO);
   const blockAfterTokens = Math.floor(threshold * ACTIVATION_BLOCK_AFTER_RATIO);

@@ -6,6 +6,7 @@ import {
 	isSourceEntry,
 	latestCoverageIndex,
 	latestCoverageMarkerId,
+	measuredSourceTokens,
 	rawTokensAfterIndex,
 	rawTokensSinceDropCoverage,
 	rawTokensSinceLastCompaction,
@@ -22,10 +23,26 @@ import {
 	observationsDroppedEntry,
 	observationsRecordedEntry,
 	oldV2ObservationEntry,
+	rawMessage,
 	reflection,
 	reflectionsRecordedEntry,
 	textCustomMessage,
 } from "./fixtures/session.ts";
+
+/** 400 characters, which Pi estimates as 100 tokens. */
+const TEXT = "x".repeat(400);
+
+function assistantWithUsage(id: string, totalTokens: number, stopReason = "stop") {
+	return rawMessage(id, TEXT, {
+		message: { role: "assistant", content: [{ type: "text", text: TEXT }], stopReason, usage: { totalTokens } },
+	});
+}
+
+function toolResult(id: string) {
+	return rawMessage(id, TEXT, {
+		message: { role: "toolResult", toolCallId: `call-${id}`, toolName: "bash", content: [{ type: "text", text: TEXT }] },
+	});
+}
 
 describe("session-ledger V3 progress helpers", () => {
 	it("detects only raw/source entries as source entries", () => {
@@ -128,6 +145,46 @@ describe("session-ledger V3 progress helpers", () => {
 		expect(() => rawTokensSinceObservationCoverage(entries)).not.toThrow();
 		expect(rawTokensSinceObservationCoverage(entries)).toBe(3);
 		expect(latestCoverageIndex(entries, V3_REFLECTIONS_RECORDED)).toBe(-1);
+	});
+
+	it("weights source entries by provider usage growth between assistant replies", () => {
+		const entries = [
+			rawMessage("u0", TEXT),
+			assistantWithUsage("a0", 1_000),
+			toolResult("t0"),
+			observationsRecordedEntry("om-1", { observations: [observation("aaaaaaaaaaaa")], coversUpToId: "t0" }),
+			assistantWithUsage("a1", 1_500),
+			rawMessage("u1", TEXT),
+		];
+
+		// Before the first usage and after the last one there is no baseline: local estimate.
+		expect(measuredSourceTokens(entries)).toEqual([100, 100, 250, 0, 250, 100]);
+		expect(rawTokensSinceLastCompaction(entries)).toBe(800);
+	});
+
+	it("keeps the local estimate across a compaction and when the provider context shrank", () => {
+		const entries = [
+			assistantWithUsage("a0", 5_000),
+			compactionEntry("cmp-1", { firstKeptEntryId: "a0" }),
+			rawMessage("u1", TEXT),
+			assistantWithUsage("a1", 900),
+			toolResult("t1"),
+			assistantWithUsage("a2", 1_300),
+			toolResult("t2"),
+			assistantWithUsage("a3", 1_000),
+		];
+
+		expect(measuredSourceTokens(entries)).toEqual([100, 0, 100, 100, 200, 200, 100, 100]);
+	});
+
+	it("does not anchor on aborted or failed assistant replies", () => {
+		const entries = [
+			assistantWithUsage("a0", 1_000),
+			assistantWithUsage("a1", 99_000, "error"),
+			assistantWithUsage("a2", 1_600),
+		];
+
+		expect(measuredSourceTokens(entries)).toEqual([100, 300, 300]);
 	});
 
 	it("counts raw tokens since the latest Pi compaction without throwing on old memory details", () => {

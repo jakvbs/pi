@@ -34,7 +34,7 @@ flowchart TD
     Reflector[Reflector model call<br/>append om.reflections.recorded]
     Dropper[Dropper model call<br/>append om.observations.dropped]
 
-    ActivateDue{raw tokens since compaction<br/>≥ compactAfterTokens?}
+    ActivateDue{source tokens since compaction<br/>≥ compactAfterTokens?}
     Activate[cut at the observer frontier<br/>return a compaction entry]
 
     Fold[fold/project V3 ledger]
@@ -202,11 +202,15 @@ It skips when:
 - `passive` is true;
 - the turn was aborted or ended in an error;
 - an earlier `turn_end` handler already proposed a compaction entry;
-- estimated source-entry tokens after the latest compaction boundary are below `compactAfterTokens`;
+- source-entry tokens after the latest compaction boundary are below `compactAfterTokens`;
 - no cut can fold an observed source entry, or no memory record fits the summary budget.
 
 The count starts at `firstKeptEntryId` of the latest compaction. Memory ledger
-entries and compaction metadata contribute zero.
+entries and compaction metadata contribute zero. Source entries are weighted in
+provider tokens by `measuredSourceTokens`: the usage growth between two
+consecutive assistant replies, spread over the entries between them; entries no
+usage brackets keep the local estimate. The keep-recent and 1.2× retained
+budgets below use the same weights.
 
 The cut keeps the newest `floor(compactAfterTokens * 0.2)` source tokens and is
 then moved back with `resolveCompactionCut` so it never passes the first
