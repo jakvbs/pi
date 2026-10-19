@@ -16,7 +16,7 @@ import { type BashOperations, createBashToolDefinition } from "../src/core/tools
 import { createReadTool, createReadToolDefinition } from "../src/core/tools/read.ts";
 import { withBuiltInRenderers } from "../src/core/tools/renderers/index.ts";
 import { createWriteToolDefinition } from "../src/core/tools/write.ts";
-import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
+import { ToolExecutionComponent, TranscriptContainer } from "../src/modes/interactive/components/tool-execution.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
@@ -63,6 +63,7 @@ describe("ToolExecutionComponent parity", () => {
 			process.cwd(),
 		);
 		component.setDisplayMode("compact");
+		component.setCompactGroupStart(false);
 		expect(component.render(120).map(stripAnsi)).toEqual([" ○ bash bun test --run 界界界"]);
 		component.markExecutionStarted();
 		component.updateResult({ content: [{ type: "text", text: "partial output" }], isError: false }, true);
@@ -112,10 +113,63 @@ describe("ToolExecutionComponent parity", () => {
 			);
 			component.updateResult({ content: [{ type: "text", text: "hidden output" }], isError: false });
 			component.setDisplayMode("compact");
+			component.setCompactGroupStart(false);
 			expect(component.render(120).map(stripAnsi)).toEqual([' ✓ lookup query="test"']);
 			component.setExpanded(true);
 			expect(stripAnsi(component.render(120).join("\n"))).toContain("hidden output");
 		}
+	});
+
+	test("transcript separates a run of compact rows from other blocks, but not rows within the run", () => {
+		const row = (id: string, command: string) => {
+			const component = new ToolExecutionComponent(
+				"bash",
+				id,
+				{ command },
+				{},
+				undefined,
+				createFakeTui(),
+				process.cwd(),
+			);
+			component.updateResult({ content: [{ type: "text", text: `${command} output` }], isError: false });
+			component.setDisplayMode("compact");
+			return component;
+		};
+		const transcript = new TranscriptContainer();
+		const second = row("b", "second");
+		transcript.addChild(new Text("user prompt", 0, 0));
+		transcript.addChild(row("a", "first"));
+		transcript.addChild(new Text("", 0, 0));
+		transcript.addChild(second);
+		transcript.addChild(new Text("assistant reply", 0, 0));
+		transcript.addChild(row("c", "third"));
+
+		expect(transcript.render(80).map((line) => stripAnsi(line).trimEnd())).toEqual([
+			"user prompt",
+			"",
+			" ✓ bash first",
+			" ✓ bash second",
+			"assistant reply",
+			"",
+			" ✓ bash third",
+		]);
+
+		const click = (y: number): TuiMouseEvent => ({
+			type: "click",
+			button: "left",
+			x: 3,
+			y,
+			screenX: 3,
+			screenY: y,
+			width: 80,
+			height: 7,
+			shift: false,
+			alt: false,
+			ctrl: false,
+			clickCount: 1,
+		});
+		expect(transcript.handleMouse(click(3))?.handled).toBe(true);
+		expect(stripAnsi(second.render(80).join("\n"))).toContain("second output");
 	});
 
 	// Issue #10292: the component loads the PNG transcoder itself, so this works in any TUI host.
