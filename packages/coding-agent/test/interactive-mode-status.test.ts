@@ -199,7 +199,13 @@ describe("InteractiveMode.setToolsExpanded", () => {
 			expect(fakeThis.toolDisplayMode).toBe(expected);
 			expect(fakeThis.builtInHeader.setExpanded).toHaveBeenLastCalledWith(expected === "expanded");
 			expect(fakeThis.showStatus).toHaveBeenLastCalledWith(`Tool output: ${expected}`);
-			if (expected === "compact") expect(component.render(120)).toHaveLength(1);
+			if (expected === "compact")
+				expect(
+					component
+						.render(120)
+						.map((line) => line.trim())
+						.filter(Boolean),
+				).toHaveLength(1);
 			else expect(component.render(120).join("\n")).toContain("full result");
 		}
 		fakeThis.toggleToolOutputExpansion();

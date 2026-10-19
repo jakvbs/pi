@@ -72,6 +72,8 @@ export class ToolExecutionComponent extends Container {
 	};
 	private hideComponent = false;
 	private hidden: boolean;
+	/** Set by {@link TranscriptContainer}: a compact row that starts a group gets a blank line above it. */
+	private compactGroupStart = true;
 
 	constructor(
 		toolName: string,
@@ -240,6 +242,14 @@ export class ToolExecutionComponent extends Container {
 		this.invalidate();
 	}
 
+	isCompactRow(): boolean {
+		return this.displayMode === "compact" && !this.hidden;
+	}
+
+	setCompactGroupStart(start: boolean): void {
+		this.compactGroupStart = start;
+	}
+
 	override invalidate(): void {
 		super.invalidate();
 		this.updateDisplay();
@@ -259,12 +269,12 @@ export class ToolExecutionComponent extends Container {
 			const target = [this.args?.path, this.args?.file_path, this.args?.command].find(
 				(value): value is string => typeof value === "string",
 			);
-			const title =
-				target === undefined
-					? formatToolCallWithArgs(this.toolName, this.args, theme, false)
-					: `${theme.fg("toolTitle", theme.bold(this.toolName))} ${theme.fg("muted", target)}`;
-			const plainTitle = sanitizeBinaryOutput(stripAnsi(title)).replace(/\s+/g, " ").trim();
-			return [truncateToWidth(`${" ".repeat(this.outputPad)}${status} ${plainTitle}`, width)];
+			const plain = (text: string) => sanitizeBinaryOutput(stripAnsi(text)).replace(/\s+/g, " ").trim();
+			const args =
+				target ?? plain(formatToolCallWithArgs(this.toolName, this.args, theme, false)).slice(this.toolName.length);
+			const row = `${" ".repeat(this.outputPad)}${status} ${theme.fg("toolTitle", theme.bold(plain(this.toolName)))} ${theme.fg("muted", plain(args))}`;
+			const line = truncateToWidth(row.trimEnd(), width);
+			return this.compactGroupStart ? ["", line] : [line];
 		}
 
 		if (this.hasRendererDefinition() && this.getRenderShell() === "self") {
@@ -298,7 +308,8 @@ export class ToolExecutionComponent extends Container {
 	override handleMouse(event: TuiMouseEvent): ReturnType<Container["handleMouse"]> {
 		if (this.hidden) return undefined;
 		if (this.displayMode === "compact") {
-			if (event.y !== 0 || event.type !== "click" || event.button !== "left") return undefined;
+			const rowY = this.compactGroupStart ? 1 : 0;
+			if (event.y !== rowY || event.type !== "click" || event.button !== "left") return undefined;
 			this.setExpanded(true);
 			return {
 				handled: true,
@@ -457,5 +468,27 @@ export class ToolExecutionComponent extends Container {
 			text += `\n${output}`;
 		}
 		return text;
+	}
+}
+
+/**
+ * Transcript container that separates a run of compact tool rows from surrounding blocks with one blank line,
+ * while keeping consecutive rows of the run together. Children that render nothing do not break a run.
+ */
+export class TranscriptContainer extends Container {
+	override render(width: number): string[] {
+		const lines: string[] = [];
+		const mouseChildren: Array<{ component: Component; height: number }> = [];
+		let previousIsCompactRow = false;
+		for (const child of this.children) {
+			const isCompactRow = child instanceof ToolExecutionComponent && child.isCompactRow();
+			if (isCompactRow) child.setCompactGroupStart(!previousIsCompactRow);
+			const childLines = child.render(width);
+			mouseChildren.push({ component: child, height: childLines.length });
+			lines.push(...childLines);
+			if (childLines.length > 0) previousIsCompactRow = isCompactRow;
+		}
+		this.mouseLayout = { width, children: mouseChildren };
+		return lines;
 	}
 }
