@@ -9,6 +9,7 @@ import type { AutocompleteProviderFactory } from "../src/core/extensions/types.t
 import type { QuietStartup } from "../src/core/settings-manager.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
+import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
@@ -149,7 +150,13 @@ describe("InteractiveMode.setToolsExpanded", () => {
 		const loadedResourcesChild = { setExpanded: vi.fn() };
 		const chatChild = { setExpanded: vi.fn() };
 		const fakeThis: any = {
-			toolOutputExpanded: false,
+			toolDisplayMode: "collapsed",
+			get toolOutputExpanded() {
+				return this.toolDisplayMode === "expanded";
+			},
+			setToolDisplayMode(mode: string) {
+				(InteractiveMode as any).prototype.setToolDisplayMode.call(this, mode);
+			},
 			customHeader: undefined,
 			builtInHeader: header,
 			loadedResourcesContainer: { children: [loadedResourcesChild] },
@@ -165,6 +172,40 @@ describe("InteractiveMode.setToolsExpanded", () => {
 		expect(loadedResourcesChild.setExpanded).toHaveBeenCalledWith(true);
 		expect(chatChild.setExpanded).toHaveBeenCalledWith(true);
 		expect(fakeThis.showStatus).toHaveBeenCalledWith("Tool output: expanded");
+	});
+
+	test("cycles all three modes and the boolean extension setter exits compact mode", () => {
+		initTheme("dark");
+		const component = new ToolExecutionComponent(
+			"read",
+			"compact-cycle",
+			{ path: "notes.txt" },
+			{},
+			undefined,
+			{ requestRender: vi.fn() } as unknown as TUI,
+			process.cwd(),
+		);
+		component.updateResult({ content: [{ type: "text", text: "full result" }], isError: false });
+		const fakeThis = Object.assign(Object.create(InteractiveMode.prototype), {
+			toolDisplayMode: "collapsed",
+			builtInHeader: { setExpanded: vi.fn() },
+			loadedResourcesContainer: new Container(),
+			chatContainer: new Container(),
+			showStatus: vi.fn(),
+		});
+		fakeThis.chatContainer.addChild(component);
+		for (const expected of ["expanded", "compact", "collapsed"]) {
+			fakeThis.toggleToolOutputExpansion();
+			expect(fakeThis.toolDisplayMode).toBe(expected);
+			expect(fakeThis.builtInHeader.setExpanded).toHaveBeenLastCalledWith(expected === "expanded");
+			expect(fakeThis.showStatus).toHaveBeenLastCalledWith(`Tool output: ${expected}`);
+			if (expected === "compact") expect(component.render(120)).toHaveLength(1);
+			else expect(component.render(120).join("\n")).toContain("full result");
+		}
+		fakeThis.toggleToolOutputExpansion();
+		fakeThis.toggleToolOutputExpansion();
+		fakeThis.setToolsExpanded(false);
+		expect(fakeThis.toolDisplayMode).toBe("collapsed");
 	});
 });
 

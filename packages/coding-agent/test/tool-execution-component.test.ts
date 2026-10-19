@@ -1,5 +1,12 @@
 import { join, resolve } from "node:path";
-import { resetCapabilitiesCache, setCapabilities, Text, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import {
+	resetCapabilitiesCache,
+	setCapabilities,
+	Text,
+	type TUI,
+	type TuiMouseEvent,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 
@@ -43,6 +50,72 @@ describe("ToolExecutionComponent parity", () => {
 	afterEach(() => {
 		resetCapabilitiesCache();
 		vi.useRealTimers();
+	});
+
+	test("compact rows stay one line through execution, errors, resizing and expansion", () => {
+		const component = new ToolExecutionComponent(
+			"bash",
+			"compact",
+			{ command: "bun test\n--run 界界界" },
+			{},
+			createBashToolDefinition(process.cwd(), { exposeSessionEnvironment: false }),
+			createFakeTui(),
+			process.cwd(),
+		);
+		component.setDisplayMode("compact");
+		expect(component.render(120).map(stripAnsi)).toEqual([" ○ bash bun test --run 界界界"]);
+		component.markExecutionStarted();
+		component.updateResult({ content: [{ type: "text", text: "partial output" }], isError: false }, true);
+		expect(component.render(120).map(stripAnsi)).toEqual([" … bash bun test --run 界界界"]);
+		component.updateResult({ content: [{ type: "text", text: "3 failed\nfailure details" }], isError: true });
+		expect(component.render(120).map(stripAnsi)).toEqual([" ✗ bash bun test --run 界界界"]);
+		for (const width of [1, 8, 25, 120]) {
+			const lines = component.render(width);
+			expect(lines).toHaveLength(1);
+			expect(visibleWidth(lines[0])).toBeLessThanOrEqual(width);
+		}
+		component.setHidden(true);
+		expect(component.render(120)).toEqual([]);
+		component.setHidden(false);
+		expect(
+			component.handleMouse({
+				type: "click",
+				button: "left",
+				x: 2,
+				y: 0,
+				screenX: 2,
+				screenY: 0,
+				width: 120,
+				height: 1,
+				shift: false,
+				alt: false,
+				ctrl: false,
+				clickCount: 1,
+			})?.handled,
+		).toBe(true);
+		expect(stripAnsi(component.render(120).join("\n"))).toContain("failure details");
+		component.setDisplayMode("compact");
+		component.updateResult({ content: [], isError: false });
+		expect(component.render(120).map(stripAnsi)).toEqual([" ✓ bash bun test --run 界界界"]);
+	});
+
+	test("compact mode also handles extension and fallback tools without rendering results", () => {
+		for (const definition of [undefined, createBaseToolDefinition()]) {
+			const component = new ToolExecutionComponent(
+				"lookup",
+				"compact-extension",
+				{ query: "test" },
+				{},
+				definition,
+				createFakeTui(),
+				process.cwd(),
+			);
+			component.updateResult({ content: [{ type: "text", text: "hidden output" }], isError: false });
+			component.setDisplayMode("compact");
+			expect(component.render(120).map(stripAnsi)).toEqual([' ✓ lookup query="test"']);
+			component.setExpanded(true);
+			expect(stripAnsi(component.render(120).join("\n"))).toContain("hidden output");
+		}
 	});
 
 	// Issue #10292: the component loads the PNG transcoder itself, so this works in any TUI host.
