@@ -1,0 +1,46 @@
+{
+  "name": "pi-sub-anthropic",
+  "version": "0.1.4",
+  "private": true,
+  "type": "module",
+  "description": "Anthropic provider extension for pi, ported from omp (oh-my-pi). Registers a separate `pi-sub-anthropic` provider; pi's built-in anthropic provider is untouched.",
+  "license": "MIT",
+  "main": "index.ts",
+  "pi": {
+    "extensions": [
+      "index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types wire-test.ts",
+    "test:xxhash": "node --experimental-strip-types verify-xxhash.ts",
+    "test:bun": "bun compare-bun.ts",
+    "test:all": "npm run test && npm run test:xxhash && npm run test:bun",
+    "typecheck": "tsc --noEmit",
+    "link:dev": "node scripts/link-dev.mjs"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "typescript": "6.0.3"
+  },
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension",
+    "anthropic",
+    "omp",
+    "oh-my-pi",
+    "claude",
+    "claude-pro",
+    "claude-max",
+    "oauth",
+    "subscription"
+  ]
+}
