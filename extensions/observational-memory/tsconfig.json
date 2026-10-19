@@ -1,17 +1,4 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "Node16",
-    "lib": ["ES2022"],
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "Node16",
-    "resolveJsonModule": true,
-    "allowImportingTsExtensions": true,
-    "types": ["node"],
-    "noEmit": true
-  },
-  "include": ["src/**/*.ts"]
+  "extends": "../../tsconfig.json",
+  "include": ["src/**/*.ts", "../../packages/*/src/**/*.d.ts"]
 }

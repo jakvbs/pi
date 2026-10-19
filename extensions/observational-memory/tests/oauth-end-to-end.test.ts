@@ -24,46 +24,20 @@ const OAUTH_TOKEN = `Bearer ${OAUTH_ACCESS_TOKEN}`;
 
 type RecordedRequest = { headers: Record<string, string | undefined>; body: any };
 
-function sse(events: Array<[string, unknown]>): string {
-	return events.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join("");
+function chunk(delta: unknown, finishReason: string | null, usage?: unknown): string {
+	const body = { id: "chatcmpl_e2e", object: "chat.completion.chunk", created: 0, model: "om-e2e", choices: [{ index: 0, delta, finish_reason: finishReason }], ...(usage ? { usage } : {}) };
+	return `data: ${JSON.stringify(body)}\n\n`;
 }
 
-function toolUseStream(toolInput: unknown): string {
-	return sse([
-		["message_start", {
-			type: "message_start",
-			message: {
-				id: "msg_e2e",
-				type: "message",
-				role: "assistant",
-				model: "om-e2e",
-				content: [],
-				stop_reason: null,
-				stop_sequence: null,
-				usage: { input_tokens: 12, output_tokens: 0 },
-			},
-		}],
-		["content_block_start", {
-			type: "content_block_start",
-			index: 0,
-			content_block: { type: "tool_use", id: "toolu_e2e", name: "record_observations", input: {} },
-		}],
-		["content_block_delta", {
-			type: "content_block_delta",
-			index: 0,
-			delta: { type: "input_json_delta", partial_json: JSON.stringify(toolInput) },
-		}],
-		["content_block_stop", { type: "content_block_stop", index: 0 }],
-		["message_delta", {
-			type: "message_delta",
-			delta: { stop_reason: "tool_use", stop_sequence: null },
-			usage: { output_tokens: 30 },
-		}],
-		["message_stop", { type: "message_stop" }],
-	]);
+function toolCallStream(toolInput: unknown): string {
+	return [
+		chunk({ role: "assistant", tool_calls: [{ index: 0, id: "call_e2e", type: "function", function: { name: "record_observations", arguments: JSON.stringify(toolInput) } }] }, null),
+		chunk({}, "tool_calls", { prompt_tokens: 12, completion_tokens: 30, total_tokens: 42 }),
+		"data: [DONE]\n\n",
+	].join("");
 }
 
-async function startMockAnthropic(requests: RecordedRequest[]): Promise<{ server: Server; baseUrl: string }> {
+async function startMockChatCompletions(requests: RecordedRequest[]): Promise<{ server: Server; baseUrl: string }> {
 	const server = createServer((req, res) => {
 		const chunks: Buffer[] = [];
 		req.on("data", (chunk) => chunks.push(chunk));
@@ -71,7 +45,7 @@ async function startMockAnthropic(requests: RecordedRequest[]): Promise<{ server
 			const raw = Buffer.concat(chunks).toString("utf8");
 			requests.push({ headers: req.headers as Record<string, string | undefined>, body: raw ? JSON.parse(raw) : undefined });
 			res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-			res.end(toolUseStream({
+			res.end(toolCallStream({
 				observations: [{
 					timestamp: "2026-05-02 10:30",
 					content: "User authenticated with an OAuth provider and asked for memory consolidation.",
@@ -121,13 +95,13 @@ afterEach(async () => {
 describe("OAuth provider end-to-end consolidation", () => {
 	it("records observations using headers-only OAuth auth on a real model request", async () => {
 		const requests: RecordedRequest[] = [];
-		const { server, baseUrl } = await startMockAnthropic(requests);
+		const { server, baseUrl } = await startMockChatCompletions(requests);
 		activeServer = server;
 
 		const model = {
 			id: "om-e2e",
 			name: "OAuth E2E",
-			api: "anthropic-messages",
+			api: "openai-completions",
 			provider: "kimi-coding",
 			baseUrl,
 			reasoning: false,
@@ -182,7 +156,7 @@ describe("OAuth provider end-to-end consolidation", () => {
 			"",
 			"── OAuth consolidation transcript ─────────────────────────────",
 			`resolved auth        : apiKey=<none> headers.Authorization=${OAUTH_TOKEN}`,
-			`provider request     : POST ${baseUrl}/v1/messages`,
+			`provider request     : POST ${baseUrl}/chat/completions`,
 			`request authorization: ${requests[0].headers.authorization}`,
 			`request x-api-key    : ${requests[0].headers["x-api-key"] ?? "<none>"}`,
 			`ledger entry         : ${recorded[0].customType} coversUpToId=${recorded[0].data.coversUpToId}`,
