@@ -13,12 +13,12 @@ import {
 	buildCompactionProjection,
 	compactionRangeStartIndex,
 	entryIndexForId,
-	isSourceEntry,
-	rawTokensAfterIndex,
+	measuredSourceTokens,
+	rawTokensSinceLastCompaction,
 	renderSummaryWithBudget,
+	sumTokensAfterIndex,
 	type Entry,
 } from "../session-ledger/index.ts";
-import { estimateEntryTokens } from "../tokens.ts";
 import { catchUpObserver } from "./compaction-catch-up.ts";
 import { debugContext, findCutPointAtOrBefore, resolveCompactionCut, type CompactionCutResolution } from "./compaction-hook.ts";
 
@@ -39,19 +39,20 @@ type ActivationPlan = {
 };
 
 /** Latest valid cut point after the range start that keeps at least `keepRecentTokens` of source history; -1 when none. */
-function keepRecentCutIndex(entries: Entry[], rangeStart: number, keepRecentTokens: number): number {
+function keepRecentCutIndex(entries: Entry[], tokens: number[], rangeStart: number, keepRecentTokens: number): number {
 	let kept = 0;
 	for (let i = entries.length - 1; i > rangeStart; i--) {
-		if (isSourceEntry(entries[i])) kept += estimateEntryTokens(entries[i]);
+		kept += tokens[i];
 		if (kept >= keepRecentTokens) return findCutPointAtOrBefore(entries, i, rangeStart + 1);
 	}
 	return -1;
 }
 
 function planActivation(entries: Entry[], keepRecentTokens: number): ActivationPlan {
+	const tokens = measuredSourceTokens(entries);
 	const rangeStart = compactionRangeStartIndex(entries);
-	const tailTokens = rawTokensAfterIndex(entries, rangeStart - 1);
-	const proposed = keepRecentCutIndex(entries, rangeStart, keepRecentTokens);
+	const tailTokens = sumTokensAfterIndex(tokens, rangeStart - 1);
+	const proposed = keepRecentCutIndex(entries, tokens, rangeStart, keepRecentTokens);
 	if (proposed === -1) return { retainedTokens: tailTokens };
 
 	// Activation frees whatever the observer has covered: a cut never passes
@@ -60,7 +61,7 @@ function planActivation(entries: Entry[], keepRecentTokens: number): ActivationP
 	const resolution = resolveCompactionCut(entries, entries[proposed].id, { maxRetainedTokens: Number.POSITIVE_INFINITY });
 	if (resolution.kind === "uncovered") return { resolution, retainedTokens: tailTokens };
 	const cutIndex = entryIndexForId(entries, resolution.cut.firstKeptEntryId);
-	return { resolution, retainedTokens: rawTokensAfterIndex(entries, cutIndex - 1) };
+	return { resolution, retainedTokens: sumTokensAfterIndex(tokens, cutIndex - 1) };
 }
 
 function branch(ctx: ExtensionContext): Entry[] {
@@ -79,7 +80,7 @@ async function activate(
 	let entries = branch(ctx);
 	const contextWindow = typeof ctx.model?.contextWindow === "number" ? ctx.model.contextWindow : undefined;
 	const threshold = resolveCompactAfterTokens(runtime.config, contextWindow);
-	const tailTokens = rawTokensAfterIndex(entries, compactionRangeStartIndex(entries) - 1);
+	const tailTokens = rawTokensSinceLastCompaction(entries);
 	if (tailTokens < threshold) return undefined;
 
 	const keepRecentTokens = Math.floor(threshold * ACTIVATION_KEEP_RECENT_RATIO);
@@ -169,7 +170,8 @@ async function activate(
 
 /**
  * Activate memory at `turn_end`, Mastra style: once the source history in
- * context since the latest compaction boundary reaches `compactAfterTokens`,
+ * context since the latest compaction boundary, counted in provider tokens
+ * (`measuredSourceTokens`), reaches `compactAfterTokens`,
  * replace its observed part with the rendered memory and keep the newest
  * history raw. Pi persists the returned compaction entry before the next
  * model request, so activation also happens between the tool calls of one

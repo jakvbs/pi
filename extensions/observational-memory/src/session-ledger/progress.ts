@@ -138,9 +138,9 @@ export function findLastCompactionIndex(entries: Entry[]): number {
 
 // ==== Real (provider-reported) token accounting ====
 //
-// These helpers measure context growth from provider-reported usage for the
-// observation and reflection coverage clocks. Automatic compaction keeps its
-// separate raw source-entry clock because its setting counts ledger entries.
+// These helpers measure context growth from provider-reported usage: the
+// observation and reflection coverage clocks take a context delta, and memory
+// activation counts source entries weighted by `measuredSourceTokens`.
 
 type UsageLike = {
 	totalTokens?: number;
@@ -168,6 +168,53 @@ function validAssistantContextTokens(entry: Entry): number | undefined {
 	const msg = entry.message as { role?: string; stopReason?: string; usage?: unknown };
 	if (msg.role !== "assistant" || msg.stopReason === "aborted" || msg.stopReason === "error") return undefined;
 	return contextTokensFromUsage(msg.usage);
+}
+
+function scaleSegment(tokens: number[], start: number, end: number, measured: number): void {
+	let estimated = 0;
+	for (let i = start; i <= end; i++) estimated += tokens[i];
+	if (estimated === 0) {
+		tokens[end] = measured;
+		return;
+	}
+	for (let i = start; i <= end; i++) tokens[i] = (tokens[i] * measured) / estimated;
+}
+
+/**
+ * Source tokens per branch entry in provider units; non-source entries weigh zero.
+ *
+ * A valid assistant usage reports the whole context plus its own output, so
+ * the growth between two consecutive usages is the provider-counted size of
+ * the entries after the earlier assistant through the later one. That growth
+ * is spread over the segment in proportion to the local estimate. A segment
+ * without a usable baseline keeps the local estimate: before the first usage,
+ * after the last one, across a compaction or context edit (the earlier usage
+ * counts a different context), or when the context shrank (provider or
+ * accounting change).
+ */
+export function measuredSourceTokens(entries: Entry[]): number[] {
+	const tokens = entries.map((entry) => (isSourceEntry(entry) ? estimateEntryTokens(entry) : 0));
+	let baseline: number | undefined;
+	let segmentStart = 0;
+	for (let i = 0; i < entries.length; i++) {
+		const entry = entries[i];
+		if (entry.type === "compaction" || entry.type === "context_edit") {
+			baseline = undefined;
+			continue;
+		}
+		const usage = validAssistantContextTokens(entry);
+		if (usage === undefined) continue;
+		if (baseline !== undefined && usage >= baseline) scaleSegment(tokens, segmentStart, i, usage - baseline);
+		baseline = usage;
+		segmentStart = i + 1;
+	}
+	return tokens;
+}
+
+export function sumTokensAfterIndex(tokens: number[], index: number): number {
+	let total = 0;
+	for (let i = Math.max(0, index + 1); i < tokens.length; i++) total += tokens[i];
+	return Math.round(total);
 }
 
 /**
@@ -249,26 +296,26 @@ export function compactionRangeStartIndex(entries: Entry[]): number {
 	return firstKeptIndex === -1 ? compactionIndex + 1 : firstKeptIndex;
 }
 
+/** Source tokens, in provider units, since the latest compaction boundary: the memory activation clock. */
 export function rawTokensSinceLastCompaction(entries: Entry[]): number {
-	return rawTokensAfterIndex(entries, compactionRangeStartIndex(entries) - 1);
+	return sumTokensAfterIndex(measuredSourceTokens(entries), compactionRangeStartIndex(entries) - 1);
 }
 
 /**
- * Estimated source tokens since the latest compaction boundary that observation
- * coverage has already reached — the span a V3 compaction can fold into memory
- * without discarding anything the observer has not seen. Zero when coverage is
- * missing or still behind the compaction boundary.
+ * Source tokens, in provider units, since the latest compaction boundary that
+ * observation coverage has already reached — the span a V3 compaction can fold
+ * into memory without discarding anything the observer has not seen. Zero when
+ * coverage is missing or still behind the compaction boundary.
  */
 export function observedTokensSinceLastCompaction(entries: Entry[]): number {
 	const start = compactionRangeStartIndex(entries);
 	const coverageIndex = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
 	if (coverageIndex < start) return 0;
 
+	const tokens = measuredSourceTokens(entries);
 	let total = 0;
-	for (let i = start; i <= coverageIndex; i++) {
-		if (isSourceEntry(entries[i])) total += estimateEntryTokens(entries[i]);
-	}
-	return total;
+	for (let i = start; i <= coverageIndex; i++) total += tokens[i];
+	return Math.round(total);
 }
 
 export type UnobservedSourceSpan = {
