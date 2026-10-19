@@ -9,6 +9,7 @@ import {
 	Text,
 	type TUI,
 	type TuiMouseEvent,
+	truncateToWidth,
 } from "@earendil-works/pi-tui";
 import type { ToolDefinition, ToolRenderContext, ToolRenderers } from "../../../core/extensions/types.ts";
 
@@ -16,11 +17,15 @@ import type { ToolDefinition, ToolRenderContext, ToolRenderers } from "../../../
 export type { ToolRenderers };
 
 import { formatToolCallWithArgs, getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
+import { stripAnsi } from "../../../utils/ansi.ts";
 import { ensurePngTranscoder } from "../../../utils/image-convert.ts";
+import { sanitizeBinaryOutput } from "../../../utils/shell.ts";
 import { theme } from "../theme/theme.ts";
 import { keyHint } from "./keybinding-hints.ts";
 
 const FALLBACK_PREVIEW_LINES = 10;
+
+export type ToolDisplayMode = "collapsed" | "expanded" | "compact";
 
 export interface ToolExecutionOptions {
 	showImages?: boolean;
@@ -46,7 +51,10 @@ export class ToolExecutionComponent extends Container {
 	private toolName: string;
 	private toolCallId: string;
 	private args: any;
-	private expanded = false;
+	private displayMode: ToolDisplayMode = "collapsed";
+	private get expanded(): boolean {
+		return this.displayMode === "expanded";
+	}
 	private showImages: boolean;
 	private imageWidthCells: number;
 	private outputPad: number;
@@ -211,7 +219,11 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	setExpanded(expanded: boolean): void {
-		this.expanded = expanded;
+		this.setDisplayMode(expanded ? "expanded" : "collapsed");
+	}
+
+	setDisplayMode(mode: ToolDisplayMode): void {
+		this.displayMode = mode;
 		this.updateDisplay();
 	}
 
@@ -246,6 +258,23 @@ export class ToolExecutionComponent extends Container {
 			return [];
 		}
 
+		if (this.displayMode === "compact") {
+			const status = this.isPartial
+				? theme.fg("muted", this.executionStarted ? "…" : "○")
+				: this.result?.isError
+					? theme.fg("error", "✗")
+					: theme.fg("success", "✓");
+			const target = [this.args?.path, this.args?.file_path, this.args?.command].find(
+				(value): value is string => typeof value === "string",
+			);
+			const title =
+				target === undefined
+					? formatToolCallWithArgs(this.toolName, this.args, theme, false)
+					: `${theme.fg("toolTitle", theme.bold(this.toolName))} ${theme.fg("muted", target)}`;
+			const plainTitle = sanitizeBinaryOutput(stripAnsi(title)).replace(/\s+/g, " ").trim();
+			return [truncateToWidth(`${" ".repeat(this.outputPad)}${status} ${plainTitle}`, width)];
+		}
+
 		if (this.hasRendererDefinition() && this.getRenderShell() === "self") {
 			const contentLines = this.selfRenderContainer.render(width);
 			this.selfRenderHeight = contentLines.length;
@@ -276,6 +305,20 @@ export class ToolExecutionComponent extends Container {
 
 	override handleMouse(event: TuiMouseEvent): ReturnType<Container["handleMouse"]> {
 		if (this.hidden) return undefined;
+		if (this.displayMode === "compact") {
+			if (event.y !== 0 || event.type !== "click" || event.button !== "left") return undefined;
+			this.setExpanded(true);
+			return {
+				handled: true,
+				target: {
+					component: this,
+					originX: event.screenX - event.x,
+					originY: event.screenY - event.y,
+					width: event.width,
+					height: event.height,
+				},
+			};
+		}
 		if (!this.hasRendererDefinition() || this.getRenderShell() !== "self") return super.handleMouse(event);
 		if (event.y <= 0 || event.y > this.selfRenderHeight) return undefined;
 		return this.selfRenderContainer.handleMouse({
