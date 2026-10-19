@@ -40,8 +40,9 @@ export interface Config {
 	 */
 	observerChunkMaxTokens?: number;
 	/**
-	 * Activation threshold: estimated source tokens in context after the latest
-	 * compaction boundary. Reaching it at `turn_end` replaces the observed part
+	 * Activation threshold: source tokens in context after the latest compaction
+	 * boundary, in provider units where usage brackets an entry
+	 * (`measuredSourceTokens`). Reaching it at `turn_end` replaces the observed part
 	 * of that history with the rendered memory (see `hooks/activation.ts`).
 	 */
 	compactAfterTokens: number;

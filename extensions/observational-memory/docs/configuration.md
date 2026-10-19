@@ -62,7 +62,7 @@ You can omit everything. Defaults work for ordinary sessions, and if `model` is 
 | `observeAfterTokens` | positive integer | `10000` | Raw/source token threshold for observer runs. |
 | `reflectAfterTokens` | positive integer | `20000` | Raw/source token threshold for reflector runs; successful reflection creates dropper maintenance opportunities. |
 | `observerChunkMaxTokens` | positive integer | derived; minimum `256` | Maximum estimated tokens sent to one observer run. Unset: 20% of the resolved memory model's context window, or `60000` when unknown. |
-| `compactAfterTokens` | positive integer | `81000` | Activation threshold: estimated source-entry tokens in context after the latest compaction boundary. Reaching it at `turn_end` replaces the observed part of that history with memory and keeps the newest ~20% raw. |
+| `compactAfterTokens` | positive integer | `81000` | Activation threshold: source-entry tokens in context after the latest compaction boundary, counted in provider tokens. Reaching it at `turn_end` replaces the observed part of that history with memory and keeps the newest ~20% raw. |
 | `compactionMaxRetainedTokens` | positive integer | derived | Maximum estimated source tokens the compaction hook may keep in context when it retains entries the observer has not reached yet. Unset: half of the active session model's context window, or `60000` when unknown. |
 | `observationsPoolMaxTokens` | positive integer | `20000` | Normal compaction-projection observation-token pressure that makes compaction do a full fold. |
 | `observationsPoolTargetTokens` | positive integer below max | half of `observationsPoolMaxTokens` | Folded active observation target used by post-reflection dropper maintenance. |
@@ -121,7 +121,7 @@ Lower values distill reflections more often and therefore create more opportunit
 
 Default: `81000`.
 
-Memory activation runs from Pi's actionable `turn_end` boundary, after every model turn, including the turns between tool calls of one agent run. It counts estimated source-entry tokens in context after the latest compaction boundary: the count starts at `firstKeptEntryId`, so retained source entries remain part of the metric, and memory ledger entries and compaction metadata contribute zero. Pi's provider context usage is not used for this threshold. Turns that were aborted or ended in an error do not activate.
+Memory activation runs from Pi's actionable `turn_end` boundary, after every model turn, including the turns between tool calls of one agent run. It counts source-entry tokens in context after the latest compaction boundary: the count starts at `firstKeptEntryId`, so retained source entries remain part of the metric, and memory ledger entries and compaction metadata contribute zero. Entries are counted in provider tokens. Every assistant reply carries the provider's context usage, and the growth between two consecutive replies is the size of the entries between them, spread in proportion to the local estimate. Entries without a usable bracket (before the first reply, across a compaction or context edit, after the latest reply, or where the reported context shrank) keep the local 4-characters estimate. The system prompt, tool schemas, and memory summary are not source entries, so the context Pi shows at activation is higher than the threshold by that overhead. Turns that were aborted or ended in an error do not activate.
 
 When the count reaches `compactAfterTokens`, the handler returns a compaction entry that Pi persists before the next model request:
 
