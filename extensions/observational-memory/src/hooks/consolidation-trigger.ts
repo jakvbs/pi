@@ -549,7 +549,7 @@ async function runObserverStage(
 		observationTokens: observations.reduce((sum, observation) => sum + observation.tokenCount, 0),
 		coversUpToId,
 	});
-	recordMemoryEntry(pi, runtime.config, ctx, OM_OBSERVATIONS_RECORDED, data);
+	if (!recordMemoryEntry(pi, runtime.config, ctx, entries, OM_OBSERVATIONS_RECORDED, data)) return "abort";
 	debugLog("observer.appended", { count: observations.length, coversUpToId });
 	return "continue";
 }
@@ -607,7 +607,9 @@ async function runReflectorStage(
 
 	const data = buildReflectionsRecordedData(reflections, observationCoverageId);
 	if (!data) return { outcome: "continue", sameRunReflections: [] };
-	recordMemoryEntry(pi, runtime.config, ctx, OM_REFLECTIONS_RECORDED, data);
+	if (!recordMemoryEntry(pi, runtime.config, ctx, entries, OM_REFLECTIONS_RECORDED, data)) {
+		return { outcome: "abort", sameRunReflections: [] };
+	}
 	return {
 		outcome: "continue",
 		sameRunReflections: reflections,
@@ -705,6 +707,6 @@ async function runDropperStage(
 		dataBuilt: data !== undefined,
 		appended: data !== undefined,
 	});
-	if (data) recordMemoryEntry(pi, runtime.config, ctx, OM_OBSERVATIONS_DROPPED, data);
+	if (data) recordMemoryEntry(pi, runtime.config, ctx, entries, OM_OBSERVATIONS_DROPPED, data);
 	return "continue";
 }

@@ -23,7 +23,7 @@ export type CatchUpResult = {
 	/** Observer chunks that recorded observations. */
 	chunksRecorded: number;
 	/** Why catch-up stopped before covering the whole gap, if it did. */
-	stoppedBecause?: "max_chunks" | "empty" | "error" | "model_unavailable" | "aborted";
+	stoppedBecause?: "max_chunks" | "empty" | "error" | "model_unavailable" | "aborted" | "branch_moved";
 };
 
 export type CatchUpArgs = {
@@ -121,7 +121,9 @@ export async function catchUpObserver(args: CatchUpArgs): Promise<CatchUpResult>
 			return { ...result, stoppedBecause: "empty" };
 		}
 
-		recordMemoryEntry(pi, runtime.config, ctx, OM_OBSERVATIONS_RECORDED, data);
+		if (!recordMemoryEntry(pi, runtime.config, ctx, branch, OM_OBSERVATIONS_RECORDED, data)) {
+			return { ...result, stoppedBecause: "branch_moved" };
+		}
 		result.chunksRecorded++;
 		debugLog("compaction.catch_up.recorded", { chunkIndex, count: observations!.length, coversUpToId });
 

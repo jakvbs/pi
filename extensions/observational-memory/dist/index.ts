@@ -1924,7 +1924,13 @@ ${conversation}`;
 }
 
 // src/memory-journal.ts
-function recordMemoryEntry(pi, config, ctx, customType, data) {
+function recordMemoryEntry(pi, config, ctx, readBranch, customType, data) {
+  const readTipId = readBranch.at(-1)?.id;
+  const current = ctx.sessionManager.getBranch();
+  if (!readTipId || !current.some((entry) => entry.id === readTipId)) {
+    debugLog("memory_journal.branch_moved", { customType, readTipId, currentTipId: current.at(-1)?.id });
+    return false;
+  }
   pi.appendEntry(customType, data);
   const branch2 = ctx.sessionManager.getBranch();
   const change = memoryChangelog(branch2).at(-1);
@@ -1932,6 +1938,7 @@ function recordMemoryEntry(pi, config, ctx, customType, data) {
     ctx.ui?.notify(`Observational memory: ${changePreview(change)}`, "info");
   }
   syncMemoryFile(config.memoryFile, ctx);
+  return true;
 }
 
 // src/hooks/compaction-catch-up.ts
@@ -1997,7 +2004,9 @@ async function catchUpObserver(args) {
       debugLog("compaction.catch_up.empty", { chunkIndex, coversUpToId });
       return { ...result, stoppedBecause: "empty" };
     }
-    recordMemoryEntry(pi, runtime.config, ctx, OM_OBSERVATIONS_RECORDED, data);
+    if (!recordMemoryEntry(pi, runtime.config, ctx, branch2, OM_OBSERVATIONS_RECORDED, data)) {
+      return { ...result, stoppedBecause: "branch_moved" };
+    }
     result.chunksRecorded++;
     debugLog("compaction.catch_up.recorded", { chunkIndex, count: observations.length, coversUpToId });
     const coveredIndex = entries.findIndex((entry) => entry.id === coversUpToId);
@@ -3355,7 +3364,7 @@ async function runObserverStage(pi, runtime, ctx, resolver) {
     observationTokens: observations.reduce((sum, observation) => sum + observation.tokenCount, 0),
     coversUpToId
   });
-  recordMemoryEntry(pi, runtime.config, ctx, OM_OBSERVATIONS_RECORDED, data);
+  if (!recordMemoryEntry(pi, runtime.config, ctx, entries, OM_OBSERVATIONS_RECORDED, data)) return "abort";
   debugLog("observer.appended", { count: observations.length, coversUpToId });
   return "continue";
 }
@@ -3403,7 +3412,9 @@ async function runReflectorStage(pi, runtime, ctx, resolver) {
   if (!reflections) return { outcome: "continue", sameRunReflections: [] };
   const data = buildReflectionsRecordedData(reflections, observationCoverageId);
   if (!data) return { outcome: "continue", sameRunReflections: [] };
-  recordMemoryEntry(pi, runtime.config, ctx, OM_REFLECTIONS_RECORDED, data);
+  if (!recordMemoryEntry(pi, runtime.config, ctx, entries, OM_REFLECTIONS_RECORDED, data)) {
+    return { outcome: "abort", sameRunReflections: [] };
+  }
   return {
     outcome: "continue",
     sameRunReflections: reflections,
@@ -3488,7 +3499,7 @@ async function runDropperStage(pi, runtime, ctx, resolver, sameRunReflections, s
     dataBuilt: data !== void 0,
     appended: data !== void 0
   });
-  if (data) recordMemoryEntry(pi, runtime.config, ctx, OM_OBSERVATIONS_DROPPED, data);
+  if (data) recordMemoryEntry(pi, runtime.config, ctx, entries, OM_OBSERVATIONS_DROPPED, data);
   return "continue";
 }
 
