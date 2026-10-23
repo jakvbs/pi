@@ -13,7 +13,7 @@ import {
 } from "./fixtures/session.ts";
 
 describe("session-ledger V3 folding", () => {
-	it("folds observations and reflections from branch root through the target entry", () => {
+	it("folds the observations and reflections of the supplied branch", () => {
 		const obs1 = observation("aaaaaaaaaaaa", { sourceEntryIds: ["raw-1"] });
 		const obs2 = observation("bbbbbbbbbbbb", { sourceEntryIds: ["raw-2"] });
 		const ref1 = reflection("eeeeeeeeeeee", ["aaaaaaaaaaaa"]);
@@ -25,7 +25,7 @@ describe("session-ledger V3 folding", () => {
 			observationsRecordedEntry("om-bbbbbbbbbbbb", { observations: [obs2], coversUpToId: "raw-2" }),
 		];
 
-		const folded = foldLedger(entries, { upToEntryId: "om-eeeeeeeeeeee" });
+		const folded = foldLedger(entries.slice(0, 4));
 
 		expect(folded.observations.map((obs) => obs.id)).toEqual(["aaaaaaaaaaaa"]);
 		expect(folded.activeObservations.map((obs) => obs.id)).toEqual(["aaaaaaaaaaaa"]);

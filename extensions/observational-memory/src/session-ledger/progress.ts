@@ -1,4 +1,5 @@
 import { estimateEntryTokens } from "../tokens.ts";
+import { branchLedger, type BranchLedgerEntry } from "./ledger.ts";
 import {
 	OM_OBSERVATIONS_DROPPED,
 	OM_OBSERVATIONS_RECORDED,
@@ -25,53 +26,22 @@ export function entryIndexForId(entries: Entry[], entryId: string | undefined): 
 	return idx ?? -1;
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
-function isNonEmptyArray(value: unknown): value is unknown[] {
-	return Array.isArray(value) && value.length > 0;
-}
-
-function isValidCoverageEntry(entry: Entry, customType: V3MemoryCustomType): entry is Entry & { data: { coversUpToId: string } } {
-	if (entry.type !== "custom" || entry.customType !== customType) return false;
-	if (!isObject(entry.data) || typeof entry.data.coversUpToId !== "string") return false;
-
-	if (customType === OM_OBSERVATIONS_RECORDED) return isNonEmptyArray(entry.data.observations);
-	if (customType === OM_REFLECTIONS_RECORDED) return isNonEmptyArray(entry.data.reflections);
-	return isNonEmptyArray(entry.data.observationIds);
+/** The branch ledger entry of `customType` whose coverage marker reaches furthest along the branch. */
+function furthestCoverage(entries: Entry[], customType: V3MemoryCustomType): BranchLedgerEntry | undefined {
+	let furthest: BranchLedgerEntry | undefined;
+	for (const record of branchLedger(entries)) {
+		if (record.entry.customType !== customType) continue;
+		if (!furthest || record.coverageIndex > furthest.coverageIndex) furthest = record;
+	}
+	return furthest;
 }
 
 export function latestCoverageIndex(entries: Entry[], customType: V3MemoryCustomType): number {
-	const idToIndex = entryIndexById(entries);
-	let latest = -1;
-
-	for (const entry of entries) {
-		if (!isValidCoverageEntry(entry, customType)) continue;
-		const coveredIndex = idToIndex.get(entry.data.coversUpToId);
-		if (coveredIndex === undefined) continue;
-		if (coveredIndex > latest) latest = coveredIndex;
-	}
-
-	return latest;
+	return furthestCoverage(entries, customType)?.coverageIndex ?? -1;
 }
 
 export function latestCoverageMarkerId(entries: Entry[], customType: V3MemoryCustomType): string | undefined {
-	const idToIndex = entryIndexById(entries);
-	let latestIndex = -1;
-	let latestMarkerId: string | undefined;
-
-	for (const entry of entries) {
-		if (!isValidCoverageEntry(entry, customType)) continue;
-		const coveredIndex = idToIndex.get(entry.data.coversUpToId);
-		if (coveredIndex === undefined) continue;
-		if (coveredIndex > latestIndex) {
-			latestIndex = coveredIndex;
-			latestMarkerId = entry.data.coversUpToId;
-		}
-	}
-
-	return latestMarkerId;
+	return furthestCoverage(entries, customType)?.entry.data.coversUpToId;
 }
 
 export function earlierCoverageMarkerId(entries: Entry[], firstId: string | undefined, secondId: string | undefined): string | undefined {

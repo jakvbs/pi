@@ -1,9 +1,10 @@
+import { branchLedger } from "./ledger.ts";
 import {
 	OM_FOLDED,
+	OM_OBSERVATIONS_DROPPED,
+	OM_OBSERVATIONS_RECORDED,
+	OM_REFLECTIONS_RECORDED,
 	isMemoryDetails,
-	isObservationsDroppedEntry,
-	isObservationsRecordedEntry,
-	isReflectionsRecordedEntry,
 	type Entry,
 	type MemoryDetails,
 	type Observation,
@@ -65,20 +66,8 @@ function boundaryIndex(entries: Entry[], indexes: Map<string, number>, boundary:
 	return indexes.get(boundary.entryId) ?? -1;
 }
 
-function coverageIndex(entry: Entry & { data: { coversUpToId: string } }, indexes: Map<string, number>): number {
-	return indexes.get(entry.data.coversUpToId) ?? -1;
-}
-
 function isAtOrBefore(index: number, boundaryIndex: number): boolean {
 	return index >= 0 && boundaryIndex >= 0 && index <= boundaryIndex;
-}
-
-function isCoveredAtOrBefore(
-	entry: Entry & { data: { coversUpToId: string } },
-	indexes: Map<string, number>,
-	boundaryIndex: number,
-): boolean {
-	return isAtOrBefore(coverageIndex(entry, indexes), boundaryIndex);
 }
 
 function foldProjection(entries: Entry[], options: ProjectionFoldOptions): Projection {
@@ -92,27 +81,28 @@ function foldProjection(entries: Entry[], options: ProjectionFoldOptions): Proje
 	const reflectionsById = new Set<string>();
 	const droppedObservationIds = new Set<string>();
 
-	for (const entry of entries) {
-		if (isObservationsRecordedEntry(entry) && isCoveredAtOrBefore(entry, indexes, observationsBoundary)) {
-			for (const observation of entry.data.observations) {
-				if (observationsById.has(observation.id)) continue;
-				observationsById.add(observation.id);
-				observations.push(observation);
-			}
-			continue;
-		}
-
-		if (isReflectionsRecordedEntry(entry) && isCoveredAtOrBefore(entry, indexes, reflectionsBoundary)) {
-			for (const reflection of entry.data.reflections) {
-				if (reflectionsById.has(reflection.id)) continue;
-				reflectionsById.add(reflection.id);
-				reflections.push(reflection);
-			}
-			continue;
-		}
-
-		if (isObservationsDroppedEntry(entry) && isCoveredAtOrBefore(entry, indexes, dropsBoundary)) {
-			for (const observationId of entry.data.observationIds) droppedObservationIds.add(observationId);
+	for (const { entry, coverageIndex } of branchLedger(entries)) {
+		switch (entry.customType) {
+			case OM_OBSERVATIONS_RECORDED:
+				if (!isAtOrBefore(coverageIndex, observationsBoundary)) break;
+				for (const observation of entry.data.observations) {
+					if (observationsById.has(observation.id)) continue;
+					observationsById.add(observation.id);
+					observations.push(observation);
+				}
+				break;
+			case OM_REFLECTIONS_RECORDED:
+				if (!isAtOrBefore(coverageIndex, reflectionsBoundary)) break;
+				for (const reflection of entry.data.reflections) {
+					if (reflectionsById.has(reflection.id)) continue;
+					reflectionsById.add(reflection.id);
+					reflections.push(reflection);
+				}
+				break;
+			case OM_OBSERVATIONS_DROPPED:
+				if (!isAtOrBefore(coverageIndex, dropsBoundary)) break;
+				for (const observationId of entry.data.observationIds) droppedObservationIds.add(observationId);
+				break;
 		}
 	}
 
