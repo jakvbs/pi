@@ -112,6 +112,12 @@ export interface Config {
 	 */
 	fallbackModel?: ConfiguredModel;
 	showWorkerNotifications: boolean;
+	/**
+	 * Mirror each session's memory to
+	 * `<agentDir>/observational-memory/memory/<sessionId>.md`, rewritten after
+	 * every memory change (see `memory-file.ts`).
+	 */
+	memoryFile: boolean;
 	passive: boolean;
 	debugLog: boolean;
 }
@@ -129,6 +135,7 @@ export const DEFAULTS: Config = {
 	compactionCatchUpMaxChunks: 2,
 	consolidateWhenIdle: false,
 	showWorkerNotifications: true,
+	memoryFile: false,
 	passive: false,
 	debugLog: false,
 };
@@ -350,6 +357,7 @@ function normalizeSettingsConfig(value: Record<string, unknown>): Partial<Config
 	if (ratio !== undefined) normalized.compactAfterTokensRatio = ratio;
 	if (typeof value.consolidateWhenIdle === "boolean") normalized.consolidateWhenIdle = value.consolidateWhenIdle;
 	if (typeof value.showWorkerNotifications === "boolean") normalized.showWorkerNotifications = value.showWorkerNotifications;
+	if (typeof value.memoryFile === "boolean") normalized.memoryFile = value.memoryFile;
 	if (typeof value.passive === "boolean") normalized.passive = value.passive;
 	if (typeof value.debugLog === "boolean") normalized.debugLog = value.debugLog;
 	const model = normalizeModel(value.model);

@@ -3,6 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { runObserver } from "../agents/observer/agent.ts";
 import { resolveObserverChunkMaxTokens, resolveWorkerMemoryMaxTokens } from "../config.ts";
 import { debugLog } from "../debug-log.ts";
+import { recordMemoryEntry } from "../memory-journal.ts";
 import type { Runtime } from "../runtime.ts";
 import { serializeSourceAddressedBranchEntries } from "../serialize.ts";
 import {
@@ -120,7 +121,7 @@ export async function catchUpObserver(args: CatchUpArgs): Promise<CatchUpResult>
 			return { ...result, stoppedBecause: "empty" };
 		}
 
-		pi.appendEntry(OM_OBSERVATIONS_RECORDED, data);
+		recordMemoryEntry(pi, runtime.config, ctx, OM_OBSERVATIONS_RECORDED, data);
 		result.chunksRecorded++;
 		debugLog("compaction.catch_up.recorded", { chunkIndex, count: observations!.length, coversUpToId });
 
