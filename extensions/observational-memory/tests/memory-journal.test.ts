@@ -28,7 +28,7 @@ function setup(initial: TestEntry[], config = { showWorkerNotifications: true, m
 		sessionManager: { getBranch: () => entries, getSessionId: () => "sess-1", getSessionFile: () => "/s/sess-1.jsonl" },
 	};
 	const record = (customType: typeof OM_OBSERVATIONS_RECORDED | typeof OM_OBSERVATIONS_DROPPED, data: unknown) =>
-		recordMemoryEntry(pi, config, ctx, customType, data);
+		recordMemoryEntry(pi, config, ctx, entries, customType, data);
 	return { record, notify, ctx, pi };
 }
 
@@ -93,6 +93,25 @@ describe("recordMemoryEntry", () => {
 
 		expect(notify).not.toHaveBeenCalled();
 		expect(readFileSync(memoryFile(), "utf-8")).toContain("observer +1 observation");
+	});
+
+	it("appends when the branch only grew after the worker read it", () => {
+		const read = [textCustomMessage("raw-1", "a")];
+		const { pi, ctx } = setup([...read, textCustomMessage("raw-2", "b")]);
+
+		expect(recordMemoryEntry(pi, { showWorkerNotifications: false, memoryFile: false }, ctx, read, OM_OBSERVATIONS_RECORDED, { observations: [obsA], coversUpToId: "raw-1" })).toBe(true);
+		expect(pi.appendEntry).toHaveBeenCalledTimes(1);
+	});
+
+	it("refuses to append once the branch the worker read is no longer current", () => {
+		const shared = textCustomMessage("54e12a5b", "a");
+		const read = [shared, textCustomMessage("6fe29b75", "b")];
+		const { pi, ctx, notify } = setup([shared, textCustomMessage("retry-1", "c")]);
+
+		expect(recordMemoryEntry(pi, { showWorkerNotifications: true, memoryFile: true }, ctx, read, OM_OBSERVATIONS_RECORDED, { observations: [obsA], coversUpToId: "6fe29b75" })).toBe(false);
+		expect(pi.appendEntry).not.toHaveBeenCalled();
+		expect(notify).not.toHaveBeenCalled();
+		expect(existsSync(memoryFile())).toBe(false);
 	});
 });
 

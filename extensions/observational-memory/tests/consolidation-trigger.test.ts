@@ -159,6 +159,10 @@ function setup(args: {
 		setSessionId: (next: string) => {
 			sessionId = next;
 		},
+		/** Move to another branch, as `/tree` or editing an earlier message does. */
+		navigate: (branch: TestEntry[]) => {
+			entries = [...branch];
+		},
 		getEntries: () => entries,
 	};
 }
@@ -296,6 +300,27 @@ describe("V3 consolidation trigger", () => {
 			thinkingLevel: "minimal",
 		}));
 		expect(pi.appendEntry).toHaveBeenCalledWith(OM_OBSERVATIONS_RECORDED, { observations: [obs], coversUpToId: "raw-1" });
+	});
+
+	// Real shape from a 2026-10-18 session: the observer read a branch ending at
+	// `6fe29b75`, the user went back to its parent `54e12a5b`, and the
+	// observations landed on the new branch with a coverage marker not on it.
+	it("drops a worker result when the user moved to another branch while it ran", async () => {
+		const shared = textCustomMessage("54e12a5b", "aaaaaaaa");
+		const abandoned = textCustomMessage("6fe29b75", "bbbbbbbb");
+		const obs = observation("cccccccccccc", { sourceEntryIds: ["54e12a5b", "6fe29b75"], tokenCount: 4 });
+		const { fire, runLaunchedWork, pi, navigate } = setup({ entries: [shared, abandoned] });
+		mockAgents.runObserver.mockImplementationOnce(async () => {
+			navigate([shared, textCustomMessage("retry-1", "cccccccc")]);
+			return [obs];
+		});
+
+		fire();
+		await runLaunchedWork();
+
+		expect(mockAgents.runObserver).toHaveBeenCalledWith(expect.objectContaining({ allowedSourceEntryIds: ["54e12a5b", "6fe29b75"] }));
+		expect(pi.appendEntry).not.toHaveBeenCalled();
+		expect(mockAgents.runReflector).not.toHaveBeenCalled();
 	});
 
 	it("forwards OAuth-shaped auth (headers, no apiKey) to the observer agent", async () => {
