@@ -25,7 +25,7 @@ import {
 	observationToSummaryLine,
 	realTokensSinceAnchor,
 	rawTokensSinceObservationCoverage,
-	observedTokensSinceReflectionCoverage,
+	rawObservedTokensSinceReflectionCoverage,
 	reflectionToSummaryLine,
 	type Entry,
 	type Observation,
@@ -118,7 +118,7 @@ function stageTokens(entries: Entry[], customType: V3MemoryCustomType, currentTo
 
 function anyStageDue(entries: Entry[], runtime: Runtime, currentTokens: number | undefined): boolean {
 	return stageDue(entries, runtime, currentTokens, OM_OBSERVATIONS_RECORDED, rawTokensSinceObservationCoverage, runtime.config.observeAfterTokens)
-		|| stageDue(entries, runtime, currentTokens, OM_REFLECTIONS_RECORDED, observedTokensSinceReflectionCoverage, runtime.config.reflectAfterTokens);
+		|| stageDue(entries, runtime, currentTokens, OM_REFLECTIONS_RECORDED, rawObservedTokensSinceReflectionCoverage, runtime.config.reflectAfterTokens);
 }
 
 function shouldNotifyWorker(runtime: Runtime, ctx: ConsolidationCtx): boolean {
@@ -561,7 +561,7 @@ async function runReflectorStage(
 	resolver: ModelResolver,
 ): Promise<ReflectorStageResult> {
 	const entries = ctx.sessionManager.getBranch() as Entry[];
-	const reflectionTokens = stageTokens(entries, OM_REFLECTIONS_RECORDED, realContextTokens(ctx), observedTokensSinceReflectionCoverage);
+	const reflectionTokens = stageTokens(entries, OM_REFLECTIONS_RECORDED, realContextTokens(ctx), rawObservedTokensSinceReflectionCoverage);
 	if (reflectionTokens < runtime.config.reflectAfterTokens) return { outcome: "continue", sameRunReflections: [] };
 
 	const observationCoverageId = latestCoverageMarkerId(entries, OM_OBSERVATIONS_RECORDED);

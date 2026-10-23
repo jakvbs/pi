@@ -6,10 +6,10 @@ import {
 	diffProjection,
 	foldLedger,
 	fullProjection,
-	observedTokensSinceLastCompaction,
-	rawTokensSinceLastCompaction,
+	measuredObservedTokensSinceLastCompaction,
+	measuredTokensSinceLastCompaction,
 	rawTokensSinceObservationCoverage,
-	observedTokensSinceReflectionCoverage,
+	rawObservedTokensSinceReflectionCoverage,
 	visibleProjection,
 	type Entry,
 } from "../session-ledger/index.ts";
@@ -61,9 +61,9 @@ export function registerStatusCommand(pi: ExtensionAPI, runtime: Runtime): void 
 				[addedSuffix(drift.reflectionsOnlyInFull.length)],
 			);
 			const obsProgress = rawTokensSinceObservationCoverage(entries);
-			const reflectionProgress = observedTokensSinceReflectionCoverage(entries);
-			const activationProgress = rawTokensSinceLastCompaction(entries);
-			const unobservedSinceCompaction = Math.max(0, activationProgress - observedTokensSinceLastCompaction(entries));
+			const reflectionProgress = rawObservedTokensSinceReflectionCoverage(entries);
+			const activationProgress = measuredTokensSinceLastCompaction(entries);
+			const unobservedSinceCompaction = Math.max(0, activationProgress - measuredObservedTokensSinceLastCompaction(entries));
 			const contextWindow = typeof ctx.model?.contextWindow === "number" ? ctx.model.contextWindow : undefined;
 			const activationThreshold = resolveCompactAfterTokens(runtime.config, contextWindow);
 
@@ -83,7 +83,7 @@ export function registerStatusCommand(pi: ExtensionAPI, runtime: Runtime): void 
 				"",
 				"── Activity ──",
 				`Next observation: ~${obsProgress.toLocaleString()} / ${runtime.config.observeAfterTokens.toLocaleString()} tokens (${pct(obsProgress, runtime.config.observeAfterTokens)}%)`,
-				`Next reflection:  ~${reflectionProgress.toLocaleString()} / ${runtime.config.reflectAfterTokens.toLocaleString()} observed tokens (${pct(reflectionProgress, runtime.config.reflectAfterTokens)}%)`,
+				`Next reflection:  ~${reflectionProgress.toLocaleString()} / ${runtime.config.reflectAfterTokens.toLocaleString()} observed source tokens (${pct(reflectionProgress, runtime.config.reflectAfterTokens)}%)`,
 				`Next activation:  ~${activationProgress.toLocaleString()} / ${activationThreshold.toLocaleString()} source tokens (${pct(activationProgress, activationThreshold)}%)`,
 				`Observer backlog: ~${unobservedSinceCompaction.toLocaleString()} unobserved source tokens since the compaction boundary`,
 				`Visible observation pool: ~${visibleObservationTokens.toLocaleString()} / ${runtime.config.observationsPoolMaxTokens.toLocaleString()} tokens (${pct(visibleObservationTokens, runtime.config.observationsPoolMaxTokens)}%)`,

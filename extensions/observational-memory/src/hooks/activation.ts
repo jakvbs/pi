@@ -14,7 +14,7 @@ import {
 	compactionRangeStartIndex,
 	entryIndexForId,
 	measuredSourceTokens,
-	rawTokensSinceLastCompaction,
+	measuredTokensSinceLastCompaction,
 	renderSummaryWithBudget,
 	sumTokensAfterIndex,
 	type Entry,
@@ -80,7 +80,7 @@ async function activate(
 	let entries = branch(ctx);
 	const contextWindow = typeof ctx.model?.contextWindow === "number" ? ctx.model.contextWindow : undefined;
 	const threshold = resolveCompactAfterTokens(runtime.config, contextWindow);
-	const tailTokens = rawTokensSinceLastCompaction(entries);
+	const tailTokens = measuredTokensSinceLastCompaction(entries);
 	if (tailTokens < threshold) return undefined;
 
 	const keepRecentTokens = Math.floor(threshold * ACTIVATION_KEEP_RECENT_RATIO);

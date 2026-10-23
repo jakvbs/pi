@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
 	compactionRangeStartIndex,
-	observedTokensSinceLastCompaction,
-	observedTokensSinceReflectionCoverage,
-	rawTokensSinceLastCompaction,
+	measuredObservedTokensSinceLastCompaction,
+	rawObservedTokensSinceReflectionCoverage,
+	measuredTokensSinceLastCompaction,
 	unobservedSourceSpanBefore,
 } from "../src/session-ledger/index.ts";
 import {
@@ -34,7 +34,7 @@ describe("compaction range start", () => {
 		];
 
 		expect(compactionRangeStartIndex(entries)).toBe(2);
-		expect(rawTokensSinceLastCompaction(entries)).toBe(2);
+		expect(measuredTokensSinceLastCompaction(entries)).toBe(2);
 	});
 
 	it("starts after the compaction entry when its first kept id is missing", () => {
@@ -45,7 +45,7 @@ describe("compaction range start", () => {
 		];
 
 		expect(compactionRangeStartIndex(entries)).toBe(2);
-		expect(rawTokensSinceLastCompaction(entries)).toBe(1);
+		expect(measuredTokensSinceLastCompaction(entries)).toBe(1);
 	});
 });
 
@@ -53,7 +53,7 @@ describe("observed tokens since the latest compaction", () => {
 	it("is zero without observation coverage", () => {
 		const entries = [textCustomMessage("raw-1", "aaaaaaaaaaaa")];
 
-		expect(observedTokensSinceLastCompaction(entries)).toBe(0);
+		expect(measuredObservedTokensSinceLastCompaction(entries)).toBe(0);
 	});
 
 	it("counts only source tokens through the observation frontier", () => {
@@ -65,8 +65,8 @@ describe("observed tokens since the latest compaction", () => {
 			reflectionsRecordedEntry("om-ref", { reflections: [reflection("eeeeeeeeeeee", ["aaaaaaaaaaaa"])], coversUpToId: "raw-3" }),
 		];
 
-		expect(observedTokensSinceLastCompaction(entries)).toBe(3);
-		expect(rawTokensSinceLastCompaction(entries)).toBe(6);
+		expect(measuredObservedTokensSinceLastCompaction(entries)).toBe(3);
+		expect(measuredTokensSinceLastCompaction(entries)).toBe(6);
 	});
 
 	it("ignores coverage that precedes the compaction boundary", () => {
@@ -77,7 +77,7 @@ describe("observed tokens since the latest compaction", () => {
 			textCustomMessage("raw-2", "aaaaaaaa"),
 		];
 
-		expect(observedTokensSinceLastCompaction(entries)).toBe(0);
+		expect(measuredObservedTokensSinceLastCompaction(entries)).toBe(0);
 	});
 
 	it("counts from the compaction boundary once coverage passes it", () => {
@@ -90,7 +90,7 @@ describe("observed tokens since the latest compaction", () => {
 			textCustomMessage("raw-4", "aaaaaaaaaaaa"),
 		];
 
-		expect(observedTokensSinceLastCompaction(entries)).toBe(3);
+		expect(measuredObservedTokensSinceLastCompaction(entries)).toBe(3);
 	});
 });
 
@@ -136,7 +136,7 @@ describe("observed tokens since reflection coverage", () => {
 	}
 
 	it("is zero without observation coverage", () => {
-		expect(observedTokensSinceReflectionCoverage([textCustomMessage("raw-1", "aaaaaaaaaaaa")])).toBe(0);
+		expect(rawObservedTokensSinceReflectionCoverage([textCustomMessage("raw-1", "aaaaaaaaaaaa")])).toBe(0);
 	});
 
 	it("counts everything observed before any reflection", () => {
@@ -146,7 +146,7 @@ describe("observed tokens since reflection coverage", () => {
 			coverage("om-1", "raw-1"),
 		];
 
-		expect(observedTokensSinceReflectionCoverage(entries)).toBe(3);
+		expect(rawObservedTokensSinceReflectionCoverage(entries)).toBe(3);
 	});
 
 	it("counts only source between the reflection marker and the observation frontier", () => {
@@ -160,7 +160,7 @@ describe("observed tokens since reflection coverage", () => {
 			textCustomMessage("raw-4", "aaaaaaaaaaaaaaaa"), // 4, unobserved backlog
 		];
 
-		expect(observedTokensSinceReflectionCoverage(entries)).toBe(2);
+		expect(rawObservedTokensSinceReflectionCoverage(entries)).toBe(2);
 	});
 
 	it("is zero when reflection coverage has caught up with observation coverage", () => {
@@ -171,6 +171,6 @@ describe("observed tokens since reflection coverage", () => {
 			textCustomMessage("raw-2", "aaaaaaaaaaaaaaaaaaaaaaaa"),
 		];
 
-		expect(observedTokensSinceReflectionCoverage(entries)).toBe(0);
+		expect(rawObservedTokensSinceReflectionCoverage(entries)).toBe(0);
 	});
 });
