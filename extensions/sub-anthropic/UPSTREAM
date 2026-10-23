@@ -1,0 +1,4 @@
+[upstream]
+	url = https://github.com/spksoft/pi-sub-anthropic
+	branch = main
+	commit = 4cc57901ab6f6ece367faff4cae8308fa0b4cccd

@@ -1,0 +1,4 @@
+[upstream]
+	url = https://github.com/elpapi42/pi-observational-memory
+	branch = master
+	commit = 022da5e5554d04dfdc876ed7dac4a42c6b83dfd4
