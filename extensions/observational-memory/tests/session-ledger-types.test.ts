@@ -9,24 +9,14 @@ import {
 	buildObservationsRecordedData,
 	buildReflectionsRecordedData,
 	isMemoryDetails,
-	isObservationsDroppedData,
-	isObservationsDroppedEntry,
-	isObservationsRecordedData,
-	isObservationsRecordedEntry,
 	isObservation,
 	isReflection,
-	isReflectionsRecordedData,
-	isReflectionsRecordedEntry,
 } from "../src/session-ledger/index.ts";
 import {
 	memoryDetails,
 	observation,
-	observationsDroppedEntry,
-	observationsRecordedEntry,
 	oldV2CompactionDetails,
-	oldV2ObservationEntry,
 	reflection,
-	reflectionsRecordedEntry,
 } from "./fixtures/session.ts";
 
 describe("session-ledger V3 type guards and builders", () => {
@@ -50,22 +40,6 @@ describe("session-ledger V3 type guards and builders", () => {
 		expect(isReflection({ ...reflection("111111111111"), tokenCount: undefined })).toBe(false);
 	});
 
-	it("accepts non-empty V3 ledger entry data", () => {
-		const obsData = { observations: [observation("aaaaaaaaaaaa")], coversUpToId: "raw-1" };
-		const refData = { reflections: [reflection("eeeeeeeeeeee", ["aaaaaaaaaaaa"])], coversUpToId: "raw-2" };
-		const dropData = { observationIds: ["aaaaaaaaaaaa"], coversUpToId: "ref-entry-1" };
-
-		expect(isObservationsRecordedData(obsData)).toBe(true);
-		expect(isReflectionsRecordedData(refData)).toBe(true);
-		expect(isObservationsDroppedData(dropData)).toBe(true);
-	});
-
-	it("rejects empty ledger entry data so no empty progress entries can be appended", () => {
-		expect(isObservationsRecordedData({ observations: [], coversUpToId: "raw-1" })).toBe(false);
-		expect(isReflectionsRecordedData({ reflections: [], coversUpToId: "raw-1" })).toBe(false);
-		expect(isObservationsDroppedData({ observationIds: [], coversUpToId: "raw-1" })).toBe(false);
-	});
-
 	it("builders return undefined for empty arrays and data for non-empty arrays", () => {
 		expect(buildObservationsRecordedData([], "raw-1")).toBeUndefined();
 		expect(buildReflectionsRecordedData([], "raw-1")).toBeUndefined();
@@ -85,21 +59,6 @@ describe("session-ledger V3 type guards and builders", () => {
 		});
 	});
 
-	it("recognizes V3 memory entries", () => {
-		expect(isObservationsRecordedEntry(observationsRecordedEntry("om-aaaaaaaaaaaa", {
-			observations: [observation("aaaaaaaaaaaa")],
-			coversUpToId: "raw-1",
-		}))).toBe(true);
-		expect(isReflectionsRecordedEntry(reflectionsRecordedEntry("om-eeeeeeeeeeee", {
-			reflections: [reflection("eeeeeeeeeeee", ["aaaaaaaaaaaa"])],
-			coversUpToId: "raw-1",
-		}))).toBe(true);
-		expect(isObservationsDroppedEntry(observationsDroppedEntry("om-drop-1", {
-			observationIds: ["aaaaaaaaaaaa"],
-			coversUpToId: "om-eeeeeeeeeeee",
-		}))).toBe(true);
-	});
-
 	it("accepts flat V3 folded memory details", () => {
 		expect(isMemoryDetails(memoryDetails({
 			fullFold: true,
@@ -108,8 +67,7 @@ describe("session-ledger V3 type guards and builders", () => {
 		}))).toBe(true);
 	});
 
-	it("ignores old V2 observation entries and old V2 compaction details", () => {
-		expect(isObservationsRecordedEntry(oldV2ObservationEntry("v2-entry"))).toBe(false);
+	it("ignores old V2 compaction details", () => {
 		expect(isMemoryDetails(oldV2CompactionDetails())).toBe(false);
 	});
 });

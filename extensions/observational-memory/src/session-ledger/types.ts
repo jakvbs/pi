@@ -120,31 +120,6 @@ export function isReflection(value: unknown): value is Reflection {
 	);
 }
 
-export function isObservationsRecordedData(value: unknown): value is ObservationsRecordedEntryData {
-	if (!isPlainRecord(value)) return false;
-	return (
-		Array.isArray(value.observations) &&
-		value.observations.length > 0 &&
-		value.observations.every(isObservation) &&
-		isNonEmptyString(value.coversUpToId)
-	);
-}
-
-export function isReflectionsRecordedData(value: unknown): value is ReflectionsRecordedEntryData {
-	if (!isPlainRecord(value)) return false;
-	return (
-		Array.isArray(value.reflections) &&
-		value.reflections.length > 0 &&
-		value.reflections.every(isReflection) &&
-		isNonEmptyString(value.coversUpToId)
-	);
-}
-
-export function isObservationsDroppedData(value: unknown): value is ObservationsDroppedEntryData {
-	if (!isPlainRecord(value)) return false;
-	return isNonEmptyStringArray(value.observationIds) && isNonEmptyString(value.coversUpToId);
-}
-
 export function isMemoryDetails(value: unknown): value is MemoryDetails {
 	if (!isPlainRecord(value)) return false;
 	return (
@@ -157,30 +132,6 @@ export function isMemoryDetails(value: unknown): value is MemoryDetails {
 		value.reflections.every(isReflection) &&
 		(value.foldThroughEntryId === undefined || typeof value.foldThroughEntryId === "string")
 	);
-}
-
-export function isObservationsRecordedEntry(entry: Entry): entry is Entry & {
-	type: "custom";
-	customType: typeof OM_OBSERVATIONS_RECORDED;
-	data: ObservationsRecordedEntryData;
-} {
-	return entry.type === "custom" && entry.customType === OM_OBSERVATIONS_RECORDED && isObservationsRecordedData(entry.data);
-}
-
-export function isReflectionsRecordedEntry(entry: Entry): entry is Entry & {
-	type: "custom";
-	customType: typeof OM_REFLECTIONS_RECORDED;
-	data: ReflectionsRecordedEntryData;
-} {
-	return entry.type === "custom" && entry.customType === OM_REFLECTIONS_RECORDED && isReflectionsRecordedData(entry.data);
-}
-
-export function isObservationsDroppedEntry(entry: Entry): entry is Entry & {
-	type: "custom";
-	customType: typeof OM_OBSERVATIONS_DROPPED;
-	data: ObservationsDroppedEntryData;
-} {
-	return entry.type === "custom" && entry.customType === OM_OBSERVATIONS_DROPPED && isObservationsDroppedData(entry.data);
 }
 
 export function buildObservationsRecordedData(

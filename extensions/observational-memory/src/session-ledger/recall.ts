@@ -1,7 +1,8 @@
+import { branchLedger } from "./ledger.ts";
 import {
-	isObservationsDroppedEntry,
-	isObservationsRecordedEntry,
-	isReflectionsRecordedEntry,
+	OM_OBSERVATIONS_DROPPED,
+	OM_OBSERVATIONS_RECORDED,
+	OM_REFLECTIONS_RECORDED,
 	type Entry,
 	type Observation,
 	type Reflection,
@@ -99,22 +100,21 @@ function indexLedger(entries: Entry[]): {
 	const reflections: IndexedReflection[] = [];
 	const droppedIds = new Set<string>();
 
-	for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
-		const entry = entries[entryIndex];
-		if (isObservationsRecordedEntry(entry)) {
-			entry.data.observations.forEach((observation, recordIndex) => {
-				observations.push({ observation, entryId: entry.id, entryIndex, recordIndex });
-			});
-			continue;
-		}
-		if (isReflectionsRecordedEntry(entry)) {
-			entry.data.reflections.forEach((reflection, recordIndex) => {
-				reflections.push({ reflection, entryId: entry.id, entryIndex, recordIndex });
-			});
-			continue;
-		}
-		if (isObservationsDroppedEntry(entry)) {
-			entry.data.observationIds.forEach((id) => droppedIds.add(id));
+	for (const { entry, index: entryIndex } of branchLedger(entries)) {
+		switch (entry.customType) {
+			case OM_OBSERVATIONS_RECORDED:
+				entry.data.observations.forEach((observation, recordIndex) => {
+					observations.push({ observation, entryId: entry.id, entryIndex, recordIndex });
+				});
+				break;
+			case OM_REFLECTIONS_RECORDED:
+				entry.data.reflections.forEach((reflection, recordIndex) => {
+					reflections.push({ reflection, entryId: entry.id, entryIndex, recordIndex });
+				});
+				break;
+			case OM_OBSERVATIONS_DROPPED:
+				entry.data.observationIds.forEach((id) => droppedIds.add(id));
+				break;
 		}
 	}
 

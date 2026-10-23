@@ -1,8 +1,9 @@
+import { branchLedger } from "./ledger.ts";
 import { observationToSummaryLine, reflectionToSummaryLine } from "./render-summary.ts";
 import {
-	isObservationsDroppedEntry,
-	isObservationsRecordedEntry,
-	isReflectionsRecordedEntry,
+	OM_OBSERVATIONS_DROPPED,
+	OM_OBSERVATIONS_RECORDED,
+	OM_REFLECTIONS_RECORDED,
 	type Entry,
 	type Observation,
 	type Reflection,
@@ -11,10 +12,8 @@ import {
 type ChangeOrigin = { entryId: string; timestamp?: string };
 
 /**
- * What one memory ledger entry changed, with the same semantics as
- * `fullProjection`: first valid record wins, so an entry that only repeats
- * known ids changes nothing, and an entry whose coverage marker is not on the
- * branch is ignored.
+ * What one entry of the branch ledger (`branchLedger`) changed. First valid
+ * record wins, so an entry that only repeats known ids changes nothing.
  */
 export type MemoryChange =
 	| (ChangeOrigin & { kind: "observed"; observations: Observation[] })
@@ -27,33 +26,33 @@ export function memoryChangelog(entries: Entry[]): MemoryChange[] {
 	const reflectionIds = new Set<string>();
 	const droppedIds = new Set<string>();
 	const changes: MemoryChange[] = [];
-	const branchIds = new Set(entries.map((entry) => entry.id));
 
-	for (const entry of entries) {
-		if (!isMemoryEntryOnBranch(entry, branchIds)) continue;
+	for (const { entry } of branchLedger(entries)) {
 		const origin = { entryId: entry.id, timestamp: entry.timestamp };
-		if (isObservationsRecordedEntry(entry)) {
-			const added = entry.data.observations.filter((observation) => !observationsById.has(observation.id));
-			for (const observation of added) observationsById.set(observation.id, observation);
-			if (added.length > 0) changes.push({ ...origin, kind: "observed", observations: added });
-		} else if (isReflectionsRecordedEntry(entry)) {
-			const added = entry.data.reflections.filter((reflection) => !reflectionIds.has(reflection.id));
-			for (const reflection of added) reflectionIds.add(reflection.id);
-			if (added.length > 0) changes.push({ ...origin, kind: "reflected", reflections: added });
-		} else if (isObservationsDroppedEntry(entry)) {
-			const ids = [...new Set(entry.data.observationIds)].filter((id) => !droppedIds.has(id));
-			for (const id of ids) droppedIds.add(id);
-			const observations = ids.flatMap((id) => observationsById.get(id) ?? []);
-			const unknownIds = ids.filter((id) => !observationsById.has(id));
-			if (ids.length > 0) changes.push({ ...origin, kind: "dropped", observations, unknownIds });
+		switch (entry.customType) {
+			case OM_OBSERVATIONS_RECORDED: {
+				const added = entry.data.observations.filter((observation) => !observationsById.has(observation.id));
+				for (const observation of added) observationsById.set(observation.id, observation);
+				if (added.length > 0) changes.push({ ...origin, kind: "observed", observations: added });
+				break;
+			}
+			case OM_REFLECTIONS_RECORDED: {
+				const added = entry.data.reflections.filter((reflection) => !reflectionIds.has(reflection.id));
+				for (const reflection of added) reflectionIds.add(reflection.id);
+				if (added.length > 0) changes.push({ ...origin, kind: "reflected", reflections: added });
+				break;
+			}
+			case OM_OBSERVATIONS_DROPPED: {
+				const ids = [...new Set(entry.data.observationIds)].filter((id) => !droppedIds.has(id));
+				for (const id of ids) droppedIds.add(id);
+				const observations = ids.flatMap((id) => observationsById.get(id) ?? []);
+				const unknownIds = ids.filter((id) => !observationsById.has(id));
+				if (ids.length > 0) changes.push({ ...origin, kind: "dropped", observations, unknownIds });
+				break;
+			}
 		}
 	}
 	return changes;
-}
-
-function isMemoryEntryOnBranch(entry: Entry, branchIds: Set<string>): boolean {
-	const coversUpToId = (entry.data as { coversUpToId?: unknown } | undefined)?.coversUpToId;
-	return typeof coversUpToId === "string" && branchIds.has(coversUpToId);
 }
 
 function plural(count: number, noun: string): string {
