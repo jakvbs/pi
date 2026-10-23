@@ -226,7 +226,7 @@ function rawTokensSinceCoverage(entries, customType) {
 function rawTokensSinceObservationCoverage(entries) {
   return rawTokensSinceCoverage(entries, OM_OBSERVATIONS_RECORDED);
 }
-function observedTokensSinceReflectionCoverage(entries) {
+function rawObservedTokensSinceReflectionCoverage(entries) {
   const reflectionIndex = latestCoverageIndex(entries, OM_REFLECTIONS_RECORDED);
   const observationIndex = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
   if (observationIndex <= reflectionIndex) return 0;
@@ -329,10 +329,10 @@ function compactionRangeStartIndex(entries) {
   const firstKeptIndex = entryIndexForId(entries, entries[compactionIndex].firstKeptEntryId);
   return firstKeptIndex === -1 ? compactionIndex + 1 : firstKeptIndex;
 }
-function rawTokensSinceLastCompaction(entries) {
+function measuredTokensSinceLastCompaction(entries) {
   return sumTokensAfterIndex(measuredSourceTokens(entries), compactionRangeStartIndex(entries) - 1);
 }
-function observedTokensSinceLastCompaction(entries) {
+function measuredObservedTokensSinceLastCompaction(entries) {
   const start = compactionRangeStartIndex(entries);
   const coverageIndex = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
   if (coverageIndex < start) return 0;
@@ -1251,9 +1251,9 @@ function registerStatusCommand(pi, runtime) {
         [addedSuffix(drift.reflectionsOnlyInFull.length)]
       );
       const obsProgress = rawTokensSinceObservationCoverage(entries);
-      const reflectionProgress = observedTokensSinceReflectionCoverage(entries);
-      const activationProgress = rawTokensSinceLastCompaction(entries);
-      const unobservedSinceCompaction = Math.max(0, activationProgress - observedTokensSinceLastCompaction(entries));
+      const reflectionProgress = rawObservedTokensSinceReflectionCoverage(entries);
+      const activationProgress = measuredTokensSinceLastCompaction(entries);
+      const unobservedSinceCompaction = Math.max(0, activationProgress - measuredObservedTokensSinceLastCompaction(entries));
       const contextWindow = typeof ctx.model?.contextWindow === "number" ? ctx.model.contextWindow : void 0;
       const activationThreshold = resolveCompactAfterTokens(runtime.config, contextWindow);
       const passiveLines = runtime.config.passive === true ? [
@@ -1269,7 +1269,7 @@ function registerStatusCommand(pi, runtime) {
         "",
         "\u2500\u2500 Activity \u2500\u2500",
         `Next observation: ~${obsProgress.toLocaleString()} / ${runtime.config.observeAfterTokens.toLocaleString()} tokens (${pct(obsProgress, runtime.config.observeAfterTokens)}%)`,
-        `Next reflection:  ~${reflectionProgress.toLocaleString()} / ${runtime.config.reflectAfterTokens.toLocaleString()} observed tokens (${pct(reflectionProgress, runtime.config.reflectAfterTokens)}%)`,
+        `Next reflection:  ~${reflectionProgress.toLocaleString()} / ${runtime.config.reflectAfterTokens.toLocaleString()} observed source tokens (${pct(reflectionProgress, runtime.config.reflectAfterTokens)}%)`,
         `Next activation:  ~${activationProgress.toLocaleString()} / ${activationThreshold.toLocaleString()} source tokens (${pct(activationProgress, activationThreshold)}%)`,
         `Observer backlog: ~${unobservedSinceCompaction.toLocaleString()} unobserved source tokens since the compaction boundary`,
         `Visible observation pool: ~${visibleObservationTokens.toLocaleString()} / ${runtime.config.observationsPoolMaxTokens.toLocaleString()} tokens (${pct(visibleObservationTokens, runtime.config.observationsPoolMaxTokens)}%)`,
@@ -2289,7 +2289,7 @@ async function activate(pi, runtime, event, ctx) {
   let entries = branch(ctx);
   const contextWindow = typeof ctx.model?.contextWindow === "number" ? ctx.model.contextWindow : void 0;
   const threshold = resolveCompactAfterTokens(runtime.config, contextWindow);
-  const tailTokens = rawTokensSinceLastCompaction(entries);
+  const tailTokens = measuredTokensSinceLastCompaction(entries);
   if (tailTokens < threshold) return void 0;
   const keepRecentTokens = Math.floor(threshold * ACTIVATION_KEEP_RECENT_RATIO);
   const blockAfterTokens = Math.floor(threshold * ACTIVATION_BLOCK_AFTER_RATIO);
@@ -3036,7 +3036,7 @@ function stageTokens(entries, customType, currentTokens, rawEstimateFn) {
   return real !== void 0 ? Math.max(raw, real) : raw;
 }
 function anyStageDue(entries, runtime, currentTokens) {
-  return stageDue(entries, runtime, currentTokens, OM_OBSERVATIONS_RECORDED, rawTokensSinceObservationCoverage, runtime.config.observeAfterTokens) || stageDue(entries, runtime, currentTokens, OM_REFLECTIONS_RECORDED, observedTokensSinceReflectionCoverage, runtime.config.reflectAfterTokens);
+  return stageDue(entries, runtime, currentTokens, OM_OBSERVATIONS_RECORDED, rawTokensSinceObservationCoverage, runtime.config.observeAfterTokens) || stageDue(entries, runtime, currentTokens, OM_REFLECTIONS_RECORDED, rawObservedTokensSinceReflectionCoverage, runtime.config.reflectAfterTokens);
 }
 function shouldNotifyWorker(runtime, ctx) {
   return runtime.config.showWorkerNotifications && ctx.hasUI;
@@ -3370,7 +3370,7 @@ async function runObserverStage(pi, runtime, ctx, resolver) {
 }
 async function runReflectorStage(pi, runtime, ctx, resolver) {
   const entries = ctx.sessionManager.getBranch();
-  const reflectionTokens = stageTokens(entries, OM_REFLECTIONS_RECORDED, realContextTokens(ctx), observedTokensSinceReflectionCoverage);
+  const reflectionTokens = stageTokens(entries, OM_REFLECTIONS_RECORDED, realContextTokens(ctx), rawObservedTokensSinceReflectionCoverage);
   if (reflectionTokens < runtime.config.reflectAfterTokens) return { outcome: "continue", sameRunReflections: [] };
   const observationCoverageId = latestCoverageMarkerId(entries, OM_OBSERVATIONS_RECORDED);
   if (!observationCoverageId) return { outcome: "continue", sameRunReflections: [] };

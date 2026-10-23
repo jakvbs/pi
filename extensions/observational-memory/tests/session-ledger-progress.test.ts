@@ -9,7 +9,7 @@ import {
 	measuredSourceTokens,
 	rawTokensAfterIndex,
 	rawTokensSinceDropCoverage,
-	rawTokensSinceLastCompaction,
+	measuredTokensSinceLastCompaction,
 	rawTokensSinceObservationCoverage,
 	rawTokensSinceReflectionCoverage,
 } from "../src/session-ledger/index.ts";
@@ -159,7 +159,7 @@ describe("session-ledger V3 progress helpers", () => {
 
 		// Before the first usage and after the last one there is no baseline: local estimate.
 		expect(measuredSourceTokens(entries)).toEqual([100, 100, 250, 0, 250, 100]);
-		expect(rawTokensSinceLastCompaction(entries)).toBe(800);
+		expect(measuredTokensSinceLastCompaction(entries)).toBe(800);
 	});
 
 	it("keeps the local estimate across a compaction and when the provider context shrank", () => {
@@ -195,6 +195,6 @@ describe("session-ledger V3 progress helpers", () => {
 			textCustomMessage("raw-2", "bbbbbbbb"),
 		];
 
-		expect(rawTokensSinceLastCompaction(entries)).toBe(3); // raw-1 + raw-2 from live tail starting at firstKeptEntryId
+		expect(measuredTokensSinceLastCompaction(entries)).toBe(3); // raw-1 + raw-2 from live tail starting at firstKeptEntryId
 	});
 });
