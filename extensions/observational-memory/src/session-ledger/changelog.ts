@@ -11,8 +11,10 @@ import {
 type ChangeOrigin = { entryId: string; timestamp?: string };
 
 /**
- * What one memory ledger entry changed, with the same first-valid-record-wins
- * semantics as `foldLedger`: an entry that only repeats known ids changes nothing.
+ * What one memory ledger entry changed, with the same semantics as
+ * `fullProjection`: first valid record wins, so an entry that only repeats
+ * known ids changes nothing, and an entry whose coverage marker is not on the
+ * branch is ignored.
  */
 export type MemoryChange =
 	| (ChangeOrigin & { kind: "observed"; observations: Observation[] })
@@ -25,8 +27,10 @@ export function memoryChangelog(entries: Entry[]): MemoryChange[] {
 	const reflectionIds = new Set<string>();
 	const droppedIds = new Set<string>();
 	const changes: MemoryChange[] = [];
+	const branchIds = new Set(entries.map((entry) => entry.id));
 
 	for (const entry of entries) {
+		if (!isMemoryEntryOnBranch(entry, branchIds)) continue;
 		const origin = { entryId: entry.id, timestamp: entry.timestamp };
 		if (isObservationsRecordedEntry(entry)) {
 			const added = entry.data.observations.filter((observation) => !observationsById.has(observation.id));
@@ -45,6 +49,11 @@ export function memoryChangelog(entries: Entry[]): MemoryChange[] {
 		}
 	}
 	return changes;
+}
+
+function isMemoryEntryOnBranch(entry: Entry, branchIds: Set<string>): boolean {
+	const coversUpToId = (entry.data as { coversUpToId?: unknown } | undefined)?.coversUpToId;
+	return typeof coversUpToId === "string" && branchIds.has(coversUpToId);
 }
 
 function plural(count: number, noun: string): string {

@@ -30,8 +30,11 @@ describe("memoryChangelog", () => {
 		]);
 	});
 
-	it("skips entries that only repeat known ids, like the ledger fold", () => {
+	it("skips entries that only repeat known ids or cover an entry off the branch, like the projection", () => {
 		const entries = [
+			textCustomMessage("raw-1", "hello"),
+			textCustomMessage("raw-2", "world"),
+			observationsRecordedEntry("om-0", { observations: [obsB], coversUpToId: "raw-elsewhere" }),
 			observationsRecordedEntry("om-1", { observations: [obsA], coversUpToId: "raw-1" }),
 			observationsRecordedEntry("om-2", { observations: [{ ...obsA, content: "rewritten" }], coversUpToId: "raw-2" }),
 			observationsDroppedEntry("om-3", { observationIds: ["aaaaaaaaaaaa"], coversUpToId: "om-1" }),
@@ -46,6 +49,7 @@ describe("changePreview", () => {
 	it("names the stage, counts the records, and shortens the first few", () => {
 		const long = observation("dddddddddddd", { content: `${"x".repeat(30)}\nsecond line` });
 		const [change] = memoryChangelog([
+			textCustomMessage("raw-1", "hello"),
 			observationsRecordedEntry("om-1", { observations: [obsA, obsB, long, observation("ffffffffffff")], coversUpToId: "raw-1" }),
 		]);
 

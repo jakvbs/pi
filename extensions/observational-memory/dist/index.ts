@@ -826,7 +826,9 @@ function memoryChangelog(entries) {
   const reflectionIds = /* @__PURE__ */ new Set();
   const droppedIds = /* @__PURE__ */ new Set();
   const changes = [];
+  const branchIds = new Set(entries.map((entry) => entry.id));
   for (const entry of entries) {
+    if (!isMemoryEntryOnBranch(entry, branchIds)) continue;
     const origin = { entryId: entry.id, timestamp: entry.timestamp };
     if (isObservationsRecordedEntry(entry)) {
       const added = entry.data.observations.filter((observation) => !observationsById.has(observation.id));
@@ -845,6 +847,10 @@ function memoryChangelog(entries) {
     }
   }
   return changes;
+}
+function isMemoryEntryOnBranch(entry, branchIds) {
+  const coversUpToId = entry.data?.coversUpToId;
+  return typeof coversUpToId === "string" && branchIds.has(coversUpToId);
 }
 function plural(count, noun) {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
@@ -903,8 +909,7 @@ function bulletList(lines, empty) {
   return lines.length > 0 ? lines.map((line) => `- ${line}`).join("\n") : `_${empty}_`;
 }
 function renderMemoryFile(args) {
-  const changes = memoryChangelog(args.entries);
-  const latest = changes.at(-1);
+  const latest = memoryChangelog(args.entries).at(-1);
   if (!latest) return void 0;
   const memory = fullProjection(args.entries);
   return [
@@ -922,9 +927,6 @@ function renderMemoryFile(args) {
     "## Observations",
     "",
     bulletList(memory.observations.map(observationToSummaryLine), "No active observations."),
-    "",
-    "## Changelog",
-    ...changes.flatMap((change) => ["", `### ${changeTimestamp(change)} \xB7 ${changeHeadline(change)}`, "", changeItems(change).map((line) => `- ${line}`).join("\n")]),
     ""
   ].join("\n");
 }

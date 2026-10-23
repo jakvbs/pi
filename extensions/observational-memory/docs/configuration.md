@@ -303,9 +303,9 @@ When `true`, the extension keeps a markdown copy of each session's memory under 
 observational-memory/memory/<session-id>.md
 ```
 
-The file lists the project, the session file, the current reflections and active observations, and a changelog of every memory change, oldest first, with the records each one added or dropped. It is rewritten after every observer, reflector, and dropper entry, and when Pi starts, resumes, or navigates to another branch, so it always shows the current branch. A rewrite with no new change leaves the bytes unchanged, and the file is replaced by rename, so an editor or `watch` never sees a half-written file. Sessions without memory get no file.
+The file lists the project, the session file, the latest memory change, and the current reflections and active observations. It holds no history: `/om:log full` lists every change, including the content of dropped observations. It is rewritten after every observer, reflector, and dropper entry, and when Pi starts, resumes, or navigates to another branch, so it always shows the current branch. A rewrite with no new change leaves the bytes unchanged, and the file is replaced by rename, so an editor or `watch` never sees a half-written file. Sessions without memory get no file.
 
-The file is a view, not a store: the extension never reads it, and deleting it loses nothing. To keep a history across rewrites, put the directory under git yourself; every memory change then shows up as a diff.
+The file is a view, not a store: the extension never reads it, and deleting it loses nothing. To keep a history outside Pi, put the directory under git and commit on every change (for example from an `inotifywait` loop); each diff then adds new observations and reflections and removes dropped ones.
 
 ## `passive`
 

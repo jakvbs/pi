@@ -9,10 +9,12 @@ import {
 	observationsRecordedEntry,
 	reflection,
 	reflectionsRecordedEntry,
+	textCustomMessage,
 	type TestEntry,
 } from "./fixtures/session.ts";
 
 const entries: TestEntry[] = [
+	textCustomMessage("raw-1", "hello"),
 	observationsRecordedEntry("om-1", { observations: [observation("aaaaaaaaaaaa")], coversUpToId: "raw-1" }, { timestamp: "2026-10-23T09:02:11.000Z" }),
 	reflectionsRecordedEntry("om-2", { reflections: [reflection("eeeeeeeeeeee")], coversUpToId: "om-1" }, { timestamp: "2026-10-23T09:05:00.000Z" }),
 	observationsDroppedEntry("om-3", { observationIds: ["aaaaaaaaaaaa"], coversUpToId: "om-1" }, { timestamp: "2026-10-23T09:06:00.000Z" }),

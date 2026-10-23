@@ -295,7 +295,7 @@ on the `Next activation` line regardless of mode.
 | `consolidateWhenIdle`       | `false`       | Run memory workers only while the agent is idle and abort them when a new run starts. Use when the session model and the memory model share one context budget (e.g. one local llama.cpp server). |
 | `fallbackModel`             | unset         | Optional second memory-worker model: `{ provider, id, thinking }`. Used when the primary memory model fails to resolve, and to retry a worker stage once when its model call errors. |
 | `showWorkerNotifications`   | `true`        | Shows routine observer, reflector, and dropper progress notifications, including what each finished run added or dropped. Warnings and errors are unaffected. |
-| `memoryFile`                | `false`       | Mirrors each session's memory to `<agentDir>/observational-memory/memory/<session-id>.md`: current reflections and observations plus a changelog, rewritten after every memory change. |
+| `memoryFile`                | `false`       | Mirrors each session's current memory to `<agentDir>/observational-memory/memory/<session-id>.md`, rewritten after every memory change. History stays in `/om:log`. |
 | `passive`                   | `false`       | Disables proactive background observation, reflection, maintenance, and memory activation. |
 | `debugLog`                  | `false`       | Writes opt-in per-session extension debug events to Pi's agent directory.                         |
 

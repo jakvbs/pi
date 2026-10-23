@@ -158,7 +158,7 @@ These details are what later visible projections read. The ledger remains the so
 
 ## Memory changes
 
-Every worker writes the ledger through `recordMemoryEntry` (`src/memory-journal.ts`): it appends the entry, then derives the change from the branch with `memoryChangelog` (`src/session-ledger/changelog.ts`). With `showWorkerNotifications`, it notifies the change and a preview of the first three records. With `memoryFile`, it rewrites the session's memory file. `/om:log` and the memory file render the same changelog.
+Every worker writes the ledger through `recordMemoryEntry` (`src/memory-journal.ts`): it appends the entry, then derives the change from the branch with `memoryChangelog` (`src/session-ledger/changelog.ts`). With `showWorkerNotifications`, it notifies the change and a preview of the first three records. With `memoryFile`, it rewrites the session's memory file with the current memory. `/om:log` renders the changelog.
 
 ## Observer flow
 
