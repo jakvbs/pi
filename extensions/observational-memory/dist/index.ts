@@ -91,30 +91,9 @@ function isReflection(value) {
   if (!isPlainRecord(value)) return false;
   return isMemoryId(value.id) && isNonEmptyString(value.content) && !/\r|\n/.test(value.content) && isNonEmptyStringArray(value.supportingObservationIds) && isTokenCount(value.tokenCount);
 }
-function isObservationsRecordedData(value) {
-  if (!isPlainRecord(value)) return false;
-  return Array.isArray(value.observations) && value.observations.length > 0 && value.observations.every(isObservation) && isNonEmptyString(value.coversUpToId);
-}
-function isReflectionsRecordedData(value) {
-  if (!isPlainRecord(value)) return false;
-  return Array.isArray(value.reflections) && value.reflections.length > 0 && value.reflections.every(isReflection) && isNonEmptyString(value.coversUpToId);
-}
-function isObservationsDroppedData(value) {
-  if (!isPlainRecord(value)) return false;
-  return isNonEmptyStringArray(value.observationIds) && isNonEmptyString(value.coversUpToId);
-}
 function isMemoryDetails(value) {
   if (!isPlainRecord(value)) return false;
   return value.type === OM_FOLDED && value.version === 1 && typeof value.fullFold === "boolean" && Array.isArray(value.observations) && value.observations.every(isObservation) && Array.isArray(value.reflections) && value.reflections.every(isReflection) && (value.foldThroughEntryId === void 0 || typeof value.foldThroughEntryId === "string");
-}
-function isObservationsRecordedEntry(entry) {
-  return entry.type === "custom" && entry.customType === OM_OBSERVATIONS_RECORDED && isObservationsRecordedData(entry.data);
-}
-function isReflectionsRecordedEntry(entry) {
-  return entry.type === "custom" && entry.customType === OM_REFLECTIONS_RECORDED && isReflectionsRecordedData(entry.data);
-}
-function isObservationsDroppedEntry(entry) {
-  return entry.type === "custom" && entry.customType === OM_OBSERVATIONS_DROPPED && isObservationsDroppedData(entry.data);
 }
 function buildObservationsRecordedData(observations, coversUpToId) {
   if (observations.length === 0 || !isNonEmptyString(coversUpToId)) return void 0;
@@ -127,6 +106,41 @@ function buildReflectionsRecordedData(reflections, coversUpToId) {
 function buildObservationsDroppedData(observationIds, coversUpToId) {
   if (observationIds.length === 0 || !isNonEmptyString(coversUpToId)) return void 0;
   return { observationIds, coversUpToId };
+}
+
+// src/session-ledger/ledger.ts
+function branchLedger(entries) {
+  const indexes = /* @__PURE__ */ new Map();
+  for (let i = 0; i < entries.length; i++) indexes.set(entries[i].id, i);
+  const ledger = [];
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    if (!isLedgerEntry(entry)) continue;
+    const coverageIndex = indexes.get(entry.data.coversUpToId);
+    if (coverageIndex === void 0) continue;
+    ledger.push({ entry, index, coverageIndex });
+  }
+  return ledger;
+}
+function isLedgerEntry(entry) {
+  if (entry.type !== "custom" || !isRecord(entry.data) || !isNonEmptyString(entry.data.coversUpToId)) return false;
+  const data = entry.data;
+  switch (entry.customType) {
+    case OM_OBSERVATIONS_RECORDED:
+      return isNonEmptyArrayOf(data.observations, isObservation);
+    case OM_REFLECTIONS_RECORDED:
+      return isNonEmptyArrayOf(data.reflections, isReflection);
+    case OM_OBSERVATIONS_DROPPED:
+      return isNonEmptyStringArray(data.observationIds);
+    default:
+      return false;
+  }
+}
+function isRecord(value) {
+  return !!value && typeof value === "object";
+}
+function isNonEmptyArrayOf(value, guard) {
+  return Array.isArray(value) && value.length > 0 && value.every(guard);
 }
 
 // src/tokens.ts
@@ -175,44 +189,19 @@ function entryIndexForId(entries, entryId) {
   const idx = entryIndexById(entries).get(entryId);
   return idx ?? -1;
 }
-function isObject(value) {
-  return typeof value === "object" && value !== null;
-}
-function isNonEmptyArray(value) {
-  return Array.isArray(value) && value.length > 0;
-}
-function isValidCoverageEntry(entry, customType) {
-  if (entry.type !== "custom" || entry.customType !== customType) return false;
-  if (!isObject(entry.data) || typeof entry.data.coversUpToId !== "string") return false;
-  if (customType === OM_OBSERVATIONS_RECORDED) return isNonEmptyArray(entry.data.observations);
-  if (customType === OM_REFLECTIONS_RECORDED) return isNonEmptyArray(entry.data.reflections);
-  return isNonEmptyArray(entry.data.observationIds);
+function furthestCoverage(entries, customType) {
+  let furthest;
+  for (const record of branchLedger(entries)) {
+    if (record.entry.customType !== customType) continue;
+    if (!furthest || record.coverageIndex > furthest.coverageIndex) furthest = record;
+  }
+  return furthest;
 }
 function latestCoverageIndex(entries, customType) {
-  const idToIndex = entryIndexById(entries);
-  let latest = -1;
-  for (const entry of entries) {
-    if (!isValidCoverageEntry(entry, customType)) continue;
-    const coveredIndex = idToIndex.get(entry.data.coversUpToId);
-    if (coveredIndex === void 0) continue;
-    if (coveredIndex > latest) latest = coveredIndex;
-  }
-  return latest;
+  return furthestCoverage(entries, customType)?.coverageIndex ?? -1;
 }
 function latestCoverageMarkerId(entries, customType) {
-  const idToIndex = entryIndexById(entries);
-  let latestIndex = -1;
-  let latestMarkerId;
-  for (const entry of entries) {
-    if (!isValidCoverageEntry(entry, customType)) continue;
-    const coveredIndex = idToIndex.get(entry.data.coversUpToId);
-    if (coveredIndex === void 0) continue;
-    if (coveredIndex > latestIndex) {
-      latestIndex = coveredIndex;
-      latestMarkerId = entry.data.coversUpToId;
-    }
-  }
-  return latestMarkerId;
+  return furthestCoverage(entries, customType)?.entry.data.coversUpToId;
 }
 function earlierCoverageMarkerId(entries, firstId, secondId) {
   if (!firstId) return secondId;
@@ -345,16 +334,16 @@ function rawTokensSinceLastCompaction(entries) {
 }
 function observedTokensSinceLastCompaction(entries) {
   const start = compactionRangeStartIndex(entries);
-  const coverageIndex2 = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
-  if (coverageIndex2 < start) return 0;
+  const coverageIndex = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
+  if (coverageIndex < start) return 0;
   const tokens = measuredSourceTokens(entries);
   let total = 0;
-  for (let i = start; i <= coverageIndex2; i++) total += tokens[i];
+  for (let i = start; i <= coverageIndex; i++) total += tokens[i];
   return Math.round(total);
 }
 function unobservedSourceSpanBefore(entries, cutIndex) {
-  const coverageIndex2 = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
-  const start = Math.max(coverageIndex2 + 1, compactionRangeStartIndex(entries));
+  const coverageIndex = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
+  const start = Math.max(coverageIndex + 1, compactionRangeStartIndex(entries));
   let firstIndex = -1;
   let lastIndex = -1;
   let entryCount = 0;
@@ -371,45 +360,25 @@ function unobservedSourceSpanBefore(entries, cutIndex) {
 }
 
 // src/session-ledger/fold.ts
-function foldEndIndex(entries, upToEntryId) {
-  if (!upToEntryId) return entries.length - 1;
-  const idx = entries.findIndex((entry) => entry.id === upToEntryId);
-  return idx === -1 ? entries.length - 1 : idx;
-}
-function isCustomEntry(entry, customType) {
-  return entry.type === "custom" && entry.customType === customType;
-}
-function foldLedger(entries, options = {}) {
+function foldLedger(entries) {
   const observationsById = /* @__PURE__ */ new Map();
   const reflectionsById = /* @__PURE__ */ new Map();
   const droppedObservationIds = /* @__PURE__ */ new Set();
-  const endIdx = foldEndIndex(entries, options.upToEntryId);
-  for (let i = 0; i <= endIdx; i++) {
-    const entry = entries[i];
-    if (!entry) continue;
-    if (isCustomEntry(entry, OM_OBSERVATIONS_RECORDED)) {
-      if (!isObservationsRecordedData(entry.data)) continue;
-      for (const observation of entry.data.observations) {
-        if (!observationsById.has(observation.id)) {
-          observationsById.set(observation.id, observation);
+  for (const { entry } of branchLedger(entries)) {
+    switch (entry.customType) {
+      case OM_OBSERVATIONS_RECORDED:
+        for (const observation of entry.data.observations) {
+          if (!observationsById.has(observation.id)) observationsById.set(observation.id, observation);
         }
-      }
-      continue;
-    }
-    if (isCustomEntry(entry, OM_REFLECTIONS_RECORDED)) {
-      if (!isReflectionsRecordedData(entry.data)) continue;
-      for (const reflection of entry.data.reflections) {
-        if (!reflectionsById.has(reflection.id)) {
-          reflectionsById.set(reflection.id, reflection);
+        break;
+      case OM_REFLECTIONS_RECORDED:
+        for (const reflection of entry.data.reflections) {
+          if (!reflectionsById.has(reflection.id)) reflectionsById.set(reflection.id, reflection);
         }
-      }
-      continue;
-    }
-    if (isCustomEntry(entry, OM_OBSERVATIONS_DROPPED)) {
-      if (!isObservationsDroppedData(entry.data)) continue;
-      for (const observationId of entry.data.observationIds) {
-        droppedObservationIds.add(observationId);
-      }
+        break;
+      case OM_OBSERVATIONS_DROPPED:
+        for (const observationId of entry.data.observationIds) droppedObservationIds.add(observationId);
+        break;
     }
   }
   const observations = Array.from(observationsById.values());
@@ -445,14 +414,8 @@ function boundaryIndex(entries, indexes, boundary) {
   if (boundary.kind === "none") return -1;
   return indexes.get(boundary.entryId) ?? -1;
 }
-function coverageIndex(entry, indexes) {
-  return indexes.get(entry.data.coversUpToId) ?? -1;
-}
 function isAtOrBefore(index, boundaryIndex2) {
   return index >= 0 && boundaryIndex2 >= 0 && index <= boundaryIndex2;
-}
-function isCoveredAtOrBefore(entry, indexes, boundaryIndex2) {
-  return isAtOrBefore(coverageIndex(entry, indexes), boundaryIndex2);
 }
 function foldProjection(entries, options) {
   const indexes = entryIndexById2(entries);
@@ -464,25 +427,28 @@ function foldProjection(entries, options) {
   const observationsById = /* @__PURE__ */ new Set();
   const reflectionsById = /* @__PURE__ */ new Set();
   const droppedObservationIds = /* @__PURE__ */ new Set();
-  for (const entry of entries) {
-    if (isObservationsRecordedEntry(entry) && isCoveredAtOrBefore(entry, indexes, observationsBoundary)) {
-      for (const observation of entry.data.observations) {
-        if (observationsById.has(observation.id)) continue;
-        observationsById.add(observation.id);
-        observations.push(observation);
-      }
-      continue;
-    }
-    if (isReflectionsRecordedEntry(entry) && isCoveredAtOrBefore(entry, indexes, reflectionsBoundary)) {
-      for (const reflection of entry.data.reflections) {
-        if (reflectionsById.has(reflection.id)) continue;
-        reflectionsById.add(reflection.id);
-        reflections.push(reflection);
-      }
-      continue;
-    }
-    if (isObservationsDroppedEntry(entry) && isCoveredAtOrBefore(entry, indexes, dropsBoundary)) {
-      for (const observationId of entry.data.observationIds) droppedObservationIds.add(observationId);
+  for (const { entry, coverageIndex } of branchLedger(entries)) {
+    switch (entry.customType) {
+      case OM_OBSERVATIONS_RECORDED:
+        if (!isAtOrBefore(coverageIndex, observationsBoundary)) break;
+        for (const observation of entry.data.observations) {
+          if (observationsById.has(observation.id)) continue;
+          observationsById.add(observation.id);
+          observations.push(observation);
+        }
+        break;
+      case OM_REFLECTIONS_RECORDED:
+        if (!isAtOrBefore(coverageIndex, reflectionsBoundary)) break;
+        for (const reflection of entry.data.reflections) {
+          if (reflectionsById.has(reflection.id)) continue;
+          reflectionsById.add(reflection.id);
+          reflections.push(reflection);
+        }
+        break;
+      case OM_OBSERVATIONS_DROPPED:
+        if (!isAtOrBefore(coverageIndex, dropsBoundary)) break;
+        for (const observationId of entry.data.observationIds) droppedObservationIds.add(observationId);
+        break;
     }
   }
   return {
@@ -596,22 +562,21 @@ function indexLedger(entries) {
   const observations = [];
   const reflections = [];
   const droppedIds = /* @__PURE__ */ new Set();
-  for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
-    const entry = entries[entryIndex];
-    if (isObservationsRecordedEntry(entry)) {
-      entry.data.observations.forEach((observation, recordIndex) => {
-        observations.push({ observation, entryId: entry.id, entryIndex, recordIndex });
-      });
-      continue;
-    }
-    if (isReflectionsRecordedEntry(entry)) {
-      entry.data.reflections.forEach((reflection, recordIndex) => {
-        reflections.push({ reflection, entryId: entry.id, entryIndex, recordIndex });
-      });
-      continue;
-    }
-    if (isObservationsDroppedEntry(entry)) {
-      entry.data.observationIds.forEach((id) => droppedIds.add(id));
+  for (const { entry, index: entryIndex } of branchLedger(entries)) {
+    switch (entry.customType) {
+      case OM_OBSERVATIONS_RECORDED:
+        entry.data.observations.forEach((observation, recordIndex) => {
+          observations.push({ observation, entryId: entry.id, entryIndex, recordIndex });
+        });
+        break;
+      case OM_REFLECTIONS_RECORDED:
+        entry.data.reflections.forEach((reflection, recordIndex) => {
+          reflections.push({ reflection, entryId: entry.id, entryIndex, recordIndex });
+        });
+        break;
+      case OM_OBSERVATIONS_DROPPED:
+        entry.data.observationIds.forEach((id) => droppedIds.add(id));
+        break;
     }
   }
   return { observations, reflections, droppedIds };
@@ -826,31 +791,32 @@ function memoryChangelog(entries) {
   const reflectionIds = /* @__PURE__ */ new Set();
   const droppedIds = /* @__PURE__ */ new Set();
   const changes = [];
-  const branchIds = new Set(entries.map((entry) => entry.id));
-  for (const entry of entries) {
-    if (!isMemoryEntryOnBranch(entry, branchIds)) continue;
+  for (const { entry } of branchLedger(entries)) {
     const origin = { entryId: entry.id, timestamp: entry.timestamp };
-    if (isObservationsRecordedEntry(entry)) {
-      const added = entry.data.observations.filter((observation) => !observationsById.has(observation.id));
-      for (const observation of added) observationsById.set(observation.id, observation);
-      if (added.length > 0) changes.push({ ...origin, kind: "observed", observations: added });
-    } else if (isReflectionsRecordedEntry(entry)) {
-      const added = entry.data.reflections.filter((reflection) => !reflectionIds.has(reflection.id));
-      for (const reflection of added) reflectionIds.add(reflection.id);
-      if (added.length > 0) changes.push({ ...origin, kind: "reflected", reflections: added });
-    } else if (isObservationsDroppedEntry(entry)) {
-      const ids = [...new Set(entry.data.observationIds)].filter((id) => !droppedIds.has(id));
-      for (const id of ids) droppedIds.add(id);
-      const observations = ids.flatMap((id) => observationsById.get(id) ?? []);
-      const unknownIds = ids.filter((id) => !observationsById.has(id));
-      if (ids.length > 0) changes.push({ ...origin, kind: "dropped", observations, unknownIds });
+    switch (entry.customType) {
+      case OM_OBSERVATIONS_RECORDED: {
+        const added = entry.data.observations.filter((observation) => !observationsById.has(observation.id));
+        for (const observation of added) observationsById.set(observation.id, observation);
+        if (added.length > 0) changes.push({ ...origin, kind: "observed", observations: added });
+        break;
+      }
+      case OM_REFLECTIONS_RECORDED: {
+        const added = entry.data.reflections.filter((reflection) => !reflectionIds.has(reflection.id));
+        for (const reflection of added) reflectionIds.add(reflection.id);
+        if (added.length > 0) changes.push({ ...origin, kind: "reflected", reflections: added });
+        break;
+      }
+      case OM_OBSERVATIONS_DROPPED: {
+        const ids = [...new Set(entry.data.observationIds)].filter((id) => !droppedIds.has(id));
+        for (const id of ids) droppedIds.add(id);
+        const observations = ids.flatMap((id) => observationsById.get(id) ?? []);
+        const unknownIds = ids.filter((id) => !observationsById.has(id));
+        if (ids.length > 0) changes.push({ ...origin, kind: "dropped", observations, unknownIds });
+        break;
+      }
     }
   }
   return changes;
-}
-function isMemoryEntryOnBranch(entry, branchIds) {
-  const coversUpToId = entry.data?.coversUpToId;
-  return typeof coversUpToId === "string" && branchIds.has(coversUpToId);
 }
 function plural(count, noun) {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
@@ -1149,14 +1115,14 @@ function isCompactAfterTokensMode(value) {
 function validRatioOrUndefined(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 && value < 1 ? value : void 0;
 }
-function isRecord(value) {
+function isRecord2(value) {
   return typeof value === "object" && value !== null;
 }
 function nonEmptyString(value) {
   return typeof value === "string" && value.length > 0 ? value : void 0;
 }
 function normalizeModel(value) {
-  if (!isRecord(value)) return void 0;
+  if (!isRecord2(value)) return void 0;
   const provider = nonEmptyString(value.provider);
   const id = nonEmptyString(value.id);
   if (!provider || !id) return void 0;
@@ -1215,7 +1181,7 @@ function readNamespacedConfig(path) {
   try {
     const raw = JSON.parse(readFileSync2(path, "utf-8"));
     const nested = raw[SETTINGS_KEY];
-    return isRecord(nested) ? normalizeSettingsConfig(nested) : {};
+    return isRecord2(nested) ? normalizeSettingsConfig(nested) : {};
   } catch {
     return {};
   }
@@ -2068,8 +2034,8 @@ function findCutPointAtOrBefore(entries, index, startIndex) {
 }
 function foldThroughEntryIdFor(entries, firstKeptEntryId) {
   const cutIndex = entryIndexForId(entries, firstKeptEntryId);
-  const coverageIndex2 = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
-  return cutIndex !== -1 && coverageIndex2 > cutIndex ? entries[coverageIndex2].id : firstKeptEntryId;
+  const coverageIndex = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
+  return cutIndex !== -1 && coverageIndex > cutIndex ? entries[coverageIndex].id : firstKeptEntryId;
 }
 function resolveCompactionCut(entries, firstKeptEntryId, options) {
   const cutIndex = entryIndexForId(entries, firstKeptEntryId);
@@ -2080,8 +2046,8 @@ function resolveCompactionCut(entries, firstKeptEntryId, options) {
   const coverageMarkerId = latestCoverageMarkerId(entries, OM_OBSERVATIONS_RECORDED);
   if (!coverageMarkerId) return { kind: "uncovered", reason: "no observation coverage", gap };
   const rangeStart = compactionRangeStartIndex(entries);
-  const coverageIndex2 = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
-  if (coverageIndex2 < rangeStart) return { kind: "uncovered", reason: "nothing observed can be compacted", gap };
+  const coverageIndex = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
+  if (coverageIndex < rangeStart) return { kind: "uncovered", reason: "nothing observed can be compacted", gap };
   const safeCutIndex = findCutPointAtOrBefore(entries, gap.firstIndex, rangeStart);
   if (safeCutIndex <= rangeStart) return { kind: "uncovered", reason: "nothing observed can be compacted", gap };
   const freedTokens = rawTokensAfterIndex(entries, rangeStart - 1) - rawTokensAfterIndex(entries, safeCutIndex - 1);
