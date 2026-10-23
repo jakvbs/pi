@@ -5,7 +5,6 @@ import { debugLog, safeDebugLogSessionId } from "./debug-log.ts";
 import type { Runtime } from "./runtime.ts";
 import {
 	changeHeadline,
-	changeItems,
 	changeTimestamp,
 	fullProjection,
 	memoryChangelog,
@@ -35,13 +34,12 @@ function bulletList(lines: string[], empty: string): string {
 }
 
 /**
- * Markdown view of the branch memory: the current state, then every change
- * oldest first. Rendered only from the ledger, so rewriting it without a new
+ * Markdown view of the current branch memory; `/om:log` and the ledger hold
+ * the history. Rendered only from the ledger, so rewriting it without a new
  * change yields the same bytes. Undefined while the branch has no memory.
  */
 export function renderMemoryFile(args: { sessionId: string; cwd: string; sessionFile?: string; entries: Entry[] }): string | undefined {
-	const changes = memoryChangelog(args.entries);
-	const latest = changes.at(-1);
+	const latest = memoryChangelog(args.entries).at(-1);
 	if (!latest) return undefined;
 	const memory = fullProjection(args.entries);
 
@@ -60,9 +58,6 @@ export function renderMemoryFile(args: { sessionId: string; cwd: string; session
 		"## Observations",
 		"",
 		bulletList(memory.observations.map(observationToSummaryLine), "No active observations."),
-		"",
-		"## Changelog",
-		...changes.flatMap((change) => ["", `### ${changeTimestamp(change)} · ${changeHeadline(change)}`, "", changeItems(change).map((line) => `- ${line}`).join("\n")]),
 		"",
 	].join("\n");
 }
