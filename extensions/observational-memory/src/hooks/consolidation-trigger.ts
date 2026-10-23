@@ -5,6 +5,7 @@ import { ObserverStreamError, runObserver } from "../agents/observer/agent.ts";
 import { runReflector } from "../agents/reflector/agent.ts";
 import { debugLog, withDebugLogContext } from "../debug-log.ts";
 import { resolveObserverChunkMaxTokens, resolveWorkerMemoryMaxTokens } from "../config.ts";
+import { recordMemoryEntry } from "../memory-journal.ts";
 import type { ConsolidationPhase, ResolveCtx, ResolveResult, Runtime } from "../runtime.ts";
 import { serializeSourceAddressedBranchEntries } from "../serialize.ts";
 import {
@@ -58,10 +59,6 @@ type ReflectorStageResult = {
 
 function sourceEntriesAfter(entries: Entry[], index: number): Entry[] {
 	return entries.slice(index + 1).filter(isSourceEntry);
-}
-
-function appendEntry(pi: ExtensionAPI, customType: string, data: unknown): void {
-	pi.appendEntry(customType, data);
 }
 
 function mergeReflections(existing: Reflection[], additional: Reflection[]): Reflection[] {
@@ -552,12 +549,8 @@ async function runObserverStage(
 		observationTokens: observations.reduce((sum, observation) => sum + observation.tokenCount, 0),
 		coversUpToId,
 	});
-	appendEntry(pi, OM_OBSERVATIONS_RECORDED, data);
+	recordMemoryEntry(pi, runtime.config, ctx, OM_OBSERVATIONS_RECORDED, data);
 	debugLog("observer.appended", { count: observations.length, coversUpToId });
-	if (shouldNotifyWorker(runtime, ctx)) ctx.ui?.notify(
-		`Observational memory: ${observations.length} observation${observations.length === 1 ? "" : "s"} recorded`,
-		"info",
-	);
 	return "continue";
 }
 
@@ -614,7 +607,7 @@ async function runReflectorStage(
 
 	const data = buildReflectionsRecordedData(reflections, observationCoverageId);
 	if (!data) return { outcome: "continue", sameRunReflections: [] };
-	appendEntry(pi, OM_REFLECTIONS_RECORDED, data);
+	recordMemoryEntry(pi, runtime.config, ctx, OM_REFLECTIONS_RECORDED, data);
 	return {
 		outcome: "continue",
 		sameRunReflections: reflections,
@@ -712,6 +705,6 @@ async function runDropperStage(
 		dataBuilt: data !== undefined,
 		appended: data !== undefined,
 	});
-	if (data) appendEntry(pi, OM_OBSERVATIONS_DROPPED, data);
+	if (data) recordMemoryEntry(pi, runtime.config, ctx, OM_OBSERVATIONS_DROPPED, data);
 	return "continue";
 }

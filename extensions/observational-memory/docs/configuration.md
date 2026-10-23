@@ -47,6 +47,7 @@ The extension loads config once for its runtime. After changing settings, restar
       "thinking": "low"
     },
     "showWorkerNotifications": true,
+    "memoryFile": false,
     "passive": false,
     "debugLog": false
   }
@@ -81,7 +82,8 @@ You can omit everything. Defaults work for ordinary sessions, and if `model` is 
 | `fallbackModel.provider` | string | unset | Provider name in Pi's model registry. Required when `fallbackModel` is set. |
 | `fallbackModel.id` | string | unset | Model id in Pi's model registry. Required when `fallbackModel` is set. |
 | `fallbackModel.thinking` | enum | unset; falls back to `model.thinking` then `low` | Optional reasoning/thinking level used when the fallback is active. |
-| `showWorkerNotifications` | boolean | `true` | Shows routine observer, reflector, and dropper progress notifications. |
+| `showWorkerNotifications` | boolean | `true` | Shows routine observer, reflector, and dropper progress notifications, including what each finished run added or dropped. |
+| `memoryFile` | boolean | `false` | Mirrors each session's memory to a markdown file under Pi's agent directory, rewritten after every memory change. |
 | `passive` | boolean | `false` | Disables proactive background memory and memory activation. |
 | `debugLog` | boolean | `false` | Writes best-effort per-session extension debug events to Pi's agent directory. |
 
@@ -281,7 +283,29 @@ If the fallback advertises a smaller context window than the primary, the observ
 
 Default: `true`.
 
+When `true`, every finished worker run that changed memory reports it, for example:
+
+```txt
+Observational memory: dropper −12 observations
+  • User prefers Polish prose in docs
+  • …
+```
+
 When `false`, the extension hides routine observer, reflector, and dropper progress notifications (including deliberate-empty observer info messages). Model fallback/unavailability, worker failures (including observer stream errors), compaction notifications, and explicit `/om:*` command output remain visible.
+
+## `memoryFile`
+
+Default: `false`.
+
+When `true`, the extension keeps a markdown copy of each session's memory under Pi's agent directory:
+
+```txt
+observational-memory/memory/<session-id>.md
+```
+
+The file lists the project, the session file, the current reflections and active observations, and a changelog of every memory change, oldest first, with the records each one added or dropped. It is rewritten after every observer, reflector, and dropper entry, and when Pi starts, resumes, or navigates to another branch, so it always shows the current branch. A rewrite with no new change leaves the bytes unchanged, and the file is replaced by rename, so an editor or `watch` never sees a half-written file. Sessions without memory get no file.
+
+The file is a view, not a store: the extension never reads it, and deleting it loses nothing. To keep a history across rewrites, put the directory under git yourself; every memory change then shows up as a diff.
 
 ## `passive`
 

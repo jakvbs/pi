@@ -294,7 +294,8 @@ on the `Next activation` line regardless of mode.
 | `workerMemoryMaxTokens`     | derived       | Token budget for the prior memory each memory-worker request carries (newest first; the dropper sees the oldest observations). Unset: a quarter of the memory model's context window, or `16000`. |
 | `consolidateWhenIdle`       | `false`       | Run memory workers only while the agent is idle and abort them when a new run starts. Use when the session model and the memory model share one context budget (e.g. one local llama.cpp server). |
 | `fallbackModel`             | unset         | Optional second memory-worker model: `{ provider, id, thinking }`. Used when the primary memory model fails to resolve, and to retry a worker stage once when its model call errors. |
-| `showWorkerNotifications`   | `true`        | Shows routine observer, reflector, and dropper progress notifications. Warnings and errors are unaffected. |
+| `showWorkerNotifications`   | `true`        | Shows routine observer, reflector, and dropper progress notifications, including what each finished run added or dropped. Warnings and errors are unaffected. |
+| `memoryFile`                | `false`       | Mirrors each session's memory to `<agentDir>/observational-memory/memory/<session-id>.md`: current reflections and observations plus a changelog, rewritten after every memory change. |
 | `passive`                   | `false`       | Disables proactive background observation, reflection, maintenance, and memory activation. |
 | `debugLog`                  | `false`       | Writes opt-in per-session extension debug events to Pi's agent directory.                         |
 
@@ -331,6 +332,7 @@ For details and tuning guidance, see [`docs/configuration.md`](docs/configuratio
 | `/om:status`        | Shows memory counts, plain `+N` / `-N` visible/full drift suffixes, progress clocks, visible and active observation pool pressure, passive/in-flight state, and last worker errors. |
 | `/om:view`          | Shows current visible memory and attempts to copy the rendered memory text to the clipboard.                                                   |
 | `/om:view full`     | Shows the full current memory state for the branch and attempts to copy the rendered memory text to the clipboard.                             |
+| `/om:log [full] [N]` | Lists what the observer, reflector, and dropper added or dropped on the branch, oldest first; `full` adds the records, `N` keeps the last N changes (default 20). |
 | `recall` agent tool | Recovers source evidence for a 12-character observation/reflection id on the current branch. It is not semantic search or a transcript browser. |
 
 `/om:view` copies only the rendered memory content. The success/failure line shown in Pi is not included in the clipboard text. If clipboard support is unavailable, the command still prints the memory view and shows a warning. Before the first V3 compaction, visible memory can be empty because nothing has been folded into `om.folded` details; use `/om:view full` to inspect recorded branch memory.

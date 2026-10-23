@@ -16,6 +16,8 @@ V3 is ledger-centered: memory state is reconstructed by folding V3 ledger entrie
 | `session_before_compact` hook | Build the V3 compaction payload deterministically. |
 | `/om:status` | Show ledger counts, drift, progress clocks, and worker state. |
 | `/om:view` | Show visible or full memory content and attempt to copy the rendered memory text. |
+| `/om:log` | List what the memory workers added and dropped on the branch. |
+| `session_start` / `session_tree` | Rewrite the memory file for the resumed or navigated branch when `memoryFile` is on. |
 | `recall` tool | Recover source evidence for a memory id. |
 
 ## Lifecycle overview
@@ -153,6 +155,10 @@ details: {
 ```
 
 These details are what later visible projections read. The ledger remains the source of truth.
+
+## Memory changes
+
+Every worker writes the ledger through `recordMemoryEntry` (`src/memory-journal.ts`): it appends the entry, then derives the change from the branch with `memoryChangelog` (`src/session-ledger/changelog.ts`). With `showWorkerNotifications`, it notifies the change and a preview of the first three records. With `memoryFile`, it rewrites the session's memory file. `/om:log` and the memory file render the same changelog.
 
 ## Observer flow
 
@@ -315,6 +321,10 @@ Clipboard copy uses platform clipboard commands (`pbcopy`, `clip`, `wl-copy`, `x
 ### `/om:view full`
 
 Shows full V3 ledger truth at branch tip and attempts to copy the rendered memory text to the clipboard using the same success/failure behavior as default `/om:view`.
+
+### `/om:log`
+
+Lists the memory changes on the current branch, oldest first, one line per ledger entry: when it was written, which worker wrote it, and how many records it added or dropped (`observer +3 observations`, `reflector +1 reflection`, `dropper −12 observations`). It derives the list from the same `om.*` entries the fold reads, with the same first-valid-record-wins rule, so an entry that only repeats known ids does not appear. `/om:log full` adds the records under each line, including the content of dropped observations. A number keeps only the last N changes (default 20). When `memoryFile` is on, the output ends with the file's path.
 
 ## Recall flow
 

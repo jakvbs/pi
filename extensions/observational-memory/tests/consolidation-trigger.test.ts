@@ -448,9 +448,11 @@ describe("V3 consolidation trigger", () => {
 
 		expect(ctx.ui.notify.mock.calls).toEqual([
 			[expect.stringMatching(/^Observational memory: observer running on ~\d+-token chunk$/), "info"],
-			["Observational memory: 1 observation recorded", "info"],
+			["Observational memory: observer +1 observation\n  • Observation aaaaaaaaaaaa", "info"],
 			["Observational memory: reflector running (~2 tokens)", "info"],
+			["Observational memory: reflector +1 reflection\n  • Reflection ffffffffffff", "info"],
 			["Observational memory: dropper running after reflection — active observation pool ~19 / 5 target tokens (380%)", "info"],
+			["Observational memory: dropper −1 observation\n  • Observation aaaaaaaaaaaa", "info"],
 		]);
 	});
 

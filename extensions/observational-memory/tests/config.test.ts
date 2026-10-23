@@ -48,6 +48,7 @@ describe("V3 config", () => {
 			compactionCatchUpMaxChunks: 2,
 			consolidateWhenIdle: false,
 			showWorkerNotifications: true,
+			memoryFile: false,
 			passive: false,
 			debugLog: false,
 		});
@@ -66,6 +67,7 @@ describe("V3 config", () => {
 				agentMaxTokens: 8192,
 				model: { provider: "anthropic", id: "global", thinking: "medium" },
 				showWorkerNotifications: true,
+				memoryFile: true,
 				passive: false,
 				debugLog: true,
 			},
@@ -88,6 +90,7 @@ describe("V3 config", () => {
 			agentMaxTokens: 8192,
 			model: { provider: "openai", id: "project", thinking: "low" },
 			showWorkerNotifications: false,
+			memoryFile: true,
 			passive: true,
 			debugLog: true,
 		});
