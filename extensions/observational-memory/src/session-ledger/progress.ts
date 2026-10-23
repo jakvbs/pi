@@ -8,6 +8,10 @@ import {
 	type V3MemoryCustomType,
 } from "./types.ts";
 
+// Token clocks name their unit first: `raw*` is the local character estimate of
+// source entries, `measured*` and `real*` are provider tokens. `Observed` names
+// the span observation coverage has reached, not observation sizes.
+
 const SOURCE_ENTRY_TYPES = new Set(["message", "custom_message", "branch_summary"]);
 
 export function isSourceEntry(entry: Entry): boolean {
@@ -83,7 +87,7 @@ export function rawTokensSinceReflectionCoverage(entries: Entry[]): number {
  * not reached yet, so a large unobserved backlog does not make the reflector
  * due after every small observer chunk.
  */
-export function observedTokensSinceReflectionCoverage(entries: Entry[]): number {
+export function rawObservedTokensSinceReflectionCoverage(entries: Entry[]): number {
 	const reflectionIndex = latestCoverageIndex(entries, OM_REFLECTIONS_RECORDED);
 	const observationIndex = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
 	if (observationIndex <= reflectionIndex) return 0;
@@ -267,7 +271,7 @@ export function compactionRangeStartIndex(entries: Entry[]): number {
 }
 
 /** Source tokens, in provider units, since the latest compaction boundary: the memory activation clock. */
-export function rawTokensSinceLastCompaction(entries: Entry[]): number {
+export function measuredTokensSinceLastCompaction(entries: Entry[]): number {
 	return sumTokensAfterIndex(measuredSourceTokens(entries), compactionRangeStartIndex(entries) - 1);
 }
 
@@ -277,7 +281,7 @@ export function rawTokensSinceLastCompaction(entries: Entry[]): number {
  * into memory without discarding anything the observer has not seen. Zero when
  * coverage is missing or still behind the compaction boundary.
  */
-export function observedTokensSinceLastCompaction(entries: Entry[]): number {
+export function measuredObservedTokensSinceLastCompaction(entries: Entry[]): number {
 	const start = compactionRangeStartIndex(entries);
 	const coverageIndex = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
 	if (coverageIndex < start) return 0;
