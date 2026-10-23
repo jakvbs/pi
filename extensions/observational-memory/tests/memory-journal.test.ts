@@ -70,22 +70,12 @@ describe("recordMemoryEntry", () => {
 				"",
 				"- [aaaaaaaaaaaa] 2026-05-02T10:00:00.000Z [medium] User wants a changelog",
 				"",
-				"## Changelog",
-				"",
-				"### 2026-10-23 09:00 UTC · reflector +1 reflection",
-				"",
-				"- [eeeeeeeeeeee] Reflection eeeeeeeeeeee",
-				"",
-				"### 2026-10-23 09:10 UTC · observer +1 observation",
-				"",
-				"- [aaaaaaaaaaaa] 2026-05-02T10:00:00.000Z [medium] User wants a changelog",
-				"",
 			].join("\n"),
 		);
 	});
 
 	it("stays quiet for an entry that changes nothing", () => {
-		const { record, notify } = setup([observationsRecordedEntry("om-1", { observations: [obsA], coversUpToId: "raw-1" })], {
+		const { record, notify } = setup([textCustomMessage("raw-1", "a"), textCustomMessage("raw-2", "b"), observationsRecordedEntry("om-1", { observations: [obsA], coversUpToId: "raw-1" })], {
 			showWorkerNotifications: true,
 			memoryFile: false,
 		});
@@ -97,7 +87,7 @@ describe("recordMemoryEntry", () => {
 	});
 
 	it("honours showWorkerNotifications while still writing the file", () => {
-		const { record, notify } = setup([], { showWorkerNotifications: false, memoryFile: true });
+		const { record, notify } = setup([textCustomMessage("raw-1", "a")], { showWorkerNotifications: false, memoryFile: true });
 
 		record(OM_OBSERVATIONS_RECORDED, { observations: [obsA], coversUpToId: "raw-1" });
 
@@ -125,12 +115,12 @@ describe("syncMemoryFile", () => {
 	});
 
 	it("follows the branch it is given", () => {
-		const { ctx } = setup([observationsRecordedEntry("om-1", { observations: [obsA], coversUpToId: "raw-1" })]);
+		const { ctx } = setup([textCustomMessage("raw-1", "a"), observationsRecordedEntry("om-1", { observations: [obsA], coversUpToId: "raw-1" })]);
 		syncMemoryFile(true, ctx);
 		const path = join(agentDir, "observational-memory", "memory", "sess-1.md");
 		expect(readFileSync(path, "utf-8")).toContain("User wants a changelog");
 
-		const other = setup([observationsRecordedEntry("om-9", { observations: [observation("bbbbbbbbbbbb")], coversUpToId: "raw-1" })]);
+		const other = setup([textCustomMessage("raw-1", "a"), observationsRecordedEntry("om-9", { observations: [observation("bbbbbbbbbbbb")], coversUpToId: "raw-1" })]);
 		syncMemoryFile(true, other.ctx);
 
 		expect(readFileSync(path, "utf-8")).not.toContain("User wants a changelog");
