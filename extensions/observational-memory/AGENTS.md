@@ -49,6 +49,17 @@ and changed `src/` also needs a rebuild). The root `.gitignore` ignores `dist/`;
 re-includes it. Keep the output's `.ts`
 extension and the host packages external — `scripts/build.js` explains why.
 
+## Rules and enforcement
+
+After a correction, fix the cause and update this table. A rule without enforcement that is broken again gets a mechanism in the same change. Drop a row once construction makes the mistake impossible.
+
+| Rule | Enforcement |
+| --- | --- |
+| Memory workers append `om.*` entries only through `recordMemoryEntry`, passing the branch they read; it refuses the append once that branch's tip is off the current branch. | `readBranch` is a required parameter; `tests/ledger-writes.test.ts` fails on `appendEntry(` outside `src/memory-journal.ts`. |
+| Code reads `om.*` entries only through `branchLedger` (`src/session-ledger/ledger.ts`): valid V3 data with a coverage marker on the branch. | The entry guards are private to `ledger.ts`; `tests/session-ledger-ledger.test.ts` checks that folds, projection, changelog, recall and coverage all ignore a sibling-branch entry. |
+| A token clock's name starts with its unit: `raw*` (local estimate), `measured*`/`real*` (provider tokens). | None: naming judgment, stated in `src/session-ledger/progress.ts`. |
+| Committed `dist/` matches `src/`. | `npm run check` (`git diff --exit-code -- dist`); no CI or hook runs it. |
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
