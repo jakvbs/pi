@@ -1,57 +1,17 @@
-import type { AssistantMessageEventStream, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
-import { streamSimple as compatStreamSimple } from "@earendil-works/pi-ai/compat";
+import { randomUUID } from "node:crypto";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 
-export type WorkerStreamSimple = (
-	model: Model<any>,
-	context: Context,
-	options?: SimpleStreamOptions,
-) => AssistantMessageEventStream;
+/** The part of Pi's model registry that memory workers send requests through. */
+export type WorkerModelRegistry = Pick<ModelRegistry, "streamSimple">;
 
 /**
- * Duck-typed subset of Pi's extension ModelRegistry.
- *
- * `streamSimple` is the host-composed path (Pi #8964). Until that lands on the
- * facade, `getRegisteredProviderConfig` exposes each `registerProvider`
- * `streamSimple` handler by provider id. Use only the model's exact provider
- * and require matching API metadata as a consistency check.
+ * Stream function for one worker conversation. Requests go through Pi's own request path, which
+ * selects the provider, including providers registered by extensions, and authenticates each
+ * request when it is sent, so workers never hold credentials. The conversation gets its own
+ * routing id, as Pi's summarization requests do; opencode, for one, rejects requests without it.
  */
-export type StreamableModelRegistry = {
-	streamSimple?: WorkerStreamSimple;
-	getRegisteredProviderConfig?: (providerId: string) => {
-		api?: string;
-		streamSimple?: WorkerStreamSimple;
-	} | undefined;
-};
-
-/**
- * Resolve the stream function background workers must pass to `agentLoop`.
- *
- * Direct `@earendil-works/pi-ai/compat` `streamSimple` only knows built-in API
- * ids. Custom providers (`cursor-sdk`, `cliproxyapi-*`, commandcode, …) live on
- * Pi's composed runtime. Using compat after a successful foreground turn is
- * what crashes Pi with `No API provider registered for api: …` (#30).
- */
-export function resolveWorkerStreamSimple(
-	model: Model<any>,
-	modelRegistry?: StreamableModelRegistry | null,
-	override?: WorkerStreamSimple,
-): WorkerStreamSimple {
-	if (override) return override;
-
-	const registryStream = modelRegistry?.streamSimple;
-	if (typeof registryStream === "function") {
-		return (nextModel, context, options) => registryStream.call(modelRegistry, nextModel, context, options);
-	}
-
-	try {
-		const config = modelRegistry?.getRegisteredProviderConfig?.(model.provider);
-		const composed = config?.streamSimple;
-		if (config?.api === model.api && typeof composed === "function") {
-			return composed;
-		}
-	} catch {
-		// Incomplete host/test doubles still use the built-in compat dispatcher.
-	}
-
-	return compatStreamSimple;
+export function workerStream(registry: WorkerModelRegistry): StreamFn {
+	const sessionId = randomUUID();
+	return (model, context, options) => registry.streamSimple(model, context, { ...options, sessionId });
 }

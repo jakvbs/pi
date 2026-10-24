@@ -377,7 +377,7 @@ describe("compaction the hook cannot cover", () => {
 	it("tries to catch the observer up before the first coverage marker", async () => {
 		const entries = [userMessage("u0"), assistantMessage("a0"), userMessage("u1"), assistantMessage("a1"), userMessage("u2")];
 		const { run, runtime } = setup({ entries, compactionCatchUpMaxChunks: 1 });
-		runtime.resolveModel = vi.fn(async () => ({ ok: false, reason: "test" })) as any;
+		runtime.resolveModel = vi.fn(() => ({ ok: false, reason: "test" })) as any;
 
 		expect(await run("u2")).toEqual({ cancel: true });
 		expect(runtime.resolveModel).toHaveBeenCalledTimes(1);

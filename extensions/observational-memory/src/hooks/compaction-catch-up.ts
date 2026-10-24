@@ -6,6 +6,7 @@ import { debugLog } from "../debug-log.ts";
 import { recordMemoryEntry } from "../memory-journal.ts";
 import type { Runtime } from "../runtime.ts";
 import { serializeSourceAddressedBranchEntries } from "../serialize.ts";
+import { makeModelResolver, observerChunkContextWindow, runStageWithFallback, workerThinkingLevel } from "../worker-models.ts";
 import {
 	OM_OBSERVATIONS_RECORDED,
 	boundWorkerMemory,
@@ -51,18 +52,12 @@ export async function catchUpObserver(args: CatchUpArgs): Promise<CatchUpResult>
 	const result: CatchUpResult = { chunksRecorded: 0 };
 	if (maxChunks <= 0) return result;
 
-	const resolved = await runtime.resolveModel({
-		model: ctx.model,
-		modelRegistry: ctx.modelRegistry,
-		hasUI: ctx.hasUI,
-		ui: ctx.ui,
-	});
-	if (!resolved.ok) {
-		debugLog("compaction.catch_up.model_unavailable", { reason: resolved.reason });
-		return { ...result, stoppedBecause: "model_unavailable" };
-	}
+	const resolver = makeModelResolver(runtime, ctx);
+	let resolved = await resolver.resolve("observer");
+	if (!resolved) return { ...result, stoppedBecause: "model_unavailable" };
 
-	const contextWindow = (resolved.model as { contextWindow?: number }).contextWindow;
+	// Sized for the smaller of the primary and fallback windows, so a fallback retry fits.
+	const contextWindow = observerChunkContextWindow(runtime, ctx, resolved);
 	const maxChunkTokens = resolveObserverChunkMaxTokens(runtime.config, contextWindow);
 	// Start at the global observation frontier, not at the gap (which begins
 	// at the retained-range start). A coverage marker claims everything before
@@ -92,11 +87,8 @@ export async function catchUpObserver(args: CatchUpArgs): Promise<CatchUpResult>
 
 		let observations;
 		try {
-			observations = await runObserver({
-				model: resolved.model as any,
-				apiKey: resolved.apiKey,
-				headers: resolved.headers,
-				env: resolved.env,
+			observations = await runStageWithFallback(ctx, "observer", resolved, resolver, (worker) => runObserver({
+				model: worker.model as any,
 				priorReflections: memory.reflections.map(reflectionToSummaryLine),
 				priorObservations: memory.observations.map(observationToSummaryLine),
 				chunk,
@@ -104,9 +96,11 @@ export async function catchUpObserver(args: CatchUpArgs): Promise<CatchUpResult>
 				signal,
 				maxTurns: runtime.config.agentMaxTurns,
 				maxOutputTokens: runtime.config.agentMaxTokens,
-				thinkingLevel: runtime.config.model?.thinking ?? "low",
-				modelRegistry: ctx.modelRegistry as any,
-			});
+				thinkingLevel: workerThinkingLevel(runtime, worker),
+				modelRegistry: ctx.modelRegistry,
+			}), signal);
+			// Later chunks go straight to the fallback once it took over.
+			resolved = (await resolver.resolve("observer")) ?? resolved;
 		} catch (error) {
 			if (signal?.aborted) return { ...result, stoppedBecause: "aborted" };
 			const errorMessage = error instanceof Error ? error.message : String(error);

@@ -15,29 +15,30 @@ root) and resolve `@earendil-works/*` to the fork's `packages/*/src` through the
 `settings.json` `packages`. `UPSTREAM` (git config format) records the last imported upstream commit; newer
 upstream commits are imported on top of it with `git am -3 --directory=extensions/observational-memory`.
 
-## Model auth (OAuth vs API key)
+## Model requests
 
-`src/runtime.ts` `resolveModel` must accept auth that carries EITHER an `apiKey` OR non-empty
-`headers` (e.g. `Authorization: Bearer …`). Pi's OAuth providers (kimi-coding, xai, openai-codex,
-anthropic OAuth, …) return headers-only auth from `getApiKeyAndHeaders`, and pi-ai providers treat a
-caller-supplied `Authorization` header as a substitute apiKey. The acceptance rule mirrors pi's own
-`AgentSession._getRequiredRequestAuth` (`result.auth.apiKey || result.auth.headers`). Do not
-re-introduce a hard `apiKey` requirement — it breaks compaction/consolidation for every OAuth model.
+Workers send every model request through Pi's `ModelRegistry.streamSimple` (`src/agents/worker-stream.ts`),
+the path Pi's own requests take: it selects the provider (also one an extension registered with its own
+stream), authenticates the request when it is sent, and adds provider routing such as OpenCode's session
+header from the per-conversation `sessionId`. Workers never hold an API key, headers or env, and
+`Runtime.resolveModel` only chooses a model; a request Pi cannot authenticate fails like any model call
+and takes the fallback retry. `tests/worker-requests-end-to-end.test.ts` drives a real Pi session with
+the extension loaded against a local provider and covers a rotated credential, an extension-registered
+OAuth provider, a logged-out primary with a fallback, and OpenCode routing.
 Tests: `npm test` (vitest); typecheck: `npm run typecheck`.
 
 ## Fallback model (`fallbackModel`)
 
-`config.fallbackModel` is a second memory-worker model. It is tried in two places, both in
-`src/runtime.ts` + `src/hooks/consolidation-trigger.ts`:
+`config.fallbackModel` is a second memory-worker model. It is tried in two places:
 
-- Resolution (`Runtime.resolveModel` → `resolveFallbackModel`): used when the primary memory model
-  (config `model`, else session model) is missing from the registry or has no usable auth.
-- Runtime (`runStageWithFallback`): a worker stage that throws is retried once with the fallback.
+- Resolution (`Runtime.resolveModel` → `resolveFallbackModel`): used when no primary memory model
+  (config `model`, else session model) is available.
+- Runtime (`runStageWithFallback` in `src/worker-models.ts`): a worker stage that throws, including a
+  request Pi cannot authenticate, is retried once with the fallback. Background consolidation and the
+  compaction catch-up share this.
 
 `makeModelResolver` caches the fallback for the rest of the pass once it resolves, and a stage whose
-result already carries `fallbackUsed: true` is never retried again. Keep `resolveCandidate` as the
-single place that applies Pi's auth acceptance rule — both the primary and fallback paths must share
-it. Do not make the fallback mandatory: with none configured, the previous skip/fail-safe behavior
+result already carries `fallbackUsed: true` is never retried again. Do not make the fallback mandatory: with none configured, the previous skip/fail-safe behavior
 must be byte-for-byte unchanged (covered by `tests/runtime.test.ts` and `tests/consolidation-trigger.test.ts`).
 
 ## Prebuilt extension entry
@@ -56,6 +57,7 @@ After a correction, fix the cause and update this table. A rule without enforcem
 | Rule | Enforcement |
 | --- | --- |
 | Memory workers append `om.*` entries only through `recordMemoryEntry`, passing the branch they read; it refuses the append once that branch's tip is off the current branch. | `readBranch` is a required parameter; `tests/ledger-writes.test.ts` fails on `appendEntry(` outside `src/memory-journal.ts`. |
+| Workers hold no credentials and send model requests only through Pi's `ModelRegistry.streamSimple` (`workerStream`). | `tests/worker-credentials.test.ts` fails on `getApiKey*(` or a direct pi-ai stream import in `src/`; `tests/worker-requests-end-to-end.test.ts` checks the requests a real Pi session sends. |
 | Code reads `om.*` entries only through `branchLedger` (`src/session-ledger/ledger.ts`): valid V3 data with a coverage marker on the branch. | The entry guards are private to `ledger.ts`; `tests/session-ledger-ledger.test.ts` checks that folds, projection, changelog, recall and coverage all ignore a sibling-branch entry. |
 | A token clock's name starts with its unit: `raw*` (local estimate), `measured*`/`real*` (provider tokens). | None: naming judgment, stated in `src/session-ledger/progress.ts`. |
 | Committed `dist/` matches `src/`. | `npm run check` (`git diff --exit-code -- dist`); no CI or hook runs it. |
