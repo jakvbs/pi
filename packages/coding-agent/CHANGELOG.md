@@ -11,6 +11,7 @@
 - Tool output starts in compact mode (one line per call) in every interactive session; `Ctrl+O` cycles to collapsed and expanded as before.
 - `pi update` for installs from the pi.dev installer no longer passes `--min-release-age=0` to `npm ci`. The release lockfile pins every package, so the flag had no effect, and security scanners that block it stopped the update ([#11262](https://github.com/earendil-works/pi/issues/11262))
 - `/model` and `/scoped-models` now show a model's name next to its ID when the name adds words the ID lacks, such as a renamed `models.json` override ([#5916](https://github.com/earendil-works/pi/issues/5916), [#11347](https://github.com/earendil-works/pi/pull/11347))
+- The footer shows the session ID after the working directory, branch, and session name.
 
 ### Fixed
 
