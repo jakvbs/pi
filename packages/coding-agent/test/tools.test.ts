@@ -36,6 +36,8 @@ const grepTool = createGrepTool(process.cwd());
 const findTool = createFindTool(process.cwd());
 const lsTool = createLsTool(process.cwd());
 
+const SEQ_3000 = Array.from({ length: 3000 }, (_, i) => `${i + 1}\n`).join("");
+
 // Helper to extract text from content blocks
 function getTextOutput(result: any): string {
 	return (
@@ -842,16 +844,7 @@ describe("Coding Agent Tools", () => {
 			expect(fullOutputPath).toBeDefined();
 			expect(output).toMatch(/\[Showing lines \d+-\d+ of \d+\. Full output: /);
 			expect(output).not.toContain("Full output: undefined");
-
-			for (let i = 0; i < 20 && (!fullOutputPath || !existsSync(fullOutputPath)); i++) {
-				await new Promise((resolve) => setTimeout(resolve, 10));
-			}
-
-			expect(fullOutputPath).toBeDefined();
-			expect(existsSync(fullOutputPath!)).toBe(true);
-			const fullOutput = readFileSync(fullOutputPath!, "utf-8");
-			expect(fullOutput).toContain("1\n2\n3");
-			expect(fullOutput).toContain("2998\n2999\n3000");
+			expect(readFileSync(fullOutputPath!, "utf-8")).toBe(SEQ_3000);
 		});
 
 		it("executeBash should persist full output when truncation happens by line count only", async () => {
@@ -860,16 +853,7 @@ describe("Coding Agent Tools", () => {
 
 			expect(result.truncated).toBe(true);
 			expect(fullOutputPath).toBeDefined();
-
-			for (let i = 0; i < 20 && (!fullOutputPath || !existsSync(fullOutputPath)); i++) {
-				await new Promise((resolve) => setTimeout(resolve, 10));
-			}
-
-			expect(fullOutputPath).toBeDefined();
-			expect(existsSync(fullOutputPath!)).toBe(true);
-			const fullOutput = readFileSync(fullOutputPath!, "utf-8");
-			expect(fullOutput).toContain("1\n2\n3");
-			expect(fullOutput).toContain("2998\n2999\n3000");
+			expect(readFileSync(fullOutputPath!, "utf-8")).toBe(SEQ_3000);
 		});
 	});
 
