@@ -13,7 +13,8 @@ export function endsRun(stopReason: string): boolean {
  * Start of the run containing `fromId`, read from the session tree alone so it works for sessions
  * recorded before this extension existed. Walks toward the root until the previous run's final
  * response and returns the earliest user message on the way; a run without one (started by an
- * extension) falls back to the earliest custom message.
+ * extension) falls back to the earliest custom message. An error is that final response when a later
+ * message already started a new run; otherwise it was retried within this run.
  */
 export function runStart(fromId: string | null, getEntry: EntryLookup): number | undefined {
 	let user: number | undefined;
@@ -23,7 +24,10 @@ export function runStart(fromId: string | null, getEntry: EntryLookup): number |
 		if (entry.type === "message") {
 			const message = entry.message;
 			if (message.role === "user") user = message.timestamp;
-			else if (message.role === "assistant" && endsRun(message.stopReason)) break;
+			else if (message.role === "assistant") {
+				const newerRunStarted = (user ?? custom) !== undefined;
+				if (endsRun(message.stopReason) || (message.stopReason === "error" && newerRunStarted)) break;
+			}
 		} else if (entry.type === "custom_message") {
 			custom = Date.parse(entry.timestamp);
 		}
