@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ProviderCompatSchema } from "@earendil-works/pi-ai/providers/compat-schema";
@@ -158,6 +158,22 @@ function generateSchemas(): void {
 	}
 }
 
+/** Exit non-zero when a committed schema differs from what the TypeScript source renders. */
+function checkSchemas(): void {
+	const stale = [...renderConfigSchemas()]
+		.filter(([relativePath, content]) => {
+			const path = resolve(packageDirectory, relativePath);
+			return !existsSync(path) || readFileSync(path, "utf-8") !== content;
+		})
+		.map(([relativePath]) => `packages/coding-agent/${relativePath}`);
+	if (stale.length > 0) {
+		console.error(`Stale generated schemas (run npm run generate:schemas):\n  ${stale.join("\n  ")}`);
+		process.exit(1);
+	}
+	console.log("Generated schemas are up to date.");
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-	generateSchemas();
+	if (process.argv.includes("--check")) checkSchemas();
+	else generateSchemas();
 }
