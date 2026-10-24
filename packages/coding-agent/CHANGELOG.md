@@ -49,6 +49,7 @@
 ### Fixed
 
 - Extension model calls through `ctx.modelRegistry` (`stream`, `streamSimple`, `complete`) now use the session's request settings: timeouts, provider retries, client identity, and `before_provider_headers` handlers. Before, they reached the provider without them.
+- Fixed `!` commands and RPC `bash` returning the full-output file path before the file was written, so reading the file right away could fail or find it incomplete.
 
 ## [1.5.0] - 2026-11-02
 

@@ -38,7 +38,8 @@ describe("user bash output truncation (#10164)", () => {
 		});
 
 		expect(result.cancelled).toBe(cancelled);
-		expect(result.output).toBe(last);
+		// The kept tail starts at a line boundary of the whole stream, and `first` has no trailing newline.
+		expect(result.output).toBe(last.slice(last.indexOf("\n") + 1));
 		expect(result.truncated).toBe(true);
 		expect(
 			bashExecutionToText({ role: "bashExecution", command: "cat build.log", timestamp: 0, ...result }),
