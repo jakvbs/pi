@@ -27,7 +27,7 @@ import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.ts";
 import { addHooks, addTool } from "./harness-support.ts";
 import { ControlledStorage, context, type Gate } from "./session-support.ts";
-import { aborted, type Deferred, deferred, eventually } from "./task-support.ts";
+import { aborted, type Deferred, deferred } from "./task-support.ts";
 
 const Parameters = Type.Object({ text: Type.Optional(Type.String()), id: Type.Optional(Type.Number()) });
 
@@ -149,6 +149,34 @@ async function scriptTask(harness: Harness): Promise<TaskId> {
 async function nestedCount(harness: Harness): Promise<number> {
 	const tasks = (await harness.commit((tx) => tx.scanTasks({ kind: ToolTask.definition.name }, 100), context)).items;
 	return tasks.filter((task) => (task.input as ToolTaskInput).kind === "nested").length;
+}
+
+/**
+ * Resolve once a committed revision of `task`'s journal satisfies `check`. The sandbox thread's messages drive these
+ * commits, so a wait that counts event loop turns can run out first.
+ */
+async function journalReaches(
+	harness: Harness,
+	task: TaskId,
+	check: (journal: {
+		readonly entries: readonly { readonly issuedAfter?: number }[];
+		readonly firstIssued?: number;
+	}) => boolean,
+): Promise<void> {
+	const watch = (await harness.watchDoc(CodemodeJournalDoc, task, context))!;
+	try {
+		await new Promise<void>((resolve, reject) => {
+			if (watch.value !== null && check(watch.value)) return resolve();
+			watch.start(async (journal) => {
+				if (journal !== null && check(journal)) resolve();
+			});
+			void watch.closed.then((end) =>
+				reject(new Error(`The journal watch ended before the condition held: ${JSON.stringify(end)}`)),
+			);
+		});
+	} finally {
+		await watch.stop();
+	}
 }
 
 /** The code mode call's result text. */
@@ -347,9 +375,7 @@ describe("durable code mode", () => {
 				}, context);
 			},
 			async (opened, task) => {
-				await eventually(
-					async () => (await opened.snapshot(CodemodeJournalDoc, task, context))?.entries[0]?.issuedAfter === 2,
-				);
+				await journalReaches(opened, task, (journal) => journal.entries[0]?.issuedAfter === 2);
 			},
 		);
 		expect(result.isError).toBe(true);
@@ -372,9 +398,7 @@ describe("durable code mode", () => {
 			},
 			// The live run acknowledged result 1 before the restart: it went on after it.
 			async (opened, task) => {
-				await eventually(
-					async () => (await opened.snapshot(CodemodeJournalDoc, task, context))?.entries[0]?.issuedAfter === 2,
-				);
+				await journalReaches(opened, task, (journal) => journal.entries[0]?.issuedAfter === 2);
 			},
 		);
 		expect(result.isError).toBe(true);
@@ -440,11 +464,10 @@ describe("durable code mode", () => {
 			delete (await tx.doc(CodemodeJournalDoc, task)).entries[0]!.issuedAfter;
 		}, context);
 		opened.harness.resume();
-		// The replay acknowledges result 1 and goes live; the script waits on hold, and the count is already recorded.
+		// The replay acknowledges result 1 and goes live. Hold was admitted before the restart, so it can start before the
+		// count lands.
 		await chat.holds.reached.promise;
-		await eventually(
-			async () => (await opened.harness.snapshot(CodemodeJournalDoc, task, context))?.entries[0]?.issuedAfter === 2,
-		);
+		await journalReaches(opened.harness, task, (journal) => journal.entries[0]?.issuedAfter === 2);
 		await opened.harness.close(context);
 		chat.holds.block = false;
 		opened = await openChat(await openNodeSqliteStorage(path), chat.setup);
@@ -608,7 +631,7 @@ describe("durable code mode", () => {
 				}, context);
 			},
 			async (opened, task) => {
-				await eventually(async () => (await opened.snapshot(CodemodeJournalDoc, task, context))?.firstIssued === 2);
+				await journalReaches(opened, task, (journal) => journal.firstIssued === 2);
 			},
 		);
 		expect(result.isError).toBe(true);
@@ -629,7 +652,7 @@ describe("durable code mode", () => {
 				}, context);
 			},
 			async (opened, task) => {
-				await eventually(async () => (await opened.snapshot(CodemodeJournalDoc, task, context))?.firstIssued === 1);
+				await journalReaches(opened, task, (journal) => journal.firstIssued === 1);
 			},
 		);
 		expect(result.isError).toBe(true);
