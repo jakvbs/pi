@@ -45,9 +45,10 @@ function physicalModel(ctx: ExtensionContext, selected = ctx.model): Model<Api> 
 
 /**
  * Auto effort: `<provider>/<model>-auto` routes every request to `<provider>/<model>` and chooses the
- * thinking effort itself. Each user message starts at the selected level. During the run the model
- * changes it with `set_thinking_effort`, and three consecutive turns with failing tool calls raise it
- * one step.
+ * thinking effort itself. Each user message starts at the selected level, and the model's first
+ * response is a `set_thinking_effort` call that picks the level for the task; an optional guideline
+ * was not enough, the model at `low` never raised it. Later the model changes the level with the same
+ * tool, and three consecutive turns with failing tool calls raise it one step.
  *
  * A change is a custom message after the turn's tool results. It is the record the router reads, and
  * it is the new input that makes the provider's effort marker apply to the very next response; after
@@ -94,8 +95,8 @@ export default function (pi: ExtensionAPI) {
 			"Set the thinking effort for the following steps of the current task. It applies from the next response until the user's next message, which starts again at the level the user selected.",
 		promptSnippet: "Change the thinking effort for the following steps of the current task",
 		promptGuidelines: [
-			`Use ${TOOL_NAME} when the work changes phase: low or medium for routine steps such as applying a planned edit, renaming, or reading files; xhigh or max before debugging a failure you do not understand, designing, or after the user says an earlier attempt was wrong.`,
-			`Call ${TOOL_NAME} in the same response as the first tool call of the new phase, not on its own.`,
+			`Your first response to every user message must be a single ${TOOL_NAME} call, with nothing else, choosing the effort the task needs: low for trivial requests, medium or high for ordinary work, xhigh or max for deep reasoning (a hard algorithm or proof, a design decision, debugging you do not yet understand, or the user says an earlier attempt was wrong).`,
+			`Later, when the work changes phase, call ${TOOL_NAME} in the same response as the first tool call of the new phase: low or medium for routine steps such as applying a planned edit, renaming, or reading files; xhigh or max before a hard step.`,
 		],
 		parameters: Type.Object({
 			level: StringEnum(["low", "medium", "high", "xhigh", "max"] as const),
