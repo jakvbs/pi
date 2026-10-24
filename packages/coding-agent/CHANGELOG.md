@@ -42,6 +42,10 @@
 - Fixed the codemode `resolves to` summary of a tool leaving out field names behind a local `$ref`, for example `structuredContent?` instead of `structuredContent?: { results }` for MCP output schemas that put their models in `$defs` ([#11803](https://github.com/earendil-works/pi/issues/11803))
 - Fixed every codemode script failing with `URI malformed` when any callable tool, such as an MCP tool, had a `$ref` with a malformed percent escape (`#/$defs/%E0`) in its schema, even scripts that do not call that tool. The parameter now renders as `unknown` in the tool's declaration ([#11803](https://github.com/earendil-works/pi/issues/11803))
 
+### Changed
+
+- Tool output starts in compact mode (one line per call) in every interactive session; `Ctrl+O` cycles to collapsed and expanded as before.
+
 ## [1.5.0] - 2026-11-02
 
 ### New Features
