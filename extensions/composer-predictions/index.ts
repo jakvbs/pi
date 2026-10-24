@@ -1,10 +1,11 @@
+import { join } from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
-import { CustomEditor, type ExtensionAPI, getAgentDir, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
-import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
-import { paintGhost } from "./ghost.ts";
+import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { WordEditor } from "./editor.ts";
 import { type History, loadPrompts, type Pause, type Prompt, promptOf } from "./history.ts";
 import { describeReplay, replay, THRESHOLDS } from "./replay.ts";
-import { suggest, WordModel } from "./words.ts";
+import { appendUsage, describeUsage, readUsage } from "./usage.ts";
+import { suggest, WordModel, wordsOf } from "./words.ts";
 
 /** On the replay of 369 of the author's prompts it saved 29.1% of keystrokes at 47 wrong ghosts per 100 words; 0.15 saved 31.0% at 62. */
 const DEFAULT_THRESHOLD = 0.3;
@@ -89,78 +90,29 @@ function describeHistory(): string {
 	return `${prompts.length} prompts (${sources}), ${model.size} words, loaded in ${loaded.ms} ms with the event loop held at most ${loaded.stallMs} ms.${failed}`;
 }
 
-class WordEditor extends CustomEditor {
-	private readonly keys: KeybindingsManager;
-	private readonly ghostFor: (draft: string) => string | undefined;
-	private readonly dim: (text: string) => string;
-	/** Render runs on every frame, the model only when the draft changes. */
-	private cached: { draft: string; ghost: string | undefined } | undefined;
-	onAccept: ((ghost: string) => void) | undefined;
-
-	constructor(
-		tui: TUI,
-		theme: EditorTheme,
-		keybindings: KeybindingsManager,
-		ghostFor: (draft: string) => string | undefined,
-		dim: (text: string) => string,
-	) {
-		super(tui, theme, keybindings);
-		this.keys = keybindings;
-		this.ghostFor = ghostFor;
-		this.dim = dim;
-	}
-
-	refresh(): void {
-		this.cached = undefined;
-		this.tui.requestRender();
-	}
-
-	private ghost(): string | undefined {
-		if (this.isShowingAutocomplete()) return undefined;
-		const draft = this.getText();
-		if (draft.includes("\n") || this.getCursor().col !== draft.length) return undefined;
-		if (this.cached?.draft !== draft) this.cached = { draft, ghost: this.ghostFor(draft) };
-		return this.cached.ghost;
-	}
-
-	override handleInput(data: string): void {
-		const ghost = this.ghost();
-		const tab = this.keys.matches(data, "tui.input.tab");
-		if (ghost && (tab || this.keys.matches(data, "tui.editor.cursorRight"))) {
-			this.insertTextAtCursor(tab ? `${ghost} ` : ghost);
-			this.onAccept?.(ghost);
-			return;
-		}
-		super.handleInput(data);
-	}
-
-	override render(width: number): string[] {
-		const lines = super.render(width);
-		const ghost = this.ghost();
-		return ghost ? paintGhost(lines, ghost, this.dim) : lines;
-	}
-}
-
 export default function composerPredictions(pi: ExtensionAPI): void {
 	let enabled = true;
 	let threshold: number = DEFAULT_THRESHOLD;
 	let editor: WordEditor | undefined;
 	let active = true;
-	const stats = { accepted: 0, insertedChars: 0, sentChars: 0 };
+	const usageFile = join(getAgentDir(), "composer-predictions", "usage.jsonl");
+	/** What the ghosts did since the previous message was sent. */
+	let tally = { offered: new Set<string>(), accepted: 0, insertedChars: 0 };
 
 	const ghostFor = (draft: string) => {
 		if (!enabled || !loaded) return undefined;
 		const ghost = suggest(model, draft);
-		return ghost && ghost.confidence >= threshold ? ghost.rest : undefined;
+		return ghost && ghost.confidence >= threshold ? ghost : undefined;
 	};
 
 	pi.on("session_start", (_event, ctx) => {
 		if (ctx.mode !== "tui") return;
 		ctx.ui.setEditorComponent((tui, theme, keybindings) => {
 			editor = new WordEditor(tui, theme, keybindings, ghostFor, (text) => ctx.ui.theme.fg("dim", text));
-			editor.onAccept = (ghost) => {
-				stats.accepted++;
-				stats.insertedChars += ghost.length;
+			editor.onShow = (key) => tally.offered.add(key);
+			editor.onAccept = (inserted) => {
+				tally.accepted++;
+				tally.insertedChars += inserted.length;
 			};
 			return editor;
 		});
@@ -184,9 +136,24 @@ export default function composerPredictions(pi: ExtensionAPI): void {
 		active = false;
 	});
 
-	pi.on("input", (event) => {
+	pi.on("input", (event, ctx) => {
 		if (event.source !== "interactive") return undefined;
-		stats.sentChars += event.text.length;
+		const sent = tally;
+		tally = { offered: new Set(), accepted: 0, insertedChars: 0 };
+		if (enabled && loaded) {
+			const usage = {
+				at: Date.now(),
+				threshold,
+				chars: event.text.length,
+				words: wordsOf(event.text).length,
+				offered: sent.offered.size,
+				accepted: sent.accepted,
+				insertedChars: sent.insertedChars,
+			};
+			appendUsage(usageFile, usage).catch((error: unknown) => {
+				if (active) ctx.ui.notify(`composer-predictions: usage not logged: ${String(error)}`, "warning");
+			});
+		}
 		const prompt = promptOf(event.text, Date.now(), "pi");
 		if (!prompt) return undefined;
 		model.learn(prompt.text);
@@ -211,9 +178,9 @@ export default function composerPredictions(pi: ExtensionAPI): void {
 				return;
 			}
 			editor?.refresh();
-			const share = stats.sentChars ? ` (${((100 * stats.insertedChars) / stats.sentChars).toFixed(0)}%)` : "";
+			const usage = describeUsage(await readUsage(usageFile));
 			ctx.ui.notify(
-				`composer-predictions: ${enabled ? "on" : "off"}, threshold ${threshold}. ${describeHistory()} Accepted ${stats.accepted} ghosts, ${stats.insertedChars} of ${stats.sentChars} sent characters${share}.`,
+				`composer-predictions: ${enabled ? "on" : "off"}, threshold ${threshold}. ${describeHistory()} ${usage}`,
 				"info",
 			);
 		},

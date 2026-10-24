@@ -39,7 +39,7 @@ export function promptOf(text: unknown, at: unknown, source: Source): Prompt | u
 	return { text, at, source };
 }
 
-async function readOptional(path: string): Promise<string | undefined> {
+export async function readOptional(path: string): Promise<string | undefined> {
 	try {
 		return await readFile(path, "utf8");
 	} catch (error) {
