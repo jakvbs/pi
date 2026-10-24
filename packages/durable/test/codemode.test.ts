@@ -26,7 +26,7 @@ import { NodeExecutionEnv } from "../src/env/node.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.ts";
 import { addHooks, addTool } from "./harness-support.ts";
-import { ControlledStorage, context } from "./session-support.ts";
+import { ControlledStorage, context, type Gate } from "./session-support.ts";
 import { aborted, type Deferred, deferred, eventually } from "./task-support.ts";
 
 const Parameters = Type.Object({ text: Type.Optional(Type.String()), id: Type.Optional(Type.Number()) });
@@ -786,35 +786,38 @@ describe("durable code mode", () => {
 		await harness.close(context);
 	});
 
-	it("delivers a result only after its journal commit", async () => {
+	it("delivers a result only after its journal commit, and not at all when that commit fails", async () => {
 		const storage = new ControlledStorage();
-		const seen: string[] = [];
+		// The commit after the global returns is its result's journal commit.
+		const journalCommit = deferred<Gate>();
 		const chat = codemodeChat([
 			{
 				name: "first",
 				execute: async () => {
-					seen.push("first");
-					// The next commit is this result's journal commit: it never lands.
-					storage.failNextCommit(new Error("lost"));
+					journalCommit.resolve(storage.holdCommits());
 					return 1;
 				},
 			},
-			{
-				name: "second",
-				execute: async () => {
-					seen.push("second");
-					return 2;
-				},
-			},
 		]);
-		chat.holds.block = false;
-		chat.setup.faux.setResponses([script(`await first(); await second();`), DONE]);
+		const delivered: number[] = [];
+		chat.vm.onStart = (run) => {
+			const deliver = run.deliver.bind(run);
+			run.deliver = (seq, ...rest) => {
+				delivered.push(seq);
+				deliver(seq, ...rest);
+			};
+		};
+		chat.setup.faux.setResponses([script(`return await first();`), DONE]);
 		const { harness, root } = await openChat(storage, chat.setup);
-		await root.submit({ type: "input", content: "go" }, context);
-		await eventually(() => seen.includes("first"));
-		await new Promise((resolve) => setTimeout(resolve, 100));
-		expect(seen).toEqual(["first"]);
-		await harness.close(context).catch(() => {});
+		const submission = await root.submit({ type: "input", content: "go" }, context);
+		const gate = await journalCommit.promise;
+		await gate.entered;
+		expect(delivered).toEqual([]);
+		storage.failNextCommit(new Error("lost"));
+		gate.release();
+		await expect(submission.wait(context)).rejects.toThrow("Session failed after a storage error");
+		expect(delivered).toEqual([]);
+		await harness.close(context);
 	});
 
 	it("refuses to resume when the sandbox's fingerprint or the code mode version changed", async () => {
