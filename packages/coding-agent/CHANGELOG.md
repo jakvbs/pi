@@ -45,6 +45,7 @@
 ### Changed
 
 - Tool output starts in compact mode (one line per call) in every interactive session; `Ctrl+O` cycles to collapsed and expanded as before.
+- The footer shows the session ID after the working directory, branch, and session name.
 
 ### Fixed
 

@@ -175,6 +175,8 @@ export class FooterComponent implements Component {
 			pwd = `${pwd} • ${sessionName}`;
 		}
 
+		pwd = `${pwd} • ${this.session.sessionManager.getSessionId()}`;
+
 		// Build stats line
 		const statsParts = [];
 		if (usageTotals.input) statsParts.push(`↑${formatTokens(usageTotals.input)}`);
