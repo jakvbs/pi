@@ -137,6 +137,16 @@ built-in provider):
   and the catalog had no `thinkingLevelMap`, so pi never offered `xhigh`/`max`.
 - **Budget models** (Opus 4.5, Sonnet 4.5, Haiku 4.5): `thinking.enabled` with
   `budget_tokens` from `THINKING_BUDGETS`, kept under `max_tokens`.
+- **Thinking off** (no reasoning level): `thinking: {type: "disabled"}` when the
+  model's `thinkingLevelMap` does not hide `off`, the same condition as pi's
+  built-in provider; models with `off: null` get no `thinking` field. The field
+  used to be omitted, and an omitted field is not off on every model: Haiku 5.5
+  thought anyway (26-54 output tokens on the probe prompt, 5 with `disabled`),
+  and a 200-token request from an extension ended in a thinking block with no
+  text. Measured live on OAuth with `diagnostics/thinking-off-probe.ts`: all nine
+  models that allow `off` return 200 without thinking, also after a tool call
+  that followed thinking and with signed thinking in the history (Opus 4.7 did
+  not think on that prompt, so its history case carried no thinking block).
 
 Each model's `thinkingLevelMap` is copied from pi 0.99.2's anthropic catalog;
 `null` entries hide a level and pi clamps to the nearest one. Measured live on

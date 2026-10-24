@@ -600,6 +600,10 @@ export function createPiSubAnthropicStream(config: PiSubStreamConfig = {}) {
 						// Anthropic requires budget_tokens < max_tokens.
 						budget_tokens: Math.max(1024, Math.min(budget, maxTokens - 1024)),
 					};
+				} else if (model.reasoning && (model.thinkingLevelMap as Record<string, string | null> | undefined)?.off !== null) {
+					// No reasoning level means thinking off in pi. Omitting `thinking` is not off:
+					// Haiku 5.5 then thinks adaptively. Same condition as pi's built-in provider.
+					body.thinking = { type: "disabled" };
 				}
 
 				body.stream = true;
