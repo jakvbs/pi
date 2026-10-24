@@ -511,7 +511,7 @@ export class InteractiveMode {
 	private pendingTools = new Map<string, ToolExecutionComponent>();
 
 	// Tool output expansion state
-	private toolDisplayMode: ToolDisplayMode = "collapsed";
+	private toolDisplayMode: ToolDisplayMode = "compact";
 	private get toolOutputExpanded(): boolean {
 		return this.toolDisplayMode === "expanded";
 	}

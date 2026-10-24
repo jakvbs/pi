@@ -167,7 +167,7 @@ On native Windows, `app.suspend` has no default because Windows terminals do not
 | `app.message.followUp` | `alt+enter` (`ctrl+q` on Windows and WSL) | Queue follow-up message |
 | `app.message.dequeue` | `alt+up` (`alt+q` on Windows and WSL) | Restore queued messages to editor |
 
-Compact tool output shows one line per call with its status and abbreviated arguments, without results or images. Click a compact row in fullscreen mode to expand it, or cycle `ctrl+o` back to expanded. Other expandable transcript entries remain collapsed in compact mode. This changes only the display, not the model context.
+Tool output starts in compact mode. Compact tool output shows one line per call with its status and abbreviated arguments, without results or images. Click a compact row in fullscreen mode to expand it, or cycle `ctrl+o` back to expanded. Other expandable transcript entries remain collapsed in compact mode. This changes only the display, not the model context.
 
 ### Tree Navigation
 
