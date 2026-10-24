@@ -327,11 +327,9 @@ export function createShellToolDefinition(
 
 			const finishOutput = async () => {
 				acceptingOutput = false;
-				output.finish();
 				clearUpdateTimer();
+				const snapshot = await output.close();
 				emitOutputUpdate();
-				const snapshot = output.snapshot({ persistIfTruncated: true });
-				await output.closeTempFile();
 				return snapshot;
 			};
 

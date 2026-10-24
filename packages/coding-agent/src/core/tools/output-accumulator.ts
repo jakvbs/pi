@@ -77,15 +77,15 @@ export class OutputAccumulator {
 		}
 	}
 
-	finish(): void {
-		if (this.finished) {
-			return;
-		}
-		this.finished = true;
-		this.appendDecodedText(this.decoder.decode());
-		if (this.shouldUseTempFile()) {
-			this.ensureTempFile();
-		}
+	/**
+	 * Ends the output. The returned snapshot's `fullOutputPath`, when set, names a file that already
+	 * holds the whole output.
+	 */
+	async close(): Promise<OutputSnapshot> {
+		this.finish();
+		const snapshot = this.snapshot({ persistIfTruncated: true });
+		await this.closeTempFile();
+		return snapshot;
 	}
 
 	snapshot(options: { persistIfTruncated?: boolean } = {}): OutputSnapshot {
@@ -118,7 +118,18 @@ export class OutputAccumulator {
 		};
 	}
 
-	async closeTempFile(): Promise<void> {
+	private finish(): void {
+		if (this.finished) {
+			return;
+		}
+		this.finished = true;
+		this.appendDecodedText(this.decoder.decode());
+		if (this.shouldUseTempFile()) {
+			this.ensureTempFile();
+		}
+	}
+
+	private async closeTempFile(): Promise<void> {
 		if (!this.tempFileStream) {
 			return;
 		}
@@ -143,7 +154,7 @@ export class OutputAccumulator {
 
 	/**
 	 * The complete output, for callers that can take more than the display snapshot. Call after
-	 * `finish()` and `closeTempFile()`. Output longer than `maxBytes` raw bytes keeps its first and
+	 * `close()`. Output longer than `maxBytes` raw bytes keeps its first and
 	 * last `maxBytes / 2` bytes around an omission marker.
 	 */
 	async readFullOutput(maxBytes: number): Promise<FullOutput> {
