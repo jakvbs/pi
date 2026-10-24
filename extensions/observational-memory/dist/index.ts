@@ -1406,6 +1406,10 @@ function hashId(content) {
   return createHash("sha256").update(content).digest("hex").slice(0, 12);
 }
 
+// src/agents/worker-stream.ts
+import { randomUUID } from "node:crypto";
+import { cleanupSessionResources } from "@earendil-works/pi-ai";
+
 // src/agents/stream-errors.ts
 function logAgentStreamError(stage, event) {
   if (event.type !== "message_end") return;
@@ -1419,10 +1423,31 @@ function logAgentStreamError(stage, event) {
 }
 
 // src/agents/worker-stream.ts
-import { randomUUID } from "node:crypto";
-function workerStream(registry) {
+async function runWorkerConversation(conversation) {
+  const { stage, registry, loop, prompts, context, config, signal } = conversation;
   const sessionId = randomUUID();
-  return (model, context, options) => registry.streamSimple(model, context, { ...options, sessionId });
+  const streamFn = (model, llmContext, options) => registry.streamSimple(model, llmContext, { ...options, sessionId });
+  try {
+    const stream = loop(prompts, context, config, signal, streamFn);
+    let streamError;
+    for await (const event of stream) {
+      logAgentStreamError(stage, event);
+      if (event.type !== "message_end" || event.message.role !== "assistant") continue;
+      const { stopReason, errorMessage } = event.message;
+      if (stopReason === "error" || stopReason === "aborted") streamError = { stopReason, errorMessage };
+    }
+    await stream.result();
+    return streamError;
+  } finally {
+    releaseConversation(stage, sessionId);
+  }
+}
+function releaseConversation(stage, sessionId) {
+  try {
+    cleanupSessionResources(sessionId);
+  } catch (error) {
+    debugLog(`${stage}.release_error`, { errorMessage: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 // src/model-budget.ts
@@ -1884,23 +1909,15 @@ ${conversation}`;
       }
     } : {}
   };
-  const loop = args.agentLoop ?? agentLoop;
-  const stream = loop(
+  const streamError = await runWorkerConversation({
+    stage: "observer",
+    registry: args.modelRegistry,
+    loop: args.agentLoop ?? agentLoop,
     prompts,
     context,
     config,
-    signal,
-    workerStream(args.modelRegistry)
-  );
-  let streamError;
-  for await (const event of stream) {
-    logAgentStreamError("observer", event);
-    const message = event.message;
-    if (message?.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted")) {
-      streamError = { stopReason: message.stopReason, errorMessage: message.errorMessage };
-    }
-  }
-  await stream.result();
+    signal
+  });
   if (accumulated.size === 0) {
     if (streamError) throw new ObserverStreamError(streamError.stopReason, streamError.errorMessage);
     return void 0;
@@ -2765,23 +2782,15 @@ This maximum is a hard upper bound, not a target. Drop fewer or none if fewer ob
       }
     } : {}
   };
-  const loop = args.agentLoop ?? agentLoop2;
-  const stream = loop(
+  const streamError = await runWorkerConversation({
+    stage: "dropper",
+    registry: args.modelRegistry,
+    loop: args.agentLoop ?? agentLoop2,
     prompts,
     context,
     config,
-    signal,
-    workerStream(args.modelRegistry)
-  );
-  let streamError;
-  for await (const event of stream) {
-    logAgentStreamError("dropper", event);
-    const message = event.message;
-    if (message?.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted")) {
-      streamError = { stopReason: message.stopReason, errorMessage: message.errorMessage };
-    }
-  }
-  await stream.result();
+    signal
+  });
   const droppedIds = selectDropCandidates(proposedDropIds, observations, maxDropsAllowed, reflections);
   if (droppedIds.length === 0 && streamError) throw new DropperStreamError(streamError.stopReason, streamError.errorMessage);
   const reason = droppedIds.length > 0 ? "selected_nonempty" : toolCallCount === 0 ? "no_tool_call" : proposedDropIds.length === 0 ? "all_filtered" : "selected_empty";
@@ -3036,23 +3045,15 @@ Crystallize any missing durable facts or patterns into new reflections. If nothi
       }
     } : {}
   };
-  const loop = args.agentLoop ?? agentLoop3;
-  const stream = loop(
+  const streamError = await runWorkerConversation({
+    stage: "reflector",
+    registry: args.modelRegistry,
+    loop: args.agentLoop ?? agentLoop3,
     prompts,
     context,
     config,
-    signal,
-    workerStream(args.modelRegistry)
-  );
-  let streamError;
-  for await (const event of stream) {
-    logAgentStreamError("reflector", event);
-    const message = event.message;
-    if (message?.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted")) {
-      streamError = { stopReason: message.stopReason, errorMessage: message.errorMessage };
-    }
-  }
-  await stream.result();
+    signal
+  });
   const acceptedReflections = Array.from(accumulated.values());
   if (acceptedReflections.length === 0 && streamError) throw new ReflectorStreamError(streamError.stopReason, streamError.errorMessage);
   const afterCoverageById = reflectionCoverageMap(observations, [...reflections, ...acceptedReflections]);
