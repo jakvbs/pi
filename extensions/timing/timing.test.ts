@@ -42,6 +42,16 @@ test("a run lasts from its first user message to the response that ends it", () 
 	assert.equal(runDuration(entries[1]!, getEntry), undefined);
 });
 
+test("an error followed by a new message ends its run", () => {
+	const { entries, getEntry } = branch(
+		{ at: 0, kind: "user" },
+		{ at: 5, kind: "error" },
+		{ at: 900, kind: "user" },
+		{ at: 914, kind: "stop" },
+	);
+	assert.equal(runDuration(entries[3]!, getEntry), 14_000);
+});
+
 test("a run started by an extension message is measured from that message", () => {
 	const { entries, getEntry } = branch(
 		{ at: 0, kind: "user" },
