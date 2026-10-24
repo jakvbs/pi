@@ -10,7 +10,8 @@ Shows how long agent runs take, and when each message was sent, in Pi's interact
 
 A run lasts from the first user message after the previous final response to the response that ends it
 (any stop reason except `toolUse` and `error`), so tool calls, retries and steering messages count toward
-it. A run started by an extension message without a user message is measured from that message.
+it. An `error` response ends the run only when a new user or extension message follows it; otherwise it
+was retried. A run started by an extension message without a user message is measured from that message.
 
 ## Old sessions
 
