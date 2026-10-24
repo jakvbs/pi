@@ -17,10 +17,12 @@ upstream commits are imported on top of it with `git am -3 --directory=extension
 
 ## Model requests
 
-Workers send every model request through Pi's `ModelRegistry.streamSimple` (`src/agents/worker-stream.ts`),
-the path Pi's own requests take: it selects the provider (also one an extension registered with its own
-stream), authenticates the request when it is sent, and adds provider routing such as OpenCode's session
-header from the per-conversation `sessionId`. Workers never hold an API key, headers or env, and
+Workers run each conversation through `runWorkerConversation` (`src/agents/worker-stream.ts`), which sends
+every model request through Pi's `ModelRegistry.streamSimple`, the path Pi's own requests take: it selects
+the provider (also one an extension registered with its own stream), authenticates the request when it is
+sent, applies the session's request settings, and adds provider routing such as OpenCode's session header
+from the per-conversation `sessionId`. When the conversation ends it releases the provider resources Pi
+keeps for that `sessionId` (`cleanupSessionResources`, e.g. a Codex WebSocket). Workers never hold an API key, headers or env, and
 `Runtime.resolveModel` only chooses a model; a request Pi cannot authenticate fails like any model call
 and takes the fallback retry. `tests/worker-requests-end-to-end.test.ts` drives a real Pi session with
 the extension loaded against a local provider and covers a rotated credential, an extension-registered
@@ -57,7 +59,7 @@ After a correction, fix the cause and update this table. A rule without enforcem
 | Rule | Enforcement |
 | --- | --- |
 | Memory workers append `om.*` entries only through `recordMemoryEntry`, passing the branch they read; it refuses the append once that branch's tip is off the current branch. | `readBranch` is a required parameter; `tests/ledger-writes.test.ts` fails on `appendEntry(` outside `src/memory-journal.ts`. |
-| Workers hold no credentials and send model requests only through Pi's `ModelRegistry.streamSimple` (`workerStream`). | `tests/worker-credentials.test.ts` fails on `getApiKey*(` or a direct pi-ai stream import in `src/`; `tests/worker-requests-end-to-end.test.ts` checks the requests a real Pi session sends. |
+| Workers hold no credentials and send model requests only through Pi's `ModelRegistry.streamSimple` (`runWorkerConversation`). | `tests/worker-credentials.test.ts` fails on `getApiKey*(` or a direct pi-ai stream import in `src/`; `tests/worker-requests-end-to-end.test.ts` checks the requests a real Pi session sends. |
 | Code reads `om.*` entries only through `branchLedger` (`src/session-ledger/ledger.ts`): valid V3 data with a coverage marker on the branch. | The entry guards are private to `ledger.ts`; `tests/session-ledger-ledger.test.ts` checks that folds, projection, changelog, recall and coverage all ignore a sibling-branch entry. |
 | A token clock's name starts with its unit: `raw*` (local estimate), `measured*`/`real*` (provider tokens). | None: naming judgment, stated in `src/session-ledger/progress.ts`. |
 | Committed `dist/` matches `src/`. | `npm run check` (`git diff --exit-code -- dist`); no CI or hook runs it. |

@@ -12,5 +12,5 @@ it("leaves request authentication and provider dispatch to Pi", () => {
 		.filter(({ text }) => READS_CREDENTIALS.test(text) || STREAMS_AROUND_PI.test(text))
 		.map(({ path }) => path);
 
-	expect(offenders, "send worker requests through workerStream (src/agents/worker-stream.ts)").toEqual([]);
+	expect(offenders, "send worker requests through runWorkerConversation (src/agents/worker-stream.ts)").toEqual([]);
 });

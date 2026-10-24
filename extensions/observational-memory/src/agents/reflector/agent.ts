@@ -4,8 +4,7 @@ import { Type } from "@earendil-works/pi-ai";
 import type { Static } from "typebox";
 import { debugLog } from "../../debug-log.ts";
 import { hashId } from "../../ids.ts";
-import { logAgentStreamError } from "../stream-errors.ts";
-import { type WorkerModelRegistry, workerStream } from "../worker-stream.ts";
+import { runWorkerConversation, type WorkerModelRegistry } from "../worker-stream.ts";
 import { AGENT_LOOP_MAX_TOKENS, boundedMaxTokens } from "../../model-budget.ts";
 import { truncateRecordContent } from "../../serialize.ts";
 import { REFLECTOR_SYSTEM } from "./prompts.ts";
@@ -201,24 +200,16 @@ export async function runReflector(args: RunReflectorArgs): Promise<Reflection[]
 			: {}),
 	};
 
-	const loop = args.agentLoop ?? agentLoop;
-	const stream = loop(
+	// Tool execution collects the results; the conversation reports only a failed last turn.
+	const streamError = await runWorkerConversation({
+		stage: "reflector",
+		registry: args.modelRegistry,
+		loop: args.agentLoop ?? agentLoop,
 		prompts,
 		context,
 		config,
 		signal,
-		workerStream(args.modelRegistry),
-	);
-	let streamError: { stopReason: string; errorMessage?: string } | undefined;
-	for await (const event of stream) {
-		// Tool execution collects records.
-		logAgentStreamError("reflector", event);
-		const message = (event as { message?: { role?: string; stopReason?: string; errorMessage?: string } }).message;
-		if (message?.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted")) {
-			streamError = { stopReason: message.stopReason, errorMessage: message.errorMessage };
-		}
-	}
-	await stream.result();
+	});
 	const acceptedReflections = Array.from(accumulated.values());
 	if (acceptedReflections.length === 0 && streamError) throw new ReflectorStreamError(streamError.stopReason, streamError.errorMessage);
 	const afterCoverageById = reflectionCoverageMap(observations, [...reflections, ...acceptedReflections]);
