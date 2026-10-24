@@ -5,6 +5,7 @@ next word after a space, shows as dim ghost text after the cursor. Everything ru
 to a model.
 
 - Tab inserts the ghost and a space, so the next word's ghost follows at once. Right inserts the ghost alone.
+  Both take only a ghost on screen; a ghost that does not fit, or starts with a wide character, is not painted.
 - A ghost shows only when the model gives the word at least the confidence threshold (default 0.3), measured
   against every word under the typed prefix, the prefix itself included.
 - A word shows from its second use. Half the words in the author's history were used once.
@@ -38,7 +39,7 @@ with `/new` reuses it, while `/reload` builds it again.
 ## Commands
 
 - `/predict` shows the threshold, the history per source, how long it took to load and the longest event-loop
-  delay meanwhile, and how many sent characters came from accepted ghosts.
+  delay meanwhile, and the usage log summed per threshold.
 - `/predict on`, `/predict off`.
 - `/predict 0.15`, `/predict 0.3`, `/predict 0.45` set the threshold.
 - `/predict replay` types out the newest 400 one-line prompts letter by letter with a model trained on the
@@ -47,6 +48,18 @@ with `/new` reuses it, while `/reload` builds it again.
 
 The replay counts a typist who takes every right ghost with the cheaper key. Retypes that fix a typo in one of
 the five prompts before them are skipped, since the earlier prompt predicts them almost whole.
+
+## Usage log
+
+Each message sent from the editor while completion is on and the history has loaded appends one line to
+`~/.pi/agent/composer-predictions/usage.jsonl`. The line holds counts only, never the text: the time, the
+threshold, the message's characters and words, the distinct ghosts painted, the ghosts taken, and the characters
+they inserted. Every pi window appends to the same file.
+
+`/predict` sums the log per threshold: keystrokes saved, counted like the replay as inserted characters less one
+key per taken ghost, then ghosts taken of those shown, and ghosts not taken per 100 words. Unlike the replay, it
+measures what was actually taken. Ghosts painted in a draft that was cleared without sending count toward the
+next message.
 
 ## Limits
 
