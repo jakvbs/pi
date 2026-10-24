@@ -133,6 +133,13 @@ describe("FooterComponent width handling", () => {
 		}
 	});
 
+	it("shows the session ID after the branch and session name", () => {
+		const session = createSession({ sessionName: "release" });
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		expect(stripAnsi(footer.render(200)[0]!).trimEnd()).toMatch(/ \(main\) • release • test-session$/);
+	});
+
 	it("keeps stats line within width for wide model and provider names", () => {
 		const width = 60;
 		const session = createSession({
