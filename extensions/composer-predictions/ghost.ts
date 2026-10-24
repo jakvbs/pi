@@ -19,11 +19,16 @@ function fitToWidth(text: string, width: number): string {
 
 /**
  * Paint `ghost` from the cursor cell over the trailing padding of the editor line whose cursor sits at the end.
- * The line keeps its width; a ghost longer than the free cells ends in an ellipsis.
+ * The line keeps its width; a ghost longer than the free cells ends in an ellipsis. Nothing without such a line or
+ * when the ghost's first character is not one cell wide.
  */
-export function paintGhost(lines: readonly string[], ghost: string, dim: (text: string) => string): string[] {
+export function paintGhost(
+	lines: readonly string[],
+	ghost: string,
+	dim: (text: string) => string,
+): string[] | undefined {
 	const index = lines.findIndex((line) => line.includes(EMPTY_CURSOR));
-	if (index < 0) return [...lines];
+	if (index < 0) return undefined;
 	const line = lines[index]!;
 	const start = line.indexOf(EMPTY_CURSOR);
 	const after = line.slice(start + EMPTY_CURSOR.length);
@@ -31,7 +36,7 @@ export function paintGhost(lines: readonly string[], ghost: string, dim: (text: 
 	const room = spaces + 1;
 	const shown = fitToWidth(ghost, room);
 	const first = graphemes.segment(shown)[Symbol.iterator]().next().value?.segment ?? "";
-	if (visibleWidth(first) !== 1) return [...lines];
+	if (visibleWidth(first) !== 1) return undefined;
 	const rest = shown.slice(first.length);
 	const painted = `${CURSOR_MARKER}${renderFakeCursor(dim(first))}${dim(rest)}${" ".repeat(room - visibleWidth(shown))}`;
 	const result = [...lines];
