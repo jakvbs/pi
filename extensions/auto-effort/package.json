@@ -1,0 +1,29 @@
+{
+  "name": "pi-auto-effort",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Auto thinking effort: virtual models that pick the effort per request without dropping the prompt cache.",
+  "license": "MIT",
+  "main": "index.ts",
+  "pi": {
+    "extensions": [
+      "index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --test policy.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension"
+  ]
+}
