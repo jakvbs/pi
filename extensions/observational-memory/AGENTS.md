@@ -22,8 +22,12 @@ every model request through Pi's `ModelRegistry.streamSimple`: it selects the pr
 extension registered with its own stream), authenticates the request when it is sent, applies the session's
 timeouts, provider retries, client identity and `before_provider_headers` handlers, and adds provider
 routing such as OpenCode's session header from the per-conversation `sessionId`. Session-only parts stay
-out: `before_provider_request`/`after_provider_response` hooks, the `transport` setting, cache warming. When the conversation ends it releases the provider resources Pi
-keeps for that `sessionId` (`cleanupSessionResources`, e.g. a Codex WebSocket). Workers never hold an API key, headers or env, and
+out: `before_provider_request`/`after_provider_response` hooks, the `transport` setting, cache warming.
+When the conversation ends it releases the provider resources Pi keeps for that `sessionId`
+(`cleanupSessionResources`, e.g. a Codex WebSocket). The release reaches Pi's own module only when the
+extension shares it, as in source and bundled runs; unbundled `dist` builds load extensions through jiti
+aliases, which is unverified, and there an unreleased socket closes after 5 idle minutes. Workers never
+hold an API key, headers or env, and
 `Runtime.resolveModel` only chooses a model; a request Pi cannot authenticate fails like any model call
 and takes the fallback retry. `tests/worker-requests-end-to-end.test.ts` drives a real Pi session with
 the extension loaded against a local provider and covers a rotated credential, an extension-registered
