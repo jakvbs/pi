@@ -88,7 +88,8 @@ Every thinking level pi's own Anthropic provider offers for a model is offered
 here too, including `xhigh` and `max` where the model supports them
 (`--thinking max`, or `/model pi-sub-anthropic/claude-opus-5-5:max`). Levels a
 model can't do (e.g. `off` on Opus 5.5) are hidden, and pi clamps to the nearest
-supported one.
+supported one. Where `off` is offered, it sends `thinking: disabled`, so models
+such as Haiku 5.5 that think by default do not think.
 
 ## Two credentials, two behaviours
 
