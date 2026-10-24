@@ -1967,7 +1967,7 @@ function makeModelResolver(runtime, ctx) {
   let fallbackActive;
   const resolve = async (stage) => {
     if (fallbackActive) {
-      runtime.resolveFailureNotified = false;
+      runtime.warnings.clear("no model");
       return fallbackActive;
     }
     cached ??= runtime.resolveModel({
@@ -1977,14 +1977,11 @@ function makeModelResolver(runtime, ctx) {
       ui: ctx.ui
     });
     if (cached.ok) {
-      runtime.resolveFailureNotified = false;
+      runtime.warnings.clear("no model");
       return cached;
     }
     debugLog(`${stage}.model_unavailable`, { reason: cached.reason });
-    if (!runtime.resolveFailureNotified && ctx.hasUI && ctx.ui) {
-      ctx.ui.notify(`Observational memory: ${stage} skipped \u2014 ${cached.reason}`, "warning");
-      runtime.resolveFailureNotified = true;
-    }
+    runtime.warnings.warn(ctx, "no model", `Observational memory: ${stage} skipped \u2014 ${cached.reason}`);
     return void 0;
   };
   const resolveFallback = async (stage) => {
@@ -2013,30 +2010,33 @@ function makeModelResolver(runtime, ctx) {
     });
     return resolved;
   };
-  return { resolve, resolveFallback };
-}
-async function runStageWithFallback(ctx, stage, resolved, resolver, work, signal) {
-  try {
-    return await work(resolved);
-  } catch (primaryError) {
-    if (signal?.aborted) throw primaryError;
-    if (resolved.fallbackUsed === true) throw primaryError;
-    const fallback = await resolver.resolveFallback(stage);
-    if (!fallback) throw primaryError;
-    const message = primaryError instanceof Error ? primaryError.message : String(primaryError);
-    debugLog(`${stage}.fallback_retry`, {
-      primaryError: message,
-      provider: fallback.model?.provider,
-      id: fallback.model?.id
-    });
-    if (ctx.hasUI && ctx.ui) {
-      ctx.ui.notify(
-        `Observational memory: ${stage} failed (${message}); retrying with fallback model`,
-        "warning"
+  const runStage = async (stage, resolved, work, signal) => {
+    let result;
+    try {
+      result = await work(resolved);
+      if (resolved.fallbackUsed !== true) runtime.warnings.clear(`${stage} primary failed`);
+    } catch (primaryError) {
+      if (signal?.aborted) throw primaryError;
+      if (resolved.fallbackUsed === true) throw primaryError;
+      const fallback = await resolveFallback(stage);
+      if (!fallback) throw primaryError;
+      const message = primaryError instanceof Error ? primaryError.message : String(primaryError);
+      debugLog(`${stage}.fallback_retry`, {
+        primaryError: message,
+        provider: fallback.model?.provider,
+        id: fallback.model?.id
+      });
+      runtime.warnings.warn(
+        ctx,
+        `${stage} primary failed`,
+        `Observational memory: ${stage} failed (${message}); retrying with fallback model`
       );
+      result = await work(fallback);
     }
-    return await work(fallback);
-  }
+    runtime.warnings.clear(`${stage} failed`);
+    return result;
+  };
+  return { resolve, resolveFallback, runStage };
 }
 
 // src/hooks/compaction-catch-up.ts
@@ -2068,7 +2068,7 @@ async function catchUpObserver(args) {
     debugLog("compaction.catch_up.chunk", { chunkIndex, sourceEntryCount: sourceEntryIds.length, estimatedTokens, coversUpToId });
     let observations;
     try {
-      observations = await runStageWithFallback(ctx, "observer", resolved, resolver, (worker) => runObserver({
+      observations = await resolver.runStage("observer", resolved, (worker) => runObserver({
         model: worker.model,
         priorReflections: memory.reflections.map(reflectionToSummaryLine),
         priorObservations: memory.observations.map(observationToSummaryLine),
@@ -3274,7 +3274,7 @@ async function runObserverStage(pi, runtime, ctx, resolver) {
   });
   let observations;
   try {
-    observations = await runStageWithFallback(ctx, "observer", resolved, resolver, (worker) => runObserver({
+    observations = await resolver.runStage("observer", resolved, (worker) => runObserver({
       model: worker.model,
       priorReflections,
       priorObservations,
@@ -3339,7 +3339,7 @@ async function runReflectorStage(pi, runtime, ctx, resolver) {
     return { outcome: "abort", sameRunReflections: [] };
   }
   const folded = foldLedger(entries);
-  const reflections = await runStageWithFallback(ctx, "reflector", resolved, resolver, (worker) => {
+  const reflections = await resolver.runStage("reflector", resolved, (worker) => {
     const reflectorMemory = boundWorkerMemory(
       folded.reflections,
       folded.activeObservations,
@@ -3416,7 +3416,7 @@ async function runDropperStage(pi, runtime, ctx, resolver, sameRunReflections, s
     return "abort";
   }
   const reflectionsForDropper = mergeReflections(folded.reflections, sameRunReflections);
-  const droppedIds = await runStageWithFallback(ctx, "dropper", resolved, resolver, (worker) => {
+  const droppedIds = await resolver.runStage("dropper", resolved, (worker) => {
     const dropperMemory = boundWorkerMemory(
       reflectionsForDropper,
       folded.activeObservations,
@@ -3451,6 +3451,20 @@ async function runDropperStage(pi, runtime, ctx, resolver, sameRunReflections, s
   return "continue";
 }
 
+// src/warnings.ts
+var Warnings = class {
+  shown = /* @__PURE__ */ new Set();
+  warn(ctx, condition, message) {
+    if (this.shown.has(condition)) return;
+    this.shown.add(condition);
+    if (ctx.hasUI && ctx.ui) ctx.ui.notify(message, "warning");
+  }
+  /** The condition no longer holds: warn again when it recurs. */
+  clear(condition) {
+    this.shown.delete(condition);
+  }
+};
+
 // src/runtime.ts
 var Runtime = class {
   config = { ...DEFAULTS };
@@ -3461,7 +3475,7 @@ var Runtime = class {
   /** Aborts the in-flight consolidation run's model calls (see `consolidateWhenIdle`). */
   consolidationAbortController;
   compactHookInFlight = false;
-  resolveFailureNotified = false;
+  warnings = new Warnings();
   lastObserverError;
   lastReflectorError;
   lastDropperError;
@@ -3484,7 +3498,10 @@ var Runtime = class {
    */
   resolveModel(ctx) {
     const primary = this.resolvePrimaryModel(ctx);
-    if (primary.ok) return primary;
+    if (primary.ok) {
+      this.warnings.clear("primary model unavailable");
+      return primary;
+    }
     const fallback = this.resolveFallbackModel(ctx);
     if (!fallback.ok) {
       return this.config.fallbackModel ? { ok: false, reason: `${primary.reason}; ${fallback.reason}` } : primary;
@@ -3492,12 +3509,11 @@ var Runtime = class {
     const target = this.config.fallbackModel;
     const provider = fallback.model.provider ?? target?.provider ?? "unknown";
     const id = fallback.model.id ?? target?.id ?? "unknown";
-    if (ctx.hasUI && ctx.ui) {
-      ctx.ui.notify(
-        `Observational memory: primary model unavailable (${primary.reason}); using fallback ${provider}/${id}`,
-        "warning"
-      );
-    }
+    this.warnings.warn(
+      ctx,
+      "primary model unavailable",
+      `Observational memory: primary model unavailable (${primary.reason}); using fallback ${provider}/${id}`
+    );
     debugLog("resolve.fallback_used", { provider, id, primaryFailure: primary.reason });
     return { ...fallback, fallbackUsed: true, primaryFailure: primary.reason };
   }
@@ -3508,10 +3524,12 @@ var Runtime = class {
       const configured = ctx.modelRegistry.find(this.config.model.provider, this.config.model.id);
       if (configured) {
         model = configured;
-      } else if (ctx.hasUI && ctx.ui) {
-        ctx.ui.notify(
-          `Observational memory: configured model ${this.config.model.provider}/${this.config.model.id} not found, using session model`,
-          "warning"
+        this.warnings.clear("configured model missing");
+      } else {
+        this.warnings.warn(
+          ctx,
+          "configured model missing",
+          `Observational memory: configured model ${this.config.model.provider}/${this.config.model.id} not found, using session model`
         );
       }
     }
@@ -3544,7 +3562,7 @@ var Runtime = class {
     this.lastDropperError = void 0;
     const controller = new AbortController();
     this.consolidationAbortController = controller;
-    const promise = this.launchTrackedTask(ctx, "consolidation", work, () => {
+    const promise = this.launchTrackedTask(ctx, work, () => {
       this.consolidationInFlight = false;
       this.consolidationPhase = void 0;
       if (this.consolidationAbortController === controller) this.consolidationAbortController = void 0;
@@ -3565,19 +3583,19 @@ var Runtime = class {
     if (phase === "observer") this.lastObserverError = message;
     if (phase === "reflector") this.lastReflectorError = message;
     if (phase === "dropper") this.lastDropperError = message;
-    if (ctx.hasUI && ctx.ui) ctx.ui.notify(`Observational memory: ${phase} failed: ${message}`, "warning");
+    this.warnings.warn(ctx, `${phase} failed`, `Observational memory: ${phase} failed: ${message}`);
     return message;
   }
-  launchTrackedTask(ctx, label, work, onFinally) {
-    const hasUI = ctx.hasUI;
-    const ui = ctx.ui;
+  launchTrackedTask(ctx, work, onFinally) {
+    const reportTo = { hasUI: ctx.hasUI, ui: ctx.ui };
     return (async () => {
       let errorMessage;
       try {
         await work();
+        this.warnings.clear("consolidation failed");
       } catch (error) {
         errorMessage = error instanceof Error ? error.message : String(error);
-        if (hasUI && ui) ui.notify(`Observational memory: ${label} failed: ${errorMessage}`, "warning");
+        this.warnings.warn(reportTo, "consolidation failed", `Observational memory: consolidation failed: ${errorMessage}`);
       } finally {
         onFinally(errorMessage);
       }
