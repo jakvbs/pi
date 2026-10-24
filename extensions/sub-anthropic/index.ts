@@ -77,7 +77,7 @@ const MODELS: ModelSpec[] = [
 		maxTokens: 128000,
 		cost: { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
 		thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" },
-		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true },
+		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true, supportsMidConvoEffort: true },
 	},
 	{
 		id: "claude-fable-5",
@@ -95,7 +95,7 @@ const MODELS: ModelSpec[] = [
 		maxTokens: 128000,
 		cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
 		thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
-		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true },
+		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true, supportsMidConvoEffort: true },
 	},
 	{
 		id: "claude-opus-5",
@@ -104,7 +104,7 @@ const MODELS: ModelSpec[] = [
 		maxTokens: 128000,
 		cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
 		thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" },
-		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true },
+		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true, supportsMidConvoEffort: true },
 	},
 	{
 		id: "claude-opus-4-8",
@@ -148,7 +148,7 @@ const MODELS: ModelSpec[] = [
 		maxTokens: 128000,
 		cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
 		thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
-		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true },
+		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true, supportsMidConvoEffort: true },
 	},
 	{
 		id: "claude-sonnet-5",
@@ -183,7 +183,7 @@ const MODELS: ModelSpec[] = [
 		maxTokens: 128000,
 		cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
 		thinkingLevelMap: { minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
-		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true },
+		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true, supportsMidConvoEffort: true },
 	},
 	{
 		id: "claude-haiku-4-5",

@@ -393,6 +393,79 @@ console.log("\n=== THINKING: adaptive effort vs budget ===");
 	srv6.close();
 }
 
+console.log("\n=== THINKING: per-message effort markers keep the cached prefix ===");
+{
+	// Models with compat.supportsMidConvoEffort carry the level in empty
+	// role:"system" markers; the top-level effort never changes.
+	let mBody: any;
+	let mBetas = "";
+	const srv7 = http.createServer((req, res) => {
+		let raw = "";
+		req.on("data", (c) => (raw += c));
+		req.on("end", () => {
+			mBody = JSON.parse(raw);
+			mBetas = String(req.headers["anthropic-beta"] ?? "");
+			res.writeHead(200, { "Content-Type": "text/event-stream" });
+			res.end(SSE);
+		});
+	});
+	await new Promise<void>((r) => srv7.listen(0, "127.0.0.1", () => r()));
+	const p7 = (srv7.address() as any).port;
+	const managed = {
+		...model,
+		id: "claude-opus-5-5",
+		baseUrl: `http://127.0.0.1:${p7}`,
+		thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
+		compat: { forceAdaptiveThinking: true, supportsMidConvoEffort: true },
+	};
+	const reply = (provider: string, level: string, text: string) => ({
+		role: "assistant",
+		api: "anthropic-messages",
+		provider,
+		providerThinkingLevel: level,
+		content: [{ type: "text", text }],
+	});
+	const user = (text: string) => ({ role: "user", content: [{ type: "text", text }] });
+	const history: any[] = [
+		user("first"),
+		reply("pi-sub-anthropic", "max", "a1"),
+		user("second"),
+		reply("another-provider", "low", "a2"),
+		user("third"),
+	];
+	const run = async (m: any, messages: any[], reasoning: string) => {
+		let result: any;
+		const s = createPiSubAnthropicStream()(m, { systemPrompt: "SYS", messages }, { apiKey: "sk-ant-oat01-FAKE", reasoning } as any);
+		for await (const ev of s) if (ev.type === "done") result = ev.message;
+		return { body: mBody, betas: mBetas, result };
+	};
+	const shape = (b: any) => b.messages.map((m: any) => (m.role === "system" ? `sys:${m.output_config.effort}` : m.role)).join(" ");
+	const stripCache = (messages: any[]) => JSON.parse(JSON.stringify(messages, (k, v) => (k === "cache_control" ? undefined : v)));
+
+	const first = await run(managed, history, "low");
+	check("markers: both betas advertised", first.betas.includes("mid-conversation-output-config-2026-07-01") && first.betas.includes("thinking-binding-controls-2026-08-01"), first.betas);
+	check("markers: top-level effort stays high", first.body.output_config?.effort === "high", JSON.stringify(first.body.output_config));
+	check("markers: drop_block binding", first.body.thinking?.type === "adaptive" && first.body.thinking?.block_binding?.prefix_mismatch_behavior === "drop_block", JSON.stringify(first.body.thinking));
+	check(
+		"markers: historical level before own reply only, active level last",
+		shape(first.body) === "user assistant user sys:max assistant user assistant user sys:low",
+		shape(first.body),
+	);
+	const lastUser = first.body.messages.at(-2);
+	check("markers: cache breakpoint stays on the last user block", lastUser?.content?.at(-1)?.cache_control?.type === "ephemeral" && first.body.messages.at(-1).content.length === 0);
+	check("markers: reply records its effort", first.result?.providerThinkingLevel === "low", first.result?.providerThinkingLevel);
+
+	const next = await run(managed, [...history, { ...first.result, api: "anthropic-messages", provider: "pi-sub-anthropic" }, user("fourth")], "max");
+	const before = stripCache(first.body.messages);
+	const after = stripCache(next.body.messages).slice(0, before.length);
+	check("markers: a level change keeps the previous request as an exact prefix", JSON.stringify(after) === JSON.stringify(before), shape(next.body));
+	check("markers: new active level after the new input", next.body.messages.at(-1)?.output_config?.effort === "max" && next.body.output_config?.effort === "high");
+
+	const unmanaged = await run({ ...managed, compat: { forceAdaptiveThinking: true } }, history, "low");
+	check("unmanaged model: no markers, no beta, top-level effort", !unmanaged.body.messages.some((m: any) => m.role === "system") && !unmanaged.betas.includes("mid-conversation-output-config") && unmanaged.body.output_config?.effort === "low", shape(unmanaged.body));
+	srv7.close();
+}
+
 console.log("\n=== RESPONSE PARSING ===");
 check("stream produced a done event", events.includes("done"), events.join(","));
 check("thinking captured", final?.content?.[0]?.thinking === "pondering");

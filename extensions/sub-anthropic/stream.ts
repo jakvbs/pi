@@ -29,6 +29,7 @@ import {
 	type ToolResultMessage,
 	calculateCost,
 	createAssistantMessageEventStream,
+	hasApi,
 } from "@earendil-works/pi-ai";
 import nodeCrypto from "node:crypto";
 import fs from "node:fs";
@@ -128,9 +129,29 @@ function convertContentBlocks(content: (TextContent | ImageContent)[]): unknown 
 	return blocks;
 }
 
-/** Ported from omp's convertAnthropicMessages (tool naming differs from pi). */
-function convertMessages(messages: Message[], isOAuth: boolean): unknown[] {
+type AnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+function isAnthropicEffort(value: unknown): value is AnthropicEffort {
+	return value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max";
+}
+
+const MID_CONVERSATION_OUTPUT_CONFIG_BETA = "mid-conversation-output-config-2026-07-01";
+const THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01";
+
+/**
+ * Ported from omp's convertAnthropicMessages (tool naming differs from pi).
+ *
+ * With `managedProvider` set, `assistantLevels` maps the index of every
+ * assistant turn this provider answered to the effort it ran at, so
+ * `insertEffortMarkers` can replay the exact marker prefix of earlier requests.
+ */
+function convertMessages(
+	messages: Message[],
+	isOAuth: boolean,
+	managedProvider?: string,
+): { params: any[]; assistantLevels: Map<number, AnthropicEffort> } {
 	const params: any[] = [];
+	const assistantLevels = new Map<number, AnthropicEffort>();
 	const nameFor = (name: string) => (isOAuth ? applyClaudeToolPrefix(name) : name);
 
 	for (let i = 0; i < messages.length; i++) {
@@ -186,7 +207,16 @@ function convertMessages(messages: Message[], isOAuth: boolean): unknown[] {
 					});
 				}
 			}
-			if (blocks.length > 0) params.push({ role: "assistant", content: blocks });
+			if (blocks.length === 0) continue;
+			if (
+				managedProvider !== undefined &&
+				msg.api === "anthropic-messages" &&
+				msg.provider === managedProvider &&
+				isAnthropicEffort(msg.providerThinkingLevel)
+			) {
+				assistantLevels.set(params.length, msg.providerThinkingLevel);
+			}
+			params.push({ role: "assistant", content: blocks });
 		} else if (msg.role === "toolResult") {
 			const toolResults: any[] = [
 				{
@@ -221,7 +251,30 @@ function convertMessages(messages: Message[], isOAuth: boolean): unknown[] {
 		}
 	}
 
-	return params;
+	return { params, assistantLevels };
+}
+
+/**
+ * Per-message effort (beta `mid-conversation-output-config-2026-07-01`): an
+ * empty `role: "system"` message carrying `output_config.effort` sets the level
+ * from the next user input on, without touching the cached prefix. Each earlier
+ * reply gets the marker it was generated under, and the request ends with the
+ * active level, so the previous request is a byte-exact prefix of this one.
+ */
+function insertEffortMarkers(
+	params: any[],
+	assistantLevels: Map<number, AnthropicEffort>,
+	activeEffort: AnthropicEffort,
+): any[] {
+	const marker = (effort: AnthropicEffort) => ({ role: "system", content: [], output_config: { effort } });
+	const out: any[] = [];
+	for (const [index, param] of params.entries()) {
+		const historical = assistantLevels.get(index);
+		if (historical !== undefined) out.push(marker(historical));
+		out.push(param);
+	}
+	out.push(marker(activeEffort));
+	return out;
 }
 
 function convertTools(tools: Tool[], isOAuth: boolean): unknown[] {
@@ -362,9 +415,9 @@ const THINKING_BUDGETS: Record<string, number> = {
  * The model's `thinkingLevelMap` wins (that is how `xhigh`/`max` reach the
  * wire); otherwise the same fallback as pi's built-in anthropic provider.
  */
-function mapThinkingLevelToEffort(model: Model<any>, level: string): string {
+function mapThinkingLevelToEffort(model: Model<any>, level: string): AnthropicEffort {
 	const mapped = (model.thinkingLevelMap as Record<string, string | null> | undefined)?.[level];
-	if (typeof mapped === "string") return mapped;
+	if (isAnthropicEffort(mapped)) return mapped;
 	switch (level) {
 		case "minimal":
 		case "low":
@@ -518,12 +571,21 @@ export function createPiSubAnthropicStream(config: PiSubStreamConfig = {}) {
 				const oauth = isOAuthToken(apiKey);
 				const hasTools = !!context.tools?.length;
 				const thinkingRequested = !!(options?.reasoning && model.reasoning);
+				const compat = hasApi(model, "anthropic-messages") ? model.compat : undefined;
+				// Adaptive models take an effort level, not a token budget.
+				const effort =
+					thinkingRequested && compat?.forceAdaptiveThinking === true
+						? mapThinkingLevelToEffort(model, options!.reasoning as string)
+						: undefined;
+				// Effort rides in per-message markers instead of the top-level
+				// output_config, so changing the thinking level keeps the prompt cache.
+				const effortMessages = effort !== undefined && compat?.supportsMidConvoEffort === true;
 
 				// ---- headers (omp buildAnthropicHeaders, OAuth branch) ----
-				const betaHeader = buildBetaHeader(
-					oauth ? buildCoworkBetas(true, thinkingRequested) : [],
-					config.extraBetas ?? [],
-				);
+				const betaHeader = buildBetaHeader(oauth ? buildCoworkBetas(true, thinkingRequested) : [], [
+					...(effortMessages ? [MID_CONVERSATION_OUTPUT_CONFIG_BETA, THINKING_BINDING_CONTROLS_BETA] : []),
+					...(config.extraBetas ?? []),
+				]);
 
 				const headers: Record<string, string> = oauth
 					? {
@@ -570,9 +632,12 @@ export function createPiSubAnthropicStream(config: PiSubStreamConfig = {}) {
 					? relocateSystemPromptForOAuth(context)
 					: context.messages;
 
+				const converted = convertMessages(outboundMessages, oauth, effortMessages ? model.provider : undefined);
 				const body: Record<string, unknown> = {
 					model: model.id,
-					messages: convertMessages(outboundMessages, oauth),
+					messages: effortMessages
+						? insertEffortMarkers(converted.params, converted.assistantLevels, effort)
+						: converted.params,
 				};
 
 				const systemBlocks = buildSystemBlocks(context, oauth);
@@ -585,12 +650,23 @@ export function createPiSubAnthropicStream(config: PiSubStreamConfig = {}) {
 
 				body.max_tokens = maxTokens;
 
-				if (thinkingRequested && (model.compat as { forceAdaptiveThinking?: boolean } | undefined)?.forceAdaptiveThinking === true) {
-					// Adaptive models take an effort level, not a token budget.
+				if (effortMessages) {
+					// The top-level effort stays fixed; the markers carry the real level.
+					// `drop_block` lets the API drop a thinking block whose prefix no
+					// longer matches instead of failing the request, as pi's own provider.
+					body.thinking = {
+						type: "adaptive",
+						display: "summarized",
+						block_binding: { prefix_mismatch_behavior: "drop_block" },
+					};
+					body.output_config = { effort: "high" };
+					// Recorded on the reply so later requests replay its marker.
+					output.providerThinkingLevel = effort;
+				} else if (effort !== undefined) {
 					// `display` defaults to "summarized" as in pi's own provider;
 					// newer models otherwise return thinking blocks with no text.
 					body.thinking = { type: "adaptive", display: "summarized" };
-					body.output_config = { effort: mapThinkingLevelToEffort(model, options!.reasoning as string) };
+					body.output_config = { effort };
 				} else if (thinkingRequested) {
 					const level = options!.reasoning as string;
 					const custom = (options?.thinkingBudgets as any)?.[level];

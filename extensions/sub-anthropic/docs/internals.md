@@ -121,8 +121,9 @@ applies unchanged. It is written locally rather than imported because the pi-ai
 this package typechecks against predates the helpers, and a context without
 system messages (pi <= 0.98) passes through untouched. After the fold the same
 request is 23885 bytes with 4 tools, and the model lists `_read`, `_bash`,
-`_edit`, `_write`. Anthropic's mid-conversation system message support is not
-used; everything collapses into the single leading `<system-reminder>` turn.
+`_edit`, `_write`. The prompt never travels as a mid-conversation system
+message; everything collapses into the single leading `<system-reminder>` turn.
+The only mid-conversation system messages are the empty effort markers below.
 
 ## Thinking levels
 
@@ -147,6 +148,33 @@ built-in provider):
   models that allow `off` return 200 without thinking, also after a tool call
   that followed thinking and with signed thinking in the history (Opus 4.7 did
   not think on that prompt, so its history case carried no thinking block).
+
+Adaptive models with `compat.supportsMidConvoEffort` (Fable 5.1, Opus 5,
+Opus 5.5, Sonnet 5.5, Haiku 5.5) carry the effort in empty `role: "system"`
+markers instead, the same shape as pi's built-in provider: the top-level
+`output_config.effort` stays `high`, `thinking.block_binding` is
+`{prefix_mismatch_behavior: "drop_block"}`, betas
+`mid-conversation-output-config-2026-07-01` and
+`thinking-binding-controls-2026-08-01` are added, every earlier reply of this
+provider is preceded by a marker with the level recorded in its
+`providerThinkingLevel`, and the request ends with a marker for the active
+level. Apart from the moving tail cache breakpoint, the previous request is a
+byte-exact prefix of the next one,
+so changing the thinking level keeps the prompt cache. Measured live on OAuth
+(2026-10-25): the betas and markers return 200 on those five models; Fable 5
+returns 400 `output_config.effort requires a model that supports per-turn
+effort`, so it keeps the top-level effort. Without the beta a marker is a 400
+(`messages.1.output_config: Extra inputs are not permitted`). On
+`claude-opus-5-5` with ~25.9k cached tokens, alternating the final marker
+between `low` and `max` read the whole prefix with `cacheWrite: 0` and gave
+102-149 vs 481-609 thinking tokens. A marker takes effect at the next user
+input: after a turn holding only `tool_result` blocks it changes nothing
+(149 thinking tokens at `low` and at `max`), while a text block or a separate
+user message before the marker makes it apply at once. Through the provider
+stream itself (`diagnostics/effort-marker-probe.ts`, `claude-opus-5-5`), six
+turns alternating `low` and `max` each read the previous request's whole
+prefix (18.3k-19.8k tokens) and wrote only the new turn (187-605 tokens);
+`max` replies used 378-562 output tokens, `low` replies 144-262.
 
 Each model's `thinkingLevelMap` is copied from pi 0.99.2's anthropic catalog;
 `null` entries hide a level and pi clamps to the nearest one. Measured live on

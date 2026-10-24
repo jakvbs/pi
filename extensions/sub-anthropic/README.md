@@ -89,7 +89,9 @@ here too, including `xhigh` and `max` where the model supports them
 (`--thinking max`, or `/model pi-sub-anthropic/claude-opus-5-5:max`). Levels a
 model can't do (e.g. `off` on Opus 5.5) are hidden, and pi clamps to the nearest
 supported one. Where `off` is offered, it sends `thinking: disabled`, so models
-such as Haiku 5.5 that think by default do not think.
+such as Haiku 5.5 that think by default do not think. On Fable 5.1, Opus 5 / 5.5,
+Sonnet 5.5 and Haiku 5.5 changing the thinking level mid-session keeps the prompt
+cache; the new level applies from your next message.
 
 ## Two credentials, two behaviours
 
