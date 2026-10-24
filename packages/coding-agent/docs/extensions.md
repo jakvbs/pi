@@ -324,7 +324,7 @@ The built-in MCP support connects registered servers. When nothing does, because
 ### Context and session changes
 
 `ExtensionContext` provides the working directory, mode, UI, session manager, model runtime, abort signal, context usage, and controls for compaction and shutdown.
-Use `ctx.modelRegistry.streamSimple()` for provider-neutral nested model calls.
+Use `ctx.modelRegistry.streamSimple()` for provider-neutral nested model calls. These calls authenticate at request time and use the session's request settings: HTTP and WebSocket timeouts, provider retries, client identity, and `before_provider_headers` handlers. A `transformHeaders` passed by the caller runs before those handlers.
 
 Command handlers receive `ExtensionCommandContext`, which adds operations for waiting until idle, reloading, tree navigation, and session replacement.
 These operations are command-only because calling them from lifecycle handlers can deadlock the runtime.

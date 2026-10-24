@@ -1,6 +1,11 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ModelsSimpleStreamOptions } from "@earendil-works/pi-ai";
+import type {
+	ModelsRequestTransforms,
+	ModelsSimpleStreamOptions,
+	ProviderHeaders,
+	StreamOptions,
+} from "@earendil-works/pi-ai";
 import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
@@ -337,24 +342,31 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		() => settingsManager.getCacheWarmingMode(),
 		async (event) => extensionRunnerRef.current?.emitCacheWarmingDecision(event) ?? event.action,
 	);
-	const buildRequestOptions = (options: ModelsSimpleStreamOptions = {}): ModelsSimpleStreamOptions => {
+	// Session requests and extension requests through ctx.modelRegistry share these settings.
+	const buildRequestOptions = <TOptions extends StreamOptions & ModelsRequestTransforms>(
+		options: TOptions | undefined,
+	): TOptions => {
 		const providerRetrySettings = settingsManager.getProviderRetrySettings();
 		const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
 		const effectiveTimeoutMs = httpIdleTimeoutMs === 0 ? 2147483647 : httpIdleTimeoutMs;
 		const headerRunner = extensionRunnerRef.current;
+		const callerTransform = options?.transformHeaders;
 		return {
 			...options,
-			timeoutMs: options.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs,
-			websocketConnectTimeoutMs: options.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs(),
-			maxRetries: options.maxRetries ?? providerRetrySettings.maxRetries,
-			maxRetryDelayMs: options.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
+			timeoutMs: options?.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs,
+			websocketConnectTimeoutMs:
+				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs(),
+			maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
+			maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
 			// Replaces the agent loop's default identity; read per request so telemetry changes apply at once.
 			identity: getClientIdentity(settingsManager),
-			transformHeaders: async (headers) =>
-				headerRunner?.hasHandlers("before_provider_headers")
+			transformHeaders: async (assembled: ProviderHeaders) => {
+				const headers = callerTransform ? await callerTransform(assembled) : assembled;
+				return headerRunner?.hasHandlers("before_provider_headers")
 					? headerRunner.emitBeforeProviderHeaders(headers)
-					: headers,
-		};
+					: headers;
+			},
+		} as TOptions;
 	};
 	// Warm only requests for the selected model. Requests a virtual selection routed, or that an
 	// extension redirected, may not be repeated by the next request, so warming them could be wasted.
@@ -466,6 +478,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		allowedToolNames,
 		excludedToolNames,
 		extensionRunnerRef,
+		requestOptions: buildRequestOptions,
 		sessionStartEvent: options.sessionStartEvent,
 	});
 

@@ -115,7 +115,7 @@ import {
 import { type BeforeAgentStartTrigger, emitSessionShutdownEvent } from "./extensions/runner.ts";
 import { createToolNameMatcher, isMcpToolName } from "./mcp-servers.ts";
 import { type BashExecutionMessage, type CustomMessage, convertToLlm } from "./messages.ts";
-import { ModelRegistry } from "./model-registry.ts";
+import { ModelRegistry, type RequestOptionsTransform } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
@@ -295,6 +295,8 @@ export interface AgentSessionConfig {
 	baseToolsOverride?: Record<string, AgentTool>;
 	/** Mutable ref used by Agent to access the current ExtensionRunner */
 	extensionRunnerRef?: { current?: ExtensionRunner };
+	/** Session request settings, also applied to extension model requests through `ctx.modelRegistry`. */
+	requestOptions?: RequestOptionsTransform;
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
 }
@@ -438,6 +440,7 @@ export class AgentSession {
 	private _baseToolDefinitions: Map<string, ToolDefinition> = new Map();
 	private _cwd: string;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
+	private _requestOptions?: RequestOptionsTransform;
 	private _initialActiveToolNames?: string[];
 	/**
 	 * Tools of the restored or reloaded loadout that are not registered yet, such as tools of MCP
@@ -496,6 +499,7 @@ export class AgentSession {
 			this._cacheWarmer.onWarmed = (entry) => this._emit({ type: "entry_appended", entry });
 		}
 		this._extensionRunnerRef = config.extensionRunnerRef;
+		this._requestOptions = config.requestOptions;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._usesDefaultTools = config.usesDefaultTools ?? false;
 		this._defaultToolModifiers = config.defaultToolModifiers ?? [];
@@ -3699,7 +3703,7 @@ export class AgentSession {
 			extensionsResult.runtime,
 			this._cwd,
 			this.sessionManager,
-			new ModelRegistry(this._modelRuntime),
+			new ModelRegistry(this._modelRuntime, this._requestOptions),
 		);
 		if (this._extensionRunnerRef) {
 			this._extensionRunnerRef.current = this._extensionRunner;
