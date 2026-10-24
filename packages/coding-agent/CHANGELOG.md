@@ -45,7 +45,10 @@
 ### Changed
 
 - Tool output starts in compact mode (one line per call) in every interactive session; `Ctrl+O` cycles to collapsed and expanded as before.
-- Extension model calls through `ctx.modelRegistry` (`stream`, `streamSimple`, `complete`) use the session's request settings: timeouts, provider retries, client identity, and `before_provider_headers` handlers. Before, they reached the provider without them.
+
+### Fixed
+
+- Extension model calls through `ctx.modelRegistry` (`stream`, `streamSimple`, `complete`) now use the session's request settings: timeouts, provider retries, client identity, and `before_provider_headers` handlers. Before, they reached the provider without them.
 
 ## [1.5.0] - 2026-11-02
 
