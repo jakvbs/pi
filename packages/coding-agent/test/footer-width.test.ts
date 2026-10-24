@@ -25,6 +25,7 @@ function createSession(options: {
 	compactionUsage?: AssistantUsage;
 	toolUsage?: AssistantUsage;
 	usingSubscription?: boolean;
+	persisted?: boolean;
 	routedModel?: { model: { id: string }; thinkingLevel?: string };
 }): AgentSession {
 	const usage = options.usage;
@@ -78,6 +79,7 @@ function createSession(options: {
 			getEntries: () => entries,
 			getEntryCount: () => entries.length,
 			getSessionId: () => "test-session",
+			isPersisted: () => options.persisted ?? true,
 			getLeafId: () => null,
 			getSessionName: () => options.sessionName,
 			getCwd: () => "/tmp/project",
@@ -138,6 +140,13 @@ describe("FooterComponent width handling", () => {
 		const footer = new FooterComponent(session, createFooterData(1));
 
 		expect(stripAnsi(footer.render(200)[0]!).trimEnd()).toMatch(/ \(main\) • release • test-session$/);
+	});
+
+	it("leaves out the session ID of a session that is not saved", () => {
+		const session = createSession({ sessionName: "release", persisted: false });
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		expect(stripAnsi(footer.render(200)[0]!).trimEnd()).toMatch(/ \(main\) • release$/);
 	});
 
 	it("keeps stats line within width for wide model and provider names", () => {
