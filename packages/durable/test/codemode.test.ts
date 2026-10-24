@@ -853,11 +853,15 @@ describe("durable code mode", () => {
 
 	it("times a script out across a restart, without admitting new calls", async () => {
 		const chat = codemodeChat();
+		let downtime = 0;
+		chat.setup.now = () => Date.now() + downtime;
 		const { harness, result } = await restart(
 			chat,
-			`// @options: {"timeout_ms": 300}
+			`// @options: {"timeout_ms": 60000}
 			await tools.hold({}); await tools.echo({ text: "late" });`,
-			() => new Promise((resolve) => setTimeout(resolve, 400)),
+			async () => {
+				downtime = 60_001;
+			},
 		);
 		expect(result.isError).toBe(true);
 		expect(result.text).toContain("deadline passed");
