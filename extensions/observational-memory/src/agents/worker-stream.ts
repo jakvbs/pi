@@ -31,7 +31,9 @@ interface WorkerConversation {
  *
  * Requests go through Pi's model registry, which selects the provider, including providers
  * registered by extensions, authenticates each request when it is sent and applies the session's
- * request settings, so workers never hold credentials. The conversation gets its own routing id,
+ * timeouts, provider retries, client identity and `before_provider_headers` handlers, so workers
+ * never hold credentials. Payload and response hooks (`before_provider_request`,
+ * `after_provider_response`) belong to session requests and do not see worker requests. The conversation gets its own routing id,
  * as Pi's summarization requests do; opencode, for one, rejects requests without it. The id is
  * never reused, so the provider resources Pi keeps for it, such as an OpenAI Codex WebSocket, are
  * released when the conversation ends.
