@@ -182,8 +182,18 @@ async function restart(
 	const path = await sqlitePath();
 	chat.setup.faux.setResponses([script(code), DONE]);
 	let opened = await openChat(await openNodeSqliteStorage(path), chat.setup);
-	const id = (await opened.root.submit({ type: "input", content: "go" }, context)).id;
-	await chat.holds.reached.promise;
+	const submission = await opened.root.submit({ type: "input", content: "go" }, context);
+	const id = submission.id;
+	const reached = await Promise.race([
+		chat.holds.reached.promise.then(() => true),
+		submission.wait(context).then(
+			() => false,
+			() => false,
+		),
+	]);
+	if (!reached) {
+		throw new Error(`The script ended before it reached hold: ${(await resultText(chat.setup, opened.root)).text}`);
+	}
 	await beforeClose(opened.harness, await scriptTask(opened.harness));
 	await opened.harness.close(context);
 	chat.holds.block = false;
