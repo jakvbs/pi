@@ -321,4 +321,71 @@ describe("createAgentSession stream options", () => {
 		});
 		expect(options).not.toHaveProperty("transformHeaders");
 	});
+
+	it("sends extension model requests with the session's request options", async () => {
+		const model = createModel("openai-completions");
+		const settingsManager = SettingsManager.inMemory({
+			httpIdleTimeoutMs: 1234,
+			websocketConnectTimeoutMs: 567,
+			retry: { provider: { maxRetries: 3, maxRetryDelayMs: 890 } },
+		});
+		const resourceLoader = new DefaultResourceLoader({
+			cwd,
+			agentDir,
+			settingsManager,
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_provider_headers", (event) => {
+						event.headers["x-hook"] = `saw ${event.headers["x-caller"]}`;
+					});
+					pi.registerCommand("ask", {
+						description: "Send one request through the extension model registry",
+						handler: async (_args, ctx) => {
+							await ctx.modelRegistry
+								.streamSimple(model, normalizeContext({ messages: [] }), {
+									transformHeaders: (headers) => ({ ...headers, "x-caller": "caller" }),
+								})
+								.result();
+						},
+					});
+				},
+			],
+		});
+		await resourceLoader.reload();
+		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
+		await authStorage.modify(model.provider, async () => ({ type: "api_key", key: "test-api-key" }));
+		const modelRegistry = await createModelRegistry(authStorage, join(agentDir, "models.json"));
+		let captured: SimpleStreamOptions | undefined;
+		modelRegistry.registerProvider(model.provider, {
+			api: model.api,
+			streamSimple: (_model, _context, providerOptions) => {
+				captured = providerOptions;
+				return createDoneStream(model.api);
+			},
+		});
+		const { session } = await createAgentSession({
+			cwd,
+			agentDir,
+			model,
+			modelRuntime: getModelRuntime(modelRegistry),
+			settingsManager,
+			sessionManager: SessionManager.inMemory(cwd),
+			resourceLoader,
+		});
+
+		try {
+			await session.prompt("/ask");
+
+			expect(captured).toMatchObject({
+				timeoutMs: 1234,
+				websocketConnectTimeoutMs: 567,
+				maxRetries: 3,
+				maxRetryDelayMs: 890,
+				headers: { "x-caller": "caller", "x-hook": "saw caller" },
+			});
+		} finally {
+			session.dispose();
+			modelRegistry.unregisterProvider(model.provider);
+		}
+	});
 });
