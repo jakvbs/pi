@@ -313,7 +313,7 @@ If no `model` is configured, memory workers use the session model, including cus
 
 Set `fallbackModel` when the memory model may be unavailable: it is tried when no primary memory model is available, and a worker stage whose model call fails, including one Pi cannot authenticate, is retried once with it. Once the fallback is used, it stays active for the rest of the consolidation pass. With no `fallbackModel` configured, a failed memory model skips or fails safely exactly as before.
 
-Set `showWorkerNotifications` to `false` to hide routine worker start and completion messages (including deliberate-empty observer info messages). Model fallback/unavailability, worker failures (including observer stream errors), compaction notifications, and explicit `/om:*` command output remain visible.
+Set `showWorkerNotifications` to `false` to hide routine worker start and completion messages (including deliberate-empty observer info messages). Model fallback/unavailability, worker failures (including observer stream errors), compaction notifications, and explicit `/om:*` command output remain visible. A warning about a lasting condition, such as a stage that keeps failing, is shown once and again only after the condition cleared; `/om:status` shows the latest stage errors.
 
 `observationsPoolMaxTokens` and `observationsPoolTargetTokens` intentionally describe different pools. Max tokens control when compaction performs a full fold over visible memory. Target tokens control the folded active observation pool that the dropper maintains after successful reflection. If the target is omitted, it defaults to half of max.
 

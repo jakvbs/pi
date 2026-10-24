@@ -181,13 +181,30 @@ async function waitFor(predicate: () => boolean, timeoutMs = 4_000): Promise<voi
 	}
 }
 
+/** A UI that records the warnings extensions show; the memory extension only notifies. */
+function warningRecorder(warnings: string[]): any {
+	return { notify: (message: string, type?: string) => { if (type === "warning") warnings.push(message); } };
+}
+
+/**
+ * Prompt until `done`. A memory pass starts when a turn ends unless one is still running, so a
+ * prompt whose pass did not start (no new request within the wait) is simply repeated.
+ */
+async function promptUntil(session: { prompt(text: string): Promise<unknown> }, done: () => boolean, requests: () => number): Promise<void> {
+	for (let attempt = 0; attempt < 12 && !done(); attempt++) {
+		const before = requests();
+		await session.prompt("Remember: the deploy key lives in vault.");
+		await waitFor(() => done() || requests() > before, 2_000);
+	}
+}
+
 async function createRuntime() {
 	const credentials = new InMemoryCredentialStore();
 	const runtime = await ModelRuntime.create({ credentials, modelsPath: null, refreshOnCreate: false });
 	return { credentials, runtime, registry: new ModelRegistry(runtime) };
 }
 
-describe("memory worker requests in a real Pi session", { timeout: 20_000 }, () => {
+describe("memory worker requests in a real Pi session", { timeout: 30_000 }, () => {
 	it("sends each worker request with the credential Pi holds when the request is sent", async () => {
 		const { credentials, runtime, registry } = await createRuntime();
 		await credentials.modify("memory-llm", async () => ({ type: "api_key", key: "key-1" }));
@@ -285,6 +302,65 @@ describe("memory worker requests in a real Pi session", { timeout: 20_000 }, () 
 				["record_observations", "Bearer backup-key"],
 			]);
 			expect(memoryEntries(session, OM_OBSERVATIONS_RECORDED)[0].data.observations[0].content).toBe(OBSERVATION);
+		} finally {
+			session.dispose();
+		}
+	});
+
+	it("warns once while a memory stage keeps failing, and again when it fails after recovering", async () => {
+		const { credentials, runtime, registry } = await createRuntime();
+		await credentials.modify("memory-llm", async () => ({ type: "api_key", key: "memory-key" }));
+		const replies = ["fail", "fail", "ok", "fail"];
+		const seen: SeenRequest[] = [];
+		const baseUrl = await startProviderServer((request, body) => {
+			if (!request.path.startsWith("/memory") || replies.shift() === "ok") return { status: 200, body: workerResponse(body) };
+			return { status: 400, body: JSON.stringify({ error: { message: "unsupported parameter" } }) };
+		}, seen);
+		registry.registerProvider("memory-llm", { baseUrl: `${baseUrl}/memory`, api: "openai-completions", models: [chatModel("worker", `${baseUrl}/memory`)] });
+		writeMemorySettings({ model: { provider: "memory-llm", id: "worker", thinking: "off" } });
+		const memoryRequests = () => seen.filter((request) => request.path.startsWith("/memory")).length;
+
+		const session = await startSession(registry, runtime, baseUrl);
+		const warnings: string[] = [];
+		await session.bindExtensions({ uiContext: warningRecorder(warnings) });
+		try {
+			await promptUntil(session, () => memoryRequests() === 2, memoryRequests);
+			await promptUntil(session, () => memoryEntries(session, OM_OBSERVATIONS_RECORDED).length === 1, memoryRequests);
+			// The second failing pass ended before the recovering pass could start.
+			expect(warnings).toEqual([expect.stringContaining("observer failed")]);
+
+			await promptUntil(session, () => warnings.length === 2, memoryRequests);
+			expect(memoryRequests()).toBe(4);
+			expect(warnings).toEqual([expect.stringContaining("observer failed"), expect.stringContaining("observer failed")]);
+		} finally {
+			session.dispose();
+		}
+	});
+
+	it("warns once that the primary model fails while the fallback keeps memory working", async () => {
+		const { credentials, runtime, registry } = await createRuntime();
+		await credentials.modify("memory-llm", async () => ({ type: "api_key", key: "memory-key" }));
+		await credentials.modify("backup-llm", async () => ({ type: "api_key", key: "backup-key" }));
+		const seen: SeenRequest[] = [];
+		const baseUrl = await startProviderServer((request, body) => request.path.startsWith("/memory")
+			? { status: 400, body: JSON.stringify({ error: { message: "unsupported parameter" } }) }
+			: { status: 200, body: workerResponse(body) }, seen);
+		registry.registerProvider("memory-llm", { baseUrl: `${baseUrl}/memory`, api: "openai-completions", models: [chatModel("worker", `${baseUrl}/memory`)] });
+		registry.registerProvider("backup-llm", { baseUrl: `${baseUrl}/backup`, api: "openai-completions", models: [chatModel("worker", `${baseUrl}/backup`)] });
+		writeMemorySettings({
+			model: { provider: "memory-llm", id: "worker", thinking: "off" },
+			fallbackModel: { provider: "backup-llm", id: "worker", thinking: "off" },
+		});
+		const observerPasses = () => memoryEntries(session, OM_OBSERVATIONS_RECORDED).length;
+
+		const session = await startSession(registry, runtime, baseUrl);
+		const warnings: string[] = [];
+		await session.bindExtensions({ uiContext: warningRecorder(warnings) });
+		try {
+			await promptUntil(session, () => observerPasses() === 3, observerPasses);
+
+			expect(seen.filter((request) => request.path.startsWith("/memory"))).toHaveLength(3);
+			expect(warnings).toEqual([expect.stringContaining("retrying with fallback model")]);
 		} finally {
 			session.dispose();
 		}

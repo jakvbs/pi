@@ -10,6 +10,7 @@ vi.mock("../src/agents/observer/agent.ts", async (importOriginal) => ({
 import { registerCompactionHook } from "../src/hooks/compaction-hook.ts";
 import { OM_OBSERVATIONS_RECORDED } from "../src/session-ledger/index.ts";
 import { compactionEntry, observation, observationsRecordedEntry, rawMessage, type TestEntry } from "./fixtures/session.ts";
+import { Warnings } from "../src/warnings.ts";
 
 function userMessage(id: string, text = `user ${id}`): TestEntry {
 	return rawMessage(id, text);
@@ -93,7 +94,7 @@ function setup(args: {
 		resolveFallbackModel: vi.fn(() => (args.fallback
 			? { ok: true, model: args.fallback }
 			: { ok: false, reason: "no fallback model configured" })),
-		resolveFailureNotified: false,
+		warnings: new Warnings(),
 		ensureConfig: vi.fn(),
 	};
 	registerCompactionHook(pi as any, runtime as any);

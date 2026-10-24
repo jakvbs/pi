@@ -10,6 +10,7 @@ vi.mock("../src/agents/observer/agent.ts", async (importOriginal) => ({
 import { registerActivation } from "../src/hooks/activation.ts";
 import { OM_OBSERVATIONS_RECORDED } from "../src/session-ledger/index.ts";
 import { compactionEntry, observation, observationsRecordedEntry, rawMessage, type TestEntry } from "./fixtures/session.ts";
+import { Warnings } from "../src/warnings.ts";
 
 /** Every message carries 400 characters, which Pi estimates as 100 tokens. */
 const TEXT = "x".repeat(400);
@@ -94,6 +95,7 @@ function setup(args: {
 		consolidationInFlight: false,
 		consolidationPromise: args.consolidationPromise ?? null,
 		resolveModel: vi.fn(() => ({ ok: true, model: { provider: "gtr7", id: "memory", contextWindow: 65536 } })),
+		warnings: new Warnings(),
 		ensureConfig: vi.fn(),
 	};
 	registerActivation(pi as any, runtime as any);
