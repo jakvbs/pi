@@ -18,10 +18,11 @@ upstream commits are imported on top of it with `git am -3 --directory=extension
 ## Model requests
 
 Workers run each conversation through `runWorkerConversation` (`src/agents/worker-stream.ts`), which sends
-every model request through Pi's `ModelRegistry.streamSimple`, the path Pi's own requests take: it selects
-the provider (also one an extension registered with its own stream), authenticates the request when it is
-sent, applies the session's request settings, and adds provider routing such as OpenCode's session header
-from the per-conversation `sessionId`. When the conversation ends it releases the provider resources Pi
+every model request through Pi's `ModelRegistry.streamSimple`: it selects the provider (also one an
+extension registered with its own stream), authenticates the request when it is sent, applies the session's
+timeouts, provider retries, client identity and `before_provider_headers` handlers, and adds provider
+routing such as OpenCode's session header from the per-conversation `sessionId`. Session-only parts stay
+out: `before_provider_request`/`after_provider_response` hooks, the `transport` setting, cache warming. When the conversation ends it releases the provider resources Pi
 keeps for that `sessionId` (`cleanupSessionResources`, e.g. a Codex WebSocket). Workers never hold an API key, headers or env, and
 `Runtime.resolveModel` only chooses a model; a request Pi cannot authenticate fails like any model call
 and takes the fallback retry. `tests/worker-requests-end-to-end.test.ts` drives a real Pi session with

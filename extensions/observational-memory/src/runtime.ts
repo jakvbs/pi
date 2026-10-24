@@ -6,9 +6,13 @@ export type ResolveResult =
 	| {
 			ok: true;
 			model: unknown;
-			/** True when this result came from `config.fallbackModel` because no primary model resolved. */
+			/**
+			 * True when the model is `config.fallbackModel`: no primary model resolved, or a stage
+			 * retried with the fallback after the primary call failed. A stage on the fallback is
+			 * not retried again.
+			 */
 			fallbackUsed?: boolean;
-			/** Primary failure reason recorded when `fallbackUsed` is true. */
+			/** Why no primary model resolved; absent when the fallback took over after a failed call. */
 			primaryFailure?: string;
 	  }
 	| { ok: false; reason: string };
