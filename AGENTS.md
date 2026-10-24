@@ -71,6 +71,10 @@ If rebase conflicts occur:
 - If a conflict is in a file you did not modify, abort and ask the user.
 - Never force push.
 
+## Fork
+
+This checkout is the `jakvbs/pi` fork; its `main` on `origin` is the source of truth. Do not open issues or PRs against `earendil-works/pi` and do not propose upstreaming. Upstream changes arrive through an occasional rebase of `main` onto `upstream/main`, so keep fork commits small and self-contained to keep that rebase cheap.
+
 ## Issues and PRs
 
 See `CONTRIBUTING.md` for the contributor gate (auto-close workflows, `lgtm`/`lgtmi`, quality bar).
