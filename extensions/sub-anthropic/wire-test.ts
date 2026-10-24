@@ -362,7 +362,7 @@ console.log("\n=== THINKING: adaptive effort vs budget ===");
 		thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
 		compat: { forceAdaptiveThinking: true },
 	};
-	const run = async (m: any, reasoning: string) => {
+	const run = async (m: any, reasoning: string | undefined) => {
 		const s = createPiSubAnthropicStream()(m, context, { apiKey: "sk-ant-oat01-FAKE", reasoning } as any);
 		for await (const _ of s) {
 			/* drain */
@@ -378,6 +378,18 @@ console.log("\n=== THINKING: adaptive effort vs budget ===");
 	check("adaptive without map: minimal falls back to low", unmapped?.output_config?.effort === "low", unmapped?.output_config?.effort);
 	const budget = await run({ ...model, baseUrl: `http://127.0.0.1:${p6}` }, "high");
 	check("budget model: thinking.enabled + budget_tokens, no effort", budget?.thinking?.type === "enabled" && budget?.thinking?.budget_tokens === 20480 && budget?.output_config === undefined, JSON.stringify(budget?.thinking));
+
+	// No reasoning level: `disabled` where the map allows `off`, since an omitted
+	// `thinking` lets adaptive models think; nothing where `off` is hidden.
+	const haiku = { ...adaptive, id: "claude-haiku-5-5", thinkingLevelMap: { minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" } };
+	const off = await run(haiku, undefined);
+	check("adaptive, off allowed, no reasoning: thinking disabled, no effort", off?.thinking?.type === "disabled" && off?.output_config === undefined, JSON.stringify({ t: off?.thinking, o: off?.output_config }));
+	const budgetOff = await run({ ...model, baseUrl: `http://127.0.0.1:${p6}` }, undefined);
+	check("budget model, no reasoning: thinking disabled", budgetOff?.thinking?.type === "disabled", JSON.stringify(budgetOff?.thinking));
+	const offHidden = await run(adaptive, undefined);
+	check("off hidden in map, no reasoning: no thinking field", offHidden?.thinking === undefined && offHidden?.output_config === undefined, JSON.stringify(offHidden?.thinking));
+	const plain = await run({ ...model, reasoning: false, baseUrl: `http://127.0.0.1:${p6}` }, undefined);
+	check("non-reasoning model: no thinking field", plain?.thinking === undefined, JSON.stringify(plain?.thinking));
 	srv6.close();
 }
 
