@@ -14,8 +14,9 @@ function trained(...prompts: string[]): WordModel {
 	return model;
 }
 
-function assertGhost(actual: ReturnType<typeof suggest>, rest: string, confidence: number): void {
+function assertGhost(actual: ReturnType<typeof suggest>, start: number, rest: string, confidence: number): void {
 	assert.ok(actual, `expected ghost ${rest}`);
+	assert.equal(actual.start, start);
 	assert.equal(actual.rest, rest);
 	assert.ok(
 		Math.abs(actual.confidence - confidence) < 1e-12,
@@ -26,12 +27,12 @@ function assertGhost(actual: ReturnType<typeof suggest>, rest: string, confidenc
 const model = trained("run the tests", "run the tests", "run the linter");
 
 test("ghost completes the typed word from what followed the two words before it", () => {
-	assertGhost(suggest(model, "run the t"), "ests", 23 / 26);
-	assertGhost(suggest(model, "run the TE"), "STS", 1);
+	assertGhost(suggest(model, "run the t"), 8, "ests", 23 / 26);
+	assertGhost(suggest(model, "run the TE"), 8, "STS", 1);
 });
 
 test("ghost offers the next word after a space and the first word in an empty draft", () => {
-	assertGhost(suggest(model, "run the "), "tests", 46 / 81);
+	assertGhost(suggest(model, "run the "), 8, "tests", 46 / 81);
 	assert.equal(suggest(model, "")?.rest, "run");
 	assert.equal(suggest(model, "run ")?.rest, "the");
 });
@@ -61,7 +62,7 @@ test("a word holding a run of 12 letters or digits with a digit never shows, yet
 	);
 	assert.equal(suggest(tokens, "resume 0"), undefined);
 	assert.equal(suggest(tokens, "with so")?.rest, "nnet-4-5");
-	assertGhost(suggest(tokens, "dep"), "loy", 1 / 2);
+	assertGhost(suggest(tokens, "dep"), 0, "loy", 1 / 2);
 });
 
 test("a UUID never shows, also when no 12-character group of it holds a digit", () => {

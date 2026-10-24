@@ -24,6 +24,8 @@ export interface Completion {
 }
 
 export interface Ghost {
+	/** Where the completed word starts in the draft. */
+	readonly start: number;
 	readonly rest: string;
 	readonly confidence: number;
 }
@@ -166,5 +168,5 @@ export function suggest(model: WordModel, draft: string): Ghost | undefined {
 	if (!completion || completion.word === prefix) return undefined;
 	const rest = completion.word.slice(prefix.length);
 	const shouted = typed.length > 1 && typed !== prefix && typed === typed.toUpperCase();
-	return { rest: shouted ? rest.toUpperCase() : rest, confidence: completion.confidence };
+	return { start: before.length, rest: shouted ? rest.toUpperCase() : rest, confidence: completion.confidence };
 }

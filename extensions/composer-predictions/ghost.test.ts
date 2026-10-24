@@ -15,10 +15,16 @@ test("ghost starts in the cursor cell and fills the padding without changing the
 	assert.deepEqual(paintGhost([line], "cdefghijk", dim), [`ab${CURSOR_MARKER}${renderFakeCursor("<c>")}<defg…>`]);
 });
 
-test("ghost is not painted when the cursor is not at the end of a line", () => {
+test("nothing is painted when the cursor is not at the end of a line or the ghost starts with a wide character", () => {
 	const line = `ab${CURSOR_MARKER}${renderFakeCursor("c")}d    `;
-	assert.deepEqual(
+	assert.equal(
 		paintGhost([line], "xyz", (text) => text),
-		[line],
+		undefined,
 	);
+	const end = `ab${CURSOR_MARKER}${renderFakeCursor(" ")}     `;
+	assert.equal(
+		paintGhost([end], "日本", (text) => text),
+		undefined,
+	);
+	assert.equal(paintGhost([end], "xyz", (text) => text)?.[0], `ab${CURSOR_MARKER}${renderFakeCursor("x")}yz   `);
 });
