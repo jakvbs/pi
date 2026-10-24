@@ -1,0 +1,29 @@
+{
+  "name": "pi-timing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Run timer in the footer and timestamps in the transcript, derived from session timestamps so old sessions show them too.",
+  "license": "MIT",
+  "main": "index.ts",
+  "pi": {
+    "extensions": [
+      "index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --test timing.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension"
+  ]
+}
