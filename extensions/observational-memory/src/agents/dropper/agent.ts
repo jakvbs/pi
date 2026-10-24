@@ -4,8 +4,7 @@ import { Type } from "@earendil-works/pi-ai";
 import type { Static } from "typebox";
 import { debugLog } from "../../debug-log.ts";
 import { AGENT_LOOP_MAX_TOKENS, boundedMaxTokens } from "../../model-budget.ts";
-import { logAgentStreamError } from "../stream-errors.ts";
-import { type WorkerModelRegistry, workerStream } from "../worker-stream.ts";
+import { runWorkerConversation, type WorkerModelRegistry } from "../worker-stream.ts";
 import { reflectionToSummaryLine, type Observation, type Reflection } from "../../session-ledger/index.ts";
 import { DROPPER_SYSTEM } from "./prompts.ts";
 import {
@@ -268,24 +267,16 @@ export async function runDropper(args: RunDropperArgs): Promise<string[] | undef
 			: {}),
 	};
 
-	const loop = args.agentLoop ?? agentLoop;
-	const stream = loop(
+	// Tool execution collects the results; the conversation reports only a failed last turn.
+	const streamError = await runWorkerConversation({
+		stage: "dropper",
+		registry: args.modelRegistry,
+		loop: args.agentLoop ?? agentLoop,
 		prompts,
 		context,
 		config,
 		signal,
-		workerStream(args.modelRegistry),
-	);
-	let streamError: { stopReason: string; errorMessage?: string } | undefined;
-	for await (const event of stream) {
-		// Tool execution collects candidate ids.
-		logAgentStreamError("dropper", event);
-		const message = (event as { message?: { role?: string; stopReason?: string; errorMessage?: string } }).message;
-		if (message?.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted")) {
-			streamError = { stopReason: message.stopReason, errorMessage: message.errorMessage };
-		}
-	}
-	await stream.result();
+	});
 	const droppedIds = selectDropCandidates(proposedDropIds, observations, maxDropsAllowed, reflections);
 	if (droppedIds.length === 0 && streamError) throw new DropperStreamError(streamError.stopReason, streamError.errorMessage);
 	const reason = droppedIds.length > 0

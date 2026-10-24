@@ -3,8 +3,7 @@ import type { Message, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { Type } from "@earendil-works/pi-ai";
 import type { Static } from "typebox";
 import { hashId } from "../../ids.ts";
-import { logAgentStreamError } from "../stream-errors.ts";
-import { type WorkerModelRegistry, workerStream } from "../worker-stream.ts";
+import { runWorkerConversation, type WorkerModelRegistry } from "../worker-stream.ts";
 import { AGENT_LOOP_MAX_TOKENS, boundedMaxTokens } from "../../model-budget.ts";
 import { OBSERVER_SYSTEM } from "./prompts.ts";
 import { nowTimestamp, truncateRecordContent } from "../../serialize.ts";
@@ -206,26 +205,16 @@ ${conversation}`;
 			: {}),
 	};
 
-	const loop = args.agentLoop ?? agentLoop;
-	const stream = loop(
+	// Tool execution collects the results; the conversation reports only a failed last turn.
+	const streamError = await runWorkerConversation({
+		stage: "observer",
+		registry: args.modelRegistry,
+		loop: args.agentLoop ?? agentLoop,
 		prompts,
 		context,
 		config,
 		signal,
-		workerStream(args.modelRegistry),
-	);
-	let streamError: { stopReason: string; errorMessage?: string } | undefined;
-	for await (const event of stream) {
-		// Drain events; the tool's execute already collects records.
-		logAgentStreamError("observer", event);
-		// Watch for a terminal API/stream failure so it is not conflated with
-		// a deliberate empty result.
-		const message = (event as { message?: { role?: string; stopReason?: string; errorMessage?: string } }).message;
-		if (message?.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted")) {
-			streamError = { stopReason: message.stopReason, errorMessage: message.errorMessage };
-		}
-	}
-	await stream.result();
+	});
 
 	if (accumulated.size === 0) {
 		if (streamError) throw new ObserverStreamError(streamError.stopReason, streamError.errorMessage);
