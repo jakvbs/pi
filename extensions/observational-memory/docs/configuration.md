@@ -271,7 +271,7 @@ Set `fallbackModel` to give the memory workers a second model when the primary o
 The fallback is tried in two places:
 
 1. **Resolution.** When no primary memory model is available, the fallback is resolved and used. The notification names both the primary failure and the fallback that took over.
-2. **Runtime.** When a worker stage (observer, reflector, or dropper) errors during its model call, including when Pi cannot authenticate the primary (for example after a logout), that one stage is retried once with the fallback model. The observer run during compaction catch-up is retried the same way. The retry is per-stage and per-pass; a successful retry is logged and notified.
+2. **Runtime.** When a worker stage (observer, reflector, or dropper) errors during its model call, including when Pi cannot authenticate the primary (for example after a logout), that one stage is retried once with the fallback model. The observer run during compaction catch-up is retried the same way. The retry is per-stage and per-pass and is logged. A failing primary is notified once per stage, and again only after that stage's primary call succeeded in between.
 
 Once the fallback resolves, it is reused for the rest of the consolidation pass, so later stages do not re-pay a known-broken primary. If the primary model itself resolved through the fallback, no further runtime retry is attempted for that pass.
 
@@ -291,7 +291,7 @@ Observational memory: dropper −12 observations
   • …
 ```
 
-When `false`, the extension hides routine observer, reflector, and dropper progress notifications (including deliberate-empty observer info messages). Model fallback/unavailability, worker failures (including observer stream errors), compaction notifications, and explicit `/om:*` command output remain visible.
+When `false`, the extension hides routine observer, reflector, and dropper progress notifications (including deliberate-empty observer info messages). Model fallback/unavailability, worker failures (including observer stream errors), compaction notifications, and explicit `/om:*` command output remain visible. Memory passes restart after every turn while a stage is due, so a warning about a lasting condition (a failing stage, a failing primary model, a missing model) is shown once and again only after the condition cleared; `/om:status` shows the latest stage errors in between.
 
 ## `memoryFile`
 

@@ -31,6 +31,7 @@ import {
 	textCustomMessage,
 	type TestEntry,
 } from "./fixtures/session.ts";
+import { Warnings } from "../src/warnings.ts";
 
 beforeEach(() => {
 	mockAgents.runObserver.mockReset();
@@ -95,7 +96,7 @@ function setup(args: {
 			return true;
 		}),
 		consolidationPhase: undefined as "observer" | "reflector" | "dropper" | undefined,
-		resolveFailureNotified: false,
+		warnings: new Warnings(),
 		lastObserverError: undefined as string | undefined,
 		lastReflectorError: undefined as string | undefined,
 		lastDropperError: undefined as string | undefined,

@@ -51,6 +51,18 @@ export type ModelResolver = {
 	resolve: (stage: ConsolidationPhase) => Promise<ResolvedModel | undefined>;
 	/** Resolve the configured fallback, caching it for the rest of the pass. */
 	resolveFallback: (stage: ConsolidationPhase) => Promise<ResolvedModel | undefined>;
+	/**
+	 * Run one worker stage against the resolved model, retrying once with the configured
+	 * fallback when the call throws. A stage that already resolved through the fallback is not
+	 * retried again: its error is final. The last error thrown is what the caller sees, so the
+	 * stream-error classification and failure recording stay intact.
+	 */
+	runStage: <T>(
+		stage: ConsolidationPhase,
+		resolved: ResolvedModel,
+		work: (model: ResolvedModel) => Promise<T>,
+		signal?: AbortSignal,
+	) => Promise<T>;
 };
 
 export function makeModelResolver(runtime: Runtime, ctx: WorkerModelCtx): ModelResolver {
@@ -61,7 +73,7 @@ export function makeModelResolver(runtime: Runtime, ctx: WorkerModelCtx): ModelR
 
 	const resolve = async (stage: ConsolidationPhase): Promise<ResolvedModel | undefined> => {
 		if (fallbackActive) {
-			runtime.resolveFailureNotified = false;
+			runtime.warnings.clear("no model");
 			return fallbackActive;
 		}
 		cached ??= runtime.resolveModel({
@@ -71,14 +83,11 @@ export function makeModelResolver(runtime: Runtime, ctx: WorkerModelCtx): ModelR
 			ui: ctx.ui,
 		});
 		if (cached.ok) {
-			runtime.resolveFailureNotified = false;
+			runtime.warnings.clear("no model");
 			return cached;
 		}
 		debugLog(`${stage}.model_unavailable`, { reason: cached.reason });
-		if (!runtime.resolveFailureNotified && ctx.hasUI && ctx.ui) {
-			ctx.ui.notify(`Observational memory: ${stage} skipped — ${cached.reason}`, "warning");
-			runtime.resolveFailureNotified = true;
-		}
+		runtime.warnings.warn(ctx, "no model", `Observational memory: ${stage} skipped — ${cached.reason}`);
 		return undefined;
 	};
 
@@ -109,45 +118,39 @@ export function makeModelResolver(runtime: Runtime, ctx: WorkerModelCtx): ModelR
 		return resolved;
 	};
 
-	return { resolve, resolveFallback };
-}
-
-/**
- * Run one worker stage against the resolved primary model, retrying once with the
- * configured fallback model when the call throws. A stage that already resolved
- * through the fallback (resolution-time fallback) is not retried again — its error
- * is final. The last error thrown is what the caller sees, so the existing
- * stream-error classification and failure recording stay intact.
- */
-export async function runStageWithFallback<T>(
-	ctx: WorkerModelCtx,
-	stage: ConsolidationPhase,
-	resolved: ResolvedModel,
-	resolver: ModelResolver,
-	work: (model: ResolvedModel) => Promise<T>,
-	signal?: AbortSignal,
-): Promise<T> {
-	try {
-		return await work(resolved);
-	} catch (primaryError) {
-		// An aborted run (consolidateWhenIdle yielding to the session) is not a
-		// model failure: retrying with the fallback would defeat the abort.
-		if (signal?.aborted) throw primaryError;
-		if (resolved.fallbackUsed === true) throw primaryError;
-		const fallback = await resolver.resolveFallback(stage);
-		if (!fallback) throw primaryError;
-		const message = primaryError instanceof Error ? primaryError.message : String(primaryError);
-		debugLog(`${stage}.fallback_retry`, {
-			primaryError: message,
-			provider: (fallback.model as { provider?: string })?.provider,
-			id: (fallback.model as { id?: string })?.id,
-		});
-		if (ctx.hasUI && ctx.ui) {
-			ctx.ui.notify(
+	const runStage = async <T>(
+		stage: ConsolidationPhase,
+		resolved: ResolvedModel,
+		work: (model: ResolvedModel) => Promise<T>,
+		signal?: AbortSignal,
+	): Promise<T> => {
+		let result: T;
+		try {
+			result = await work(resolved);
+			if (resolved.fallbackUsed !== true) runtime.warnings.clear(`${stage} primary failed`);
+		} catch (primaryError) {
+			// An aborted run (consolidateWhenIdle yielding to the session) is not a
+			// model failure: retrying with the fallback would defeat the abort.
+			if (signal?.aborted) throw primaryError;
+			if (resolved.fallbackUsed === true) throw primaryError;
+			const fallback = await resolveFallback(stage);
+			if (!fallback) throw primaryError;
+			const message = primaryError instanceof Error ? primaryError.message : String(primaryError);
+			debugLog(`${stage}.fallback_retry`, {
+				primaryError: message,
+				provider: (fallback.model as { provider?: string })?.provider,
+				id: (fallback.model as { id?: string })?.id,
+			});
+			runtime.warnings.warn(
+				ctx,
+				`${stage} primary failed`,
 				`Observational memory: ${stage} failed (${message}); retrying with fallback model`,
-				"warning",
 			);
+			result = await work(fallback);
 		}
-		return await work(fallback);
-	}
+		runtime.warnings.clear(`${stage} failed`);
+		return result;
+	};
+
+	return { resolve, resolveFallback, runStage };
 }

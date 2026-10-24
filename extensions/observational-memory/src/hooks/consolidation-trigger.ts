@@ -12,7 +12,6 @@ import {
 	makeModelResolver,
 	observerChunkContextWindow,
 	type ResolvedModel,
-	runStageWithFallback,
 	type WorkerModelCtx,
 	workerThinkingLevel,
 } from "../worker-models.ts";
@@ -343,7 +342,7 @@ async function runObserverStage(
 
 	let observations: Observation[] | undefined;
 	try {
-		observations = await runStageWithFallback(ctx, "observer", resolved, resolver, (worker) => runObserver({
+		observations = await resolver.runStage("observer", resolved, (worker) => runObserver({
 			model: worker.model as any,
 			priorReflections,
 			priorObservations,
@@ -422,7 +421,7 @@ async function runReflectorStage(
 	}
 
 	const folded = foldLedger(entries);
-	const reflections = await runStageWithFallback(ctx, "reflector", resolved, resolver, (worker) => {
+	const reflections = await resolver.runStage("reflector", resolved, (worker) => {
 		const reflectorMemory = boundWorkerMemory(
 			folded.reflections,
 			folded.activeObservations,
@@ -512,7 +511,7 @@ async function runDropperStage(
 	}
 
 	const reflectionsForDropper = mergeReflections(folded.reflections, sameRunReflections);
-	const droppedIds = await runStageWithFallback(ctx, "dropper", resolved, resolver, (worker) => {
+	const droppedIds = await resolver.runStage("dropper", resolved, (worker) => {
 		// The dropper prunes old observations, so it sees the oldest ones that fit.
 		const dropperMemory = boundWorkerMemory(
 			reflectionsForDropper,

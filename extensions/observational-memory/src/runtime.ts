@@ -1,5 +1,6 @@
 import { type Config, DEFAULTS, loadConfig } from "./config.ts";
 import { debugLog } from "./debug-log.ts";
+import { Warnings } from "./warnings.ts";
 
 export type ResolveResult =
 	| {
@@ -37,7 +38,7 @@ export class Runtime {
 	/** Aborts the in-flight consolidation run's model calls (see `consolidateWhenIdle`). */
 	consolidationAbortController: AbortController | undefined;
 	compactHookInFlight = false;
-	resolveFailureNotified = false;
+	readonly warnings = new Warnings();
 	lastObserverError: string | undefined;
 	lastReflectorError: string | undefined;
 	lastDropperError: string | undefined;
@@ -66,7 +67,10 @@ export class Runtime {
 	 */
 	resolveModel(ctx: ResolveCtx): ResolveResult {
 		const primary = this.resolvePrimaryModel(ctx);
-		if (primary.ok) return primary;
+		if (primary.ok) {
+			this.warnings.clear("primary model unavailable");
+			return primary;
+		}
 		const fallback = this.resolveFallbackModel(ctx);
 		if (!fallback.ok) {
 			return this.config.fallbackModel
@@ -76,12 +80,11 @@ export class Runtime {
 		const target = this.config.fallbackModel;
 		const provider = (fallback.model as { provider?: string }).provider ?? target?.provider ?? "unknown";
 		const id = (fallback.model as { id?: string }).id ?? target?.id ?? "unknown";
-		if (ctx.hasUI && ctx.ui) {
-			ctx.ui.notify(
-				`Observational memory: primary model unavailable (${primary.reason}); using fallback ${provider}/${id}`,
-				"warning",
-			);
-		}
+		this.warnings.warn(
+			ctx,
+			"primary model unavailable",
+			`Observational memory: primary model unavailable (${primary.reason}); using fallback ${provider}/${id}`,
+		);
 		debugLog("resolve.fallback_used", { provider, id, primaryFailure: primary.reason });
 		return { ...fallback, fallbackUsed: true, primaryFailure: primary.reason };
 	}
@@ -93,10 +96,12 @@ export class Runtime {
 			const configured = ctx.modelRegistry.find(this.config.model.provider, this.config.model.id);
 			if (configured) {
 				model = configured;
-			} else if (ctx.hasUI && ctx.ui) {
-				ctx.ui.notify(
+				this.warnings.clear("configured model missing");
+			} else {
+				this.warnings.warn(
+					ctx,
+					"configured model missing",
 					`Observational memory: configured model ${this.config.model.provider}/${this.config.model.id} not found, using session model`,
-					"warning",
 				);
 			}
 		}
@@ -137,7 +142,7 @@ export class Runtime {
 		this.lastDropperError = undefined;
 		const controller = new AbortController();
 		this.consolidationAbortController = controller;
-		const promise = this.launchTrackedTask(ctx, "consolidation", work, () => {
+		const promise = this.launchTrackedTask(ctx, work, () => {
 			this.consolidationInFlight = false;
 			this.consolidationPhase = undefined;
 			if (this.consolidationAbortController === controller) this.consolidationAbortController = undefined;
@@ -160,25 +165,25 @@ export class Runtime {
 		if (phase === "observer") this.lastObserverError = message;
 		if (phase === "reflector") this.lastReflectorError = message;
 		if (phase === "dropper") this.lastDropperError = message;
-		if (ctx.hasUI && ctx.ui) ctx.ui.notify(`Observational memory: ${phase} failed: ${message}`, "warning");
+		this.warnings.warn(ctx, `${phase} failed`, `Observational memory: ${phase} failed: ${message}`);
 		return message;
 	}
 
 	private launchTrackedTask(
 		ctx: LaunchCtx,
-		label: string,
 		work: () => Promise<void>,
 		onFinally: (error: string | undefined) => void,
 	): Promise<void> {
-		const hasUI = ctx.hasUI;
-		const ui = ctx.ui;
+		// The context can go stale while the pass runs; keep what reporting needs.
+		const reportTo: LaunchCtx = { hasUI: ctx.hasUI, ui: ctx.ui };
 		return (async () => {
 			let errorMessage: string | undefined;
 			try {
 				await work();
+				this.warnings.clear("consolidation failed");
 			} catch (error) {
 				errorMessage = error instanceof Error ? error.message : String(error);
-				if (hasUI && ui) ui.notify(`Observational memory: ${label} failed: ${errorMessage}`, "warning");
+				this.warnings.warn(reportTo, "consolidation failed", `Observational memory: consolidation failed: ${errorMessage}`);
 			} finally {
 				onFinally(errorMessage);
 			}

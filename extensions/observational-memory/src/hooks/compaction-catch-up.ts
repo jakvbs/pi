@@ -6,7 +6,7 @@ import { debugLog } from "../debug-log.ts";
 import { recordMemoryEntry } from "../memory-journal.ts";
 import type { Runtime } from "../runtime.ts";
 import { serializeSourceAddressedBranchEntries } from "../serialize.ts";
-import { makeModelResolver, observerChunkContextWindow, runStageWithFallback, workerThinkingLevel } from "../worker-models.ts";
+import { makeModelResolver, observerChunkContextWindow, workerThinkingLevel } from "../worker-models.ts";
 import {
 	OM_OBSERVATIONS_RECORDED,
 	boundWorkerMemory,
@@ -87,7 +87,7 @@ export async function catchUpObserver(args: CatchUpArgs): Promise<CatchUpResult>
 
 		let observations;
 		try {
-			observations = await runStageWithFallback(ctx, "observer", resolved, resolver, (worker) => runObserver({
+			observations = await resolver.runStage("observer", resolved, (worker) => runObserver({
 				model: worker.model as any,
 				priorReflections: memory.reflections.map(reflectionToSummaryLine),
 				priorObservations: memory.observations.map(observationToSummaryLine),
