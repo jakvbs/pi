@@ -93,7 +93,7 @@ function setup(args: {
 		},
 		consolidationInFlight: false,
 		consolidationPromise: args.consolidationPromise ?? null,
-		resolveModel: vi.fn(async () => ({ ok: true, model: { provider: "gtr7", id: "memory", contextWindow: 65536 }, apiKey: "key" })),
+		resolveModel: vi.fn(() => ({ ok: true, model: { provider: "gtr7", id: "memory", contextWindow: 65536 } })),
 		ensureConfig: vi.fn(),
 	};
 	registerActivation(pi as any, runtime as any);
@@ -103,7 +103,7 @@ function setup(args: {
 		hasUI: true,
 		ui: { notify: vi.fn() },
 		model: { contextWindow: 200_000 },
-		modelRegistry: {},
+		modelRegistry: { find: vi.fn(() => undefined), streamSimple: vi.fn() },
 		signal: undefined,
 		sessionManager: { getBranch: vi.fn(() => entries) },
 	};

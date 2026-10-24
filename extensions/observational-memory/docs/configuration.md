@@ -208,7 +208,7 @@ Set `model` when you want the observer, reflector, and dropper to use a cheaper 
 }
 ```
 
-`provider` and `id` must both be non-empty strings. `thinking` is optional. If the configured model cannot be resolved, the runtime attempts to fall back to the current session model and notifies once. Memory workers accept either an API key or OAuth-style auth headers (e.g. `Authorization: Bearer …`), so OAuth-authenticated providers work without an API key. If no usable model or credentials are available, the relevant background worker skips/fails safely rather than inventing memory.
+`provider` and `id` must both be non-empty strings. `thinking` is optional. If the configured model cannot be resolved, the runtime attempts to fall back to the current session model and notifies once. Memory workers send their requests through Pi, which authenticates each request when it is sent, so any model Pi can call works, including OAuth logins and providers registered by other extensions. If no model is available or Pi cannot authenticate the request, the relevant background worker skips/fails safely rather than inventing memory.
 
 Workers stream through Pi's composed provider runtime, not `@earendil-works/pi-ai/compat` alone. Session models whose `api` id comes from `pi.registerProvider` (`cursor-sdk`, CLIProxyAPI, commandcode, and other custom APIs) work without a second built-in provider. `model` remains optional: set it only when you want cheaper/faster workers than the coding agent. Leaving it unset is the Cursor-only setup.
 
@@ -270,8 +270,8 @@ Set `fallbackModel` to give the memory workers a second model when the primary o
 
 The fallback is tried in two places:
 
-1. **Resolution.** When the primary memory model cannot be resolved — not in Pi's registry, or carrying no usable API key/auth headers — the fallback is resolved and used. The notification names both the primary failure and the fallback that took over.
-2. **Runtime.** When a worker stage (observer, reflector, or dropper) errors during its model call, that one stage is retried once with the fallback model. The retry is per-stage and per-pass; a successful retry is logged and notified.
+1. **Resolution.** When no primary memory model is available, the fallback is resolved and used. The notification names both the primary failure and the fallback that took over.
+2. **Runtime.** When a worker stage (observer, reflector, or dropper) errors during its model call, including when Pi cannot authenticate the primary (for example after a logout), that one stage is retried once with the fallback model. The observer run during compaction catch-up is retried the same way. The retry is per-stage and per-pass; a successful retry is logged and notified.
 
 Once the fallback resolves, it is reused for the rest of the consolidation pass, so later stages do not re-pay a known-broken primary. If the primary model itself resolved through the fallback, no further runtime retry is attempted for that pass.
 

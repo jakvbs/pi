@@ -55,6 +55,7 @@ function setup(args: {
 	observerChunkMaxTokens?: number;
 	consolidationInFlight?: boolean;
 	resolveOk?: boolean;
+	fallback?: { provider: string; id: string; contextWindow: number };
 }) {
 	let entries = [...args.entries];
 	let handler: ((event: unknown, ctx: unknown) => Promise<unknown>) | undefined;
@@ -82,12 +83,17 @@ function setup(args: {
 			agentMaxTokens: 8192,
 			showWorkerNotifications: true,
 			model: { provider: "gtr7", id: "memory", thinking: "off" },
+			fallbackModel: args.fallback ? { provider: args.fallback.provider, id: args.fallback.id, thinking: "high" } : undefined,
 		},
 		compactHookInFlight: false,
 		consolidationInFlight: args.consolidationInFlight ?? false,
-		resolveModel: vi.fn(async () => (args.resolveOk === false
+		resolveModel: vi.fn(() => (args.resolveOk === false
 			? { ok: false, reason: "no model" }
-			: { ok: true, model: { provider: "gtr7", id: "memory", contextWindow: 65536 }, apiKey: "key" })),
+			: { ok: true, model: { provider: "gtr7", id: "memory", contextWindow: 65536 } })),
+		resolveFallbackModel: vi.fn(() => (args.fallback
+			? { ok: true, model: args.fallback }
+			: { ok: false, reason: "no fallback model configured" })),
+		resolveFailureNotified: false,
 		ensureConfig: vi.fn(),
 	};
 	registerCompactionHook(pi as any, runtime as any);
@@ -97,7 +103,7 @@ function setup(args: {
 		hasUI: true,
 		ui: { notify: vi.fn() },
 		model: { contextWindow: 65536 },
-		modelRegistry: {},
+		modelRegistry: { find: vi.fn(() => args.fallback), streamSimple: vi.fn() },
 		sessionManager: { getBranch: vi.fn(() => entries) },
 	};
 	const run = (firstKeptEntryId: string) => handler!({
@@ -115,6 +121,23 @@ beforeEach(() => {
 });
 
 describe("compaction hook synchronous catch-up", () => {
+	it("retries a failed catch-up chunk once with the fallback model", async () => {
+		const gapObs = observation("cccccccccccc", { sourceEntryIds: ["t1", "a2"], tokenCount: 12 });
+		mockAgents.runObserver.mockRejectedValueOnce(new Error("primary down")).mockResolvedValueOnce([gapObs]);
+		const fallback = { provider: "backup", id: "memory", contextWindow: 32768 };
+		const { run, pi, runtime, ctx } = setup({ entries: laggingBranch(), fallback });
+
+		const result = await run("u2") as any;
+
+		expect(mockAgents.runObserver).toHaveBeenCalledTimes(2);
+		expect(mockAgents.runObserver).toHaveBeenNthCalledWith(1, expect.objectContaining({ model: expect.objectContaining({ provider: "gtr7" }), thinkingLevel: "off" }));
+		expect(mockAgents.runObserver).toHaveBeenNthCalledWith(2, expect.objectContaining({ model: fallback, thinkingLevel: "high" }));
+		expect(runtime.resolveFallbackModel).toHaveBeenCalledTimes(1);
+		expect(ctx.ui.notify).toHaveBeenCalledWith("Observational memory: observer failed (primary down); retrying with fallback model", "warning");
+		expect(pi.appendEntry).toHaveBeenCalledWith(OM_OBSERVATIONS_RECORDED, { observations: [gapObs], coversUpToId: "a2" });
+		expect(result.compaction.firstKeptEntryId).toBe("u2");
+	});
+
 	it("observes the unobserved gap and then cuts at Pi's proposed boundary", async () => {
 		const gapObs = observation("cccccccccccc", { sourceEntryIds: ["t1", "a2"], tokenCount: 12 });
 		mockAgents.runObserver.mockResolvedValueOnce([gapObs]);

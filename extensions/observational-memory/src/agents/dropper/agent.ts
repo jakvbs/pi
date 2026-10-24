@@ -5,7 +5,7 @@ import type { Static } from "typebox";
 import { debugLog } from "../../debug-log.ts";
 import { AGENT_LOOP_MAX_TOKENS, boundedMaxTokens } from "../../model-budget.ts";
 import { logAgentStreamError } from "../stream-errors.ts";
-import { resolveWorkerStreamSimple, type StreamableModelRegistry, type WorkerStreamSimple } from "../worker-stream.ts";
+import { type WorkerModelRegistry, workerStream } from "../worker-stream.ts";
 import { reflectionToSummaryLine, type Observation, type Reflection } from "../../session-ledger/index.ts";
 import { DROPPER_SYSTEM } from "./prompts.ts";
 import {
@@ -48,9 +48,6 @@ export class DropperStreamError extends Error {
 
 interface RunDropperArgs {
 	model: Model<any>;
-	apiKey?: string;
-	headers?: Record<string, string>;
-	env?: Record<string, string>;
 	reflections: Reflection[];
 	observations: Observation[];
 	targetTokens: number;
@@ -60,8 +57,7 @@ interface RunDropperArgs {
 	/** Maximum output tokens for the loop (defaults to {@link AGENT_LOOP_MAX_TOKENS}). */
 	maxOutputTokens?: number;
 	thinkingLevel?: ModelThinkingLevel;
-	modelRegistry?: StreamableModelRegistry;
-	streamSimple?: WorkerStreamSimple;
+	modelRegistry: WorkerModelRegistry;
 }
 
 const RELEVANCE_DROP_RANK: Record<Observation["relevance"], number> = {
@@ -145,7 +141,7 @@ export function selectDropCandidates(
 }
 
 export async function runDropper(args: RunDropperArgs): Promise<string[] | undefined> {
-	const { model, apiKey, headers, env, reflections, observations, targetTokens, signal } = args;
+	const { model, reflections, observations, targetTokens, signal } = args;
 	if (observations.length === 0) return undefined;
 
 	const metrics = observationPoolMetrics(observations, targetTokens);
@@ -258,9 +254,6 @@ export async function runDropper(args: RunDropperArgs): Promise<string[] | undef
 	let turnCount = 0;
 	const config: AgentLoopConfig = {
 		model,
-		apiKey,
-		headers,
-		env,
 		maxTokens: boundedMaxTokens(model, args.maxOutputTokens ?? AGENT_LOOP_MAX_TOKENS),
 		convertToLlm: (msgs) => msgs as Message[],
 		toolExecution: "sequential",
@@ -281,7 +274,7 @@ export async function runDropper(args: RunDropperArgs): Promise<string[] | undef
 		context,
 		config,
 		signal,
-		resolveWorkerStreamSimple(model, args.modelRegistry, args.streamSimple),
+		workerStream(args.modelRegistry),
 	);
 	let streamError: { stopReason: string; errorMessage?: string } | undefined;
 	for await (const event of stream) {
