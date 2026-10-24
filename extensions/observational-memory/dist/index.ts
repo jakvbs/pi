@@ -1419,22 +1419,10 @@ function logAgentStreamError(stage, event) {
 }
 
 // src/agents/worker-stream.ts
-import { streamSimple as compatStreamSimple } from "@earendil-works/pi-ai/compat";
-function resolveWorkerStreamSimple(model, modelRegistry, override) {
-  if (override) return override;
-  const registryStream = modelRegistry?.streamSimple;
-  if (typeof registryStream === "function") {
-    return (nextModel, context, options) => registryStream.call(modelRegistry, nextModel, context, options);
-  }
-  try {
-    const config = modelRegistry?.getRegisteredProviderConfig?.(model.provider);
-    const composed = config?.streamSimple;
-    if (config?.api === model.api && typeof composed === "function") {
-      return composed;
-    }
-  } catch {
-  }
-  return compatStreamSimple;
+import { randomUUID } from "node:crypto";
+function workerStream(registry) {
+  const sessionId = randomUUID();
+  return (model, context, options) => registry.streamSimple(model, context, { ...options, sessionId });
 }
 
 // src/model-budget.ts
@@ -1809,7 +1797,7 @@ function normalizeSourceEntryIds(sourceEntryIds, allowedSourceEntryIds) {
   return Array.from(seen).sort((a, b) => (allowedOrder.get(a) ?? 0) - (allowedOrder.get(b) ?? 0));
 }
 async function runObserver(args) {
-  const { model, apiKey, headers, env, priorReflections, priorObservations, chunk, allowedSourceEntryIds, signal } = args;
+  const { model, priorReflections, priorObservations, chunk, allowedSourceEntryIds, signal } = args;
   const conversation = chunk.trim();
   if (!conversation) return void 0;
   const accumulated = /* @__PURE__ */ new Map();
@@ -1884,9 +1872,6 @@ ${conversation}`;
   let turnCount = 0;
   const config = {
     model,
-    apiKey,
-    headers,
-    env,
     maxTokens: boundedMaxTokens(model, args.maxOutputTokens ?? AGENT_LOOP_MAX_TOKENS),
     convertToLlm: (msgs) => msgs,
     toolExecution: "sequential",
@@ -1905,7 +1890,7 @@ ${conversation}`;
     context,
     config,
     signal,
-    resolveWorkerStreamSimple(model, args.modelRegistry, args.streamSimple)
+    workerStream(args.modelRegistry)
   );
   let streamError;
   for await (const event of stream) {
@@ -1941,22 +1926,111 @@ function recordMemoryEntry(pi, config, ctx, readBranch, customType, data) {
   return true;
 }
 
+// src/worker-models.ts
+function workerThinkingLevel(runtime, resolved) {
+  if (resolved.fallbackUsed === true) {
+    return runtime.config.fallbackModel?.thinking ?? runtime.config.model?.thinking ?? "low";
+  }
+  return runtime.config.model?.thinking ?? "low";
+}
+function observerChunkContextWindow(runtime, ctx, resolved) {
+  const primary = resolved.model?.contextWindow;
+  const fallback = runtime.config.fallbackModel;
+  if (!fallback) return primary;
+  const fallbackModel = ctx.modelRegistry.find(fallback.provider, fallback.id);
+  const usablePrimary = typeof primary === "number" && primary > 0 ? primary : void 0;
+  const fallbackWindow = fallbackModel?.contextWindow;
+  const usableFallback = typeof fallbackWindow === "number" && fallbackWindow > 0 ? fallbackWindow : void 0;
+  if (usablePrimary === void 0) return usableFallback;
+  if (usableFallback === void 0) return usablePrimary;
+  return Math.min(usablePrimary, usableFallback);
+}
+function makeModelResolver(runtime, ctx) {
+  let cached;
+  let fallbackActive;
+  const resolve = async (stage) => {
+    if (fallbackActive) {
+      runtime.resolveFailureNotified = false;
+      return fallbackActive;
+    }
+    cached ??= runtime.resolveModel({
+      model: ctx.model,
+      modelRegistry: ctx.modelRegistry,
+      hasUI: ctx.hasUI,
+      ui: ctx.ui
+    });
+    if (cached.ok) {
+      runtime.resolveFailureNotified = false;
+      return cached;
+    }
+    debugLog(`${stage}.model_unavailable`, { reason: cached.reason });
+    if (!runtime.resolveFailureNotified && ctx.hasUI && ctx.ui) {
+      ctx.ui.notify(`Observational memory: ${stage} skipped \u2014 ${cached.reason}`, "warning");
+      runtime.resolveFailureNotified = true;
+    }
+    return void 0;
+  };
+  const resolveFallback = async (stage) => {
+    if (fallbackActive) return fallbackActive;
+    const resolveFallbackModel = runtime.resolveFallbackModel;
+    if (typeof resolveFallbackModel !== "function") {
+      debugLog(`${stage}.fallback_unavailable`, { reason: "runtime exposes no resolveFallbackModel" });
+      return void 0;
+    }
+    const resolvedCtx = {
+      model: ctx.model,
+      modelRegistry: ctx.modelRegistry,
+      hasUI: ctx.hasUI,
+      ui: ctx.ui
+    };
+    const result = resolveFallbackModel.call(runtime, resolvedCtx);
+    if (!result.ok) {
+      debugLog(`${stage}.fallback_unavailable`, { reason: result.reason });
+      return void 0;
+    }
+    const resolved = { ...result, fallbackUsed: true };
+    fallbackActive = resolved;
+    debugLog(`${stage}.fallback_active`, {
+      provider: resolved.model?.provider,
+      id: resolved.model?.id
+    });
+    return resolved;
+  };
+  return { resolve, resolveFallback };
+}
+async function runStageWithFallback(ctx, stage, resolved, resolver, work, signal) {
+  try {
+    return await work(resolved);
+  } catch (primaryError) {
+    if (signal?.aborted) throw primaryError;
+    if (resolved.fallbackUsed === true) throw primaryError;
+    const fallback = await resolver.resolveFallback(stage);
+    if (!fallback) throw primaryError;
+    const message = primaryError instanceof Error ? primaryError.message : String(primaryError);
+    debugLog(`${stage}.fallback_retry`, {
+      primaryError: message,
+      provider: fallback.model?.provider,
+      id: fallback.model?.id
+    });
+    if (ctx.hasUI && ctx.ui) {
+      ctx.ui.notify(
+        `Observational memory: ${stage} failed (${message}); retrying with fallback model`,
+        "warning"
+      );
+    }
+    return await work(fallback);
+  }
+}
+
 // src/hooks/compaction-catch-up.ts
 async function catchUpObserver(args) {
   const { pi, runtime, ctx, entries, gap, maxChunks, signal } = args;
   const result = { chunksRecorded: 0 };
   if (maxChunks <= 0) return result;
-  const resolved = await runtime.resolveModel({
-    model: ctx.model,
-    modelRegistry: ctx.modelRegistry,
-    hasUI: ctx.hasUI,
-    ui: ctx.ui
-  });
-  if (!resolved.ok) {
-    debugLog("compaction.catch_up.model_unavailable", { reason: resolved.reason });
-    return { ...result, stoppedBecause: "model_unavailable" };
-  }
-  const contextWindow = resolved.model.contextWindow;
+  const resolver = makeModelResolver(runtime, ctx);
+  let resolved = await resolver.resolve("observer");
+  if (!resolved) return { ...result, stoppedBecause: "model_unavailable" };
+  const contextWindow = observerChunkContextWindow(runtime, ctx, resolved);
   const maxChunkTokens = resolveObserverChunkMaxTokens(runtime.config, contextWindow);
   const frontierIndex = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
   let remaining = entries.slice(frontierIndex + 1, gap.lastIndex + 1).filter(isSourceEntry);
@@ -1977,11 +2051,8 @@ async function catchUpObserver(args) {
     debugLog("compaction.catch_up.chunk", { chunkIndex, sourceEntryCount: sourceEntryIds.length, estimatedTokens, coversUpToId });
     let observations;
     try {
-      observations = await runObserver({
-        model: resolved.model,
-        apiKey: resolved.apiKey,
-        headers: resolved.headers,
-        env: resolved.env,
+      observations = await runStageWithFallback(ctx, "observer", resolved, resolver, (worker) => runObserver({
+        model: worker.model,
         priorReflections: memory.reflections.map(reflectionToSummaryLine),
         priorObservations: memory.observations.map(observationToSummaryLine),
         chunk,
@@ -1989,9 +2060,10 @@ async function catchUpObserver(args) {
         signal,
         maxTurns: runtime.config.agentMaxTurns,
         maxOutputTokens: runtime.config.agentMaxTokens,
-        thinkingLevel: runtime.config.model?.thinking ?? "low",
+        thinkingLevel: workerThinkingLevel(runtime, worker),
         modelRegistry: ctx.modelRegistry
-      });
+      }), signal);
+      resolved = await resolver.resolve("observer") ?? resolved;
     } catch (error) {
       if (signal?.aborted) return { ...result, stoppedBecause: "aborted" };
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -2565,7 +2637,7 @@ function selectDropCandidates(ids, observations, maxDrops, reflections = []) {
   }).slice(0, maxDrops).map((candidate) => candidate.id);
 }
 async function runDropper(args) {
-  const { model, apiKey, headers, env, reflections, observations, targetTokens, signal } = args;
+  const { model, reflections, observations, targetTokens, signal } = args;
   if (observations.length === 0) return void 0;
   const metrics = observationPoolMetrics(observations, targetTokens);
   const { observationTokens, fullness, tokensOverTarget, maxDropsAllowed } = metrics;
@@ -2682,9 +2754,6 @@ This maximum is a hard upper bound, not a target. Drop fewer or none if fewer ob
   let turnCount = 0;
   const config = {
     model,
-    apiKey,
-    headers,
-    env,
     maxTokens: boundedMaxTokens(model, args.maxOutputTokens ?? AGENT_LOOP_MAX_TOKENS),
     convertToLlm: (msgs) => msgs,
     toolExecution: "sequential",
@@ -2702,7 +2771,7 @@ This maximum is a hard upper bound, not a target. Drop fewer or none if fewer ob
     context,
     config,
     signal,
-    resolveWorkerStreamSimple(model, args.modelRegistry, args.streamSimple)
+    workerStream(args.modelRegistry)
   );
   let streamError;
   for await (const event of stream) {
@@ -2882,7 +2951,7 @@ function normalizeReflectionContent(content) {
   return normalized;
 }
 async function runReflector(args) {
-  const { model, apiKey, headers, env, reflections, observations, signal } = args;
+  const { model, reflections, observations, signal } = args;
   if (observations.length === 0) return void 0;
   const coverageById = reflectionCoverageMap(observations, reflections);
   debugLog("reflector.agent_start", {
@@ -2956,9 +3025,6 @@ Crystallize any missing durable facts or patterns into new reflections. If nothi
   let turnCount = 0;
   const config = {
     model,
-    apiKey,
-    headers,
-    env,
     maxTokens: boundedMaxTokens(model, args.maxOutputTokens ?? AGENT_LOOP_MAX_TOKENS),
     convertToLlm: (msgs) => msgs,
     toolExecution: "sequential",
@@ -2976,7 +3042,7 @@ Crystallize any missing durable facts or patterns into new reflections. If nothi
     context,
     config,
     signal,
-    resolveWorkerStreamSimple(model, args.modelRegistry, args.streamSimple)
+    workerStream(args.modelRegistry)
   );
   let streamError;
   for await (const event of stream) {
@@ -3040,116 +3106,6 @@ function anyStageDue(entries, runtime, currentTokens) {
 }
 function shouldNotifyWorker(runtime, ctx) {
   return runtime.config.showWorkerNotifications && ctx.hasUI;
-}
-function workerHeadersFor(ctx, resolved) {
-  const model = resolved.model ?? {};
-  if (model.provider !== "opencode" && model.provider !== "opencode-go" && !(typeof model.baseUrl === "string" && model.baseUrl.includes("opencode.ai"))) {
-    return resolved;
-  }
-  const sessionId = ctx.sessionManager.getSessionId?.();
-  if (!sessionId) return resolved;
-  return {
-    ...resolved,
-    headers: {
-      ...resolved.headers ?? {},
-      "x-opencode-session": sessionId,
-      "x-opencode-client": "pi"
-    }
-  };
-}
-function workerThinkingLevel(runtime, resolved) {
-  if (resolved.fallbackUsed === true) {
-    return runtime.config.fallbackModel?.thinking ?? runtime.config.model?.thinking ?? "low";
-  }
-  return runtime.config.model?.thinking ?? "low";
-}
-function observerChunkContextWindow(runtime, ctx, resolved) {
-  const primary = resolved.model?.contextWindow;
-  const fallback = runtime.config.fallbackModel;
-  if (!fallback) return primary;
-  const fallbackModel = ctx.modelRegistry.find?.(fallback.provider, fallback.id);
-  const usablePrimary = typeof primary === "number" && primary > 0 ? primary : void 0;
-  const fallbackWindow = fallbackModel?.contextWindow;
-  const usableFallback = typeof fallbackWindow === "number" && fallbackWindow > 0 ? fallbackWindow : void 0;
-  if (usablePrimary === void 0) return usableFallback;
-  if (usableFallback === void 0) return usablePrimary;
-  return Math.min(usablePrimary, usableFallback);
-}
-function makeModelResolver(runtime, ctx) {
-  let cached;
-  let fallbackActive;
-  const resolve = async (stage) => {
-    if (fallbackActive) {
-      runtime.resolveFailureNotified = false;
-      return fallbackActive;
-    }
-    cached ??= await runtime.resolveModel({
-      model: ctx.model,
-      modelRegistry: ctx.modelRegistry,
-      hasUI: ctx.hasUI,
-      ui: ctx.ui
-    });
-    if (cached.ok) {
-      runtime.resolveFailureNotified = false;
-      return workerHeadersFor(ctx, cached);
-    }
-    debugLog(`${stage}.model_unavailable`, { reason: cached.reason });
-    if (!runtime.resolveFailureNotified && ctx.hasUI && ctx.ui) {
-      ctx.ui.notify(`Observational memory: ${stage} skipped \u2014 ${cached.reason}`, "warning");
-      runtime.resolveFailureNotified = true;
-    }
-    return void 0;
-  };
-  const resolveFallback = async (stage) => {
-    if (fallbackActive) return fallbackActive;
-    const resolveFallbackModel = runtime.resolveFallbackModel;
-    if (typeof resolveFallbackModel !== "function") {
-      debugLog(`${stage}.fallback_unavailable`, { reason: "runtime exposes no resolveFallbackModel" });
-      return void 0;
-    }
-    const resolvedCtx = {
-      model: ctx.model,
-      modelRegistry: ctx.modelRegistry,
-      hasUI: ctx.hasUI,
-      ui: ctx.ui
-    };
-    const result = await resolveFallbackModel.call(runtime, resolvedCtx);
-    if (!result.ok) {
-      debugLog(`${stage}.fallback_unavailable`, { reason: result.reason });
-      return void 0;
-    }
-    const resolved = workerHeadersFor(ctx, { ...result, fallbackUsed: true });
-    fallbackActive = resolved;
-    debugLog(`${stage}.fallback_active`, {
-      provider: resolved.model?.provider,
-      id: resolved.model?.id
-    });
-    return resolved;
-  };
-  return { resolve, resolveFallback };
-}
-async function runStageWithFallback(ctx, stage, resolved, resolver, work, signal) {
-  try {
-    return await work(resolved);
-  } catch (primaryError) {
-    if (signal?.aborted) throw primaryError;
-    if (resolved.fallbackUsed === true) throw primaryError;
-    const fallback = await resolver.resolveFallback(stage);
-    if (!fallback) throw primaryError;
-    const message = primaryError instanceof Error ? primaryError.message : String(primaryError);
-    debugLog(`${stage}.fallback_retry`, {
-      primaryError: message,
-      provider: fallback.model?.provider,
-      id: fallback.model?.id
-    });
-    if (ctx.hasUI && ctx.ui) {
-      ctx.ui.notify(
-        `Observational memory: ${stage} failed (${message}); retrying with fallback model`,
-        "warning"
-      );
-    }
-    return await work(fallback);
-  }
 }
 function registerConsolidationTrigger(pi, runtime) {
   const idleMode = (ctx) => {
@@ -3319,9 +3275,6 @@ async function runObserverStage(pi, runtime, ctx, resolver) {
   try {
     observations = await runStageWithFallback(ctx, "observer", resolved, resolver, (worker) => runObserver({
       model: worker.model,
-      apiKey: worker.apiKey,
-      headers: worker.headers,
-      env: worker.env,
       priorReflections,
       priorObservations,
       chunk,
@@ -3393,9 +3346,6 @@ async function runReflectorStage(pi, runtime, ctx, resolver) {
     );
     return runReflector({
       model: worker.model,
-      apiKey: worker.apiKey,
-      headers: worker.headers,
-      env: worker.env,
       reflections: reflectorMemory.reflections,
       observations: reflectorMemory.observations,
       maxTurns: runtime.config.agentMaxTurns,
@@ -3474,9 +3424,6 @@ async function runDropperStage(pi, runtime, ctx, resolver, sameRunReflections, s
     );
     return runDropper({
       model: worker.model,
-      apiKey: worker.apiKey,
-      headers: worker.headers,
-      env: worker.env,
       reflections: dropperMemory.reflections,
       observations: dropperMemory.observations,
       targetTokens: runtime.config.observationsPoolTargetTokens,
@@ -3504,28 +3451,6 @@ async function runDropperStage(pi, runtime, ctx, resolver, sameRunReflections, s
 }
 
 // src/runtime.ts
-function hasUsableAuth(auth) {
-  if (typeof auth.apiKey === "string" && auth.apiKey.length > 0) return true;
-  return countUsableHeaders(auth.headers) > 0;
-}
-function countHeaders(headers) {
-  return headers && typeof headers === "object" ? Object.keys(headers).length : 0;
-}
-function countUsableHeaders(headers) {
-  if (!headers || typeof headers !== "object") return 0;
-  return Object.values(headers).filter(
-    (value) => typeof value === "string" && value.length > 0
-  ).length;
-}
-var AVAILABILITY_RECHECK_TIMEOUT_MS = 5e3;
-var AVAILABILITY_RECHECK_REARM_MS = 6e4;
-function hasConfiguredProviderCredential(registry, model) {
-  try {
-    return registry.hasConfiguredAuth?.(model) === true;
-  } catch {
-    return false;
-  }
-}
 var Runtime = class {
   config = { ...DEFAULTS };
   configLoaded = false;
@@ -3539,8 +3464,6 @@ var Runtime = class {
   lastObserverError;
   lastReflectorError;
   lastDropperError;
-  /** provider -> epoch ms of the last availability re-check (see `recheckProviderCredential`). */
-  availabilityRecheckedAt = /* @__PURE__ */ new Map();
   /** Deliberate-empty backoff (#23): skip observer re-fires over the same span until enough new tokens arrive. */
   observerEmptyBackoff;
   ensureConfig(cwd) {
@@ -3549,17 +3472,19 @@ var Runtime = class {
     this.configLoaded = true;
   }
   /**
-   * Resolve the model memory workers should use.
+   * Choose the model memory workers should use. Credentials are not checked here: Pi
+   * authenticates each worker request when it is sent, and a request Pi cannot
+   * authenticate fails like any other model call, which retries with the fallback.
    *
    * Order: `config.model` (falling back to the session model when it is absent
-   * from Pi's registry), then `config.fallbackModel` when the primary resolution
-   * fails. With no fallback configured the primary reason is returned unchanged;
+   * from Pi's registry), then `config.fallbackModel` when no primary model is
+   * available. With no fallback configured the primary reason is returned unchanged;
    * with a configured-but-broken fallback both reasons are reported.
    */
-  async resolveModel(ctx) {
-    const primary = await this.resolvePrimaryModel(ctx);
+  resolveModel(ctx) {
+    const primary = this.resolvePrimaryModel(ctx);
     if (primary.ok) return primary;
-    const fallback = await this.resolveFallbackModel(ctx);
+    const fallback = this.resolveFallbackModel(ctx);
     if (!fallback.ok) {
       return this.config.fallbackModel ? { ok: false, reason: `${primary.reason}; ${fallback.reason}` } : primary;
     }
@@ -3576,7 +3501,7 @@ var Runtime = class {
     return { ...fallback, fallbackUsed: true, primaryFailure: primary.reason };
   }
   /** `config.model` when it resolves in Pi's registry, otherwise the session model. */
-  async resolvePrimaryModel(ctx) {
+  resolvePrimaryModel(ctx) {
     let model = ctx.model;
     if (this.config.model) {
       const configured = ctx.modelRegistry.find(this.config.model.provider, this.config.model.id);
@@ -3590,15 +3515,14 @@ var Runtime = class {
       }
     }
     if (!model) return { ok: false, reason: "no model available (session has no model and no observational-memory model configured)" };
-    return this.resolveCandidate(ctx, model);
+    return { ok: true, model };
   }
   /**
-   * Resolve `config.fallbackModel` with the same auth rules as the primary path.
-   * Exposed so the consolidation stages can retry a failed model call once.
-   * Returns `ok: false` when unset, identical to the configured primary, absent
-   * from the registry, or carrying no usable credentials.
+   * Resolve `config.fallbackModel`. Exposed so the consolidation stages can retry a
+   * failed model call once. Returns `ok: false` when unset, identical to the
+   * effective primary, or absent from the registry.
    */
-  async resolveFallbackModel(ctx) {
+  resolveFallbackModel(ctx) {
     const target = this.config.fallbackModel;
     if (!target) return { ok: false, reason: "no fallback model configured" };
     const configured = this.config.model;
@@ -3609,95 +3533,7 @@ var Runtime = class {
     }
     const model = ctx.modelRegistry.find(target.provider, target.id);
     if (!model) return { ok: false, reason: `fallback model ${target.provider}/${target.id} not found` };
-    return this.resolveCandidate(ctx, model);
-  }
-  /** Apply Pi's request-auth acceptance rule to one already-selected model. */
-  async resolveCandidate(ctx, model) {
-    const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-    const provider = model.provider ?? "unknown";
-    const isOAuth = ctx.modelRegistry.isUsingOAuth?.(model) === true;
-    const usable = hasUsableAuth(auth);
-    const resolvedEmptyApiKey = typeof auth.apiKey === "string" && auth.apiKey.length === 0;
-    let providerCredentialConfigured = hasConfiguredProviderCredential(ctx.modelRegistry, model);
-    if (auth.ok === true && !usable && !isOAuth && !resolvedEmptyApiKey && !providerCredentialConfigured) {
-      providerCredentialConfigured = await this.recheckProviderCredential(ctx.modelRegistry, model, provider);
-    }
-    const signsAtRequestTime = auth.ok === true && !isOAuth && !resolvedEmptyApiKey && providerCredentialConfigured;
-    if (!auth.ok || !usable && !signsAtRequestTime) {
-      const reason = isOAuth ? `authentication failed for provider "${provider}" \u2014 OAuth credentials may have expired; run '/login ${provider}' to re-authenticate` : `no API key or auth headers for provider "${provider}"`;
-      debugLog("resolve.rejected", {
-        provider,
-        reason,
-        authOk: auth.ok === true,
-        hasApiKey: typeof auth.apiKey === "string" && auth.apiKey.length > 0,
-        resolvedEmptyApiKey,
-        headerCount: countHeaders(auth.headers),
-        usableHeaderCount: countUsableHeaders(auth.headers),
-        isOAuth,
-        providerCredentialConfigured,
-        signsAtRequestTime
-      });
-      return { ok: false, reason };
-    }
-    if (!usable) {
-      debugLog("resolve.request_time_signing", { provider, providerCredentialConfigured });
-    }
-    const requestModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
-    return {
-      ok: true,
-      model: requestModel,
-      apiKey: auth.apiKey,
-      headers: auth.headers,
-      env: auth.env,
-      baseUrl: auth.baseUrl
-    };
-  }
-  /**
-   * Re-check one provider's credential live, then re-read pi's snapshot.
-   *
-   * Implements the second half of pi's own auth gate for the only case that needs it: an
-   * otherwise-ambient-looking resolution whose provider is missing from a stale or never
-   * populated availability snapshot. Bounded and rate-limited; never throws.
-   */
-  async recheckProviderCredential(registry, model, provider) {
-    const last = this.availabilityRecheckedAt.get(provider);
-    const now = Date.now();
-    if (last !== void 0 && now - last < AVAILABILITY_RECHECK_REARM_MS) return false;
-    this.availabilityRecheckedAt.set(provider, now);
-    const refresh = registry.refresh;
-    if (typeof refresh !== "function") {
-      debugLog("resolve.availability_recheck", { provider, refreshed: false, reason: "registry exposes no refresh()" });
-      return false;
-    }
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), AVAILABILITY_RECHECK_TIMEOUT_MS);
-    let refreshError;
-    let timedOut = false;
-    try {
-      await Promise.race([
-        refresh.call(registry, { allowNetwork: false, providers: [provider], signal: controller.signal }),
-        new Promise((resolve) => {
-          controller.signal.addEventListener("abort", () => {
-            timedOut = true;
-            resolve();
-          });
-        })
-      ]);
-    } catch (error) {
-      refreshError = error instanceof Error ? error.message : String(error);
-    } finally {
-      clearTimeout(timer);
-    }
-    const recovered = hasConfiguredProviderCredential(registry, model);
-    debugLog("resolve.availability_recheck", {
-      provider,
-      refreshed: refreshError === void 0 && !timedOut,
-      recovered,
-      elapsedMs: Date.now() - now,
-      timedOut,
-      ...refreshError === void 0 ? {} : { refreshError }
-    });
-    return recovered;
+    return { ok: true, model };
   }
   launchConsolidationTask(ctx, work) {
     this.consolidationInFlight = true;

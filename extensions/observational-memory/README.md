@@ -311,7 +311,7 @@ Valid `model.thinking` values are:
 
 If no `model` is configured, memory workers use the session model, including custom `pi.registerProvider` APIs such as `cursor-sdk`. You do not need a second built-in provider (OpenAI, OpenRouter, …) for observational memory to run. Set `model` only when you want cheaper or faster workers than the coding agent.
 
-Set `fallbackModel` when the memory model may be unavailable: it is tried when the primary memory model cannot be resolved (unknown provider/model or no usable credentials), and a worker stage that errors mid-call is retried once with it. Once the fallback is used, it stays active for the rest of the consolidation pass. With no `fallbackModel` configured, a failed memory model skips or fails safely exactly as before.
+Set `fallbackModel` when the memory model may be unavailable: it is tried when no primary memory model is available, and a worker stage whose model call fails, including one Pi cannot authenticate, is retried once with it. Once the fallback is used, it stays active for the rest of the consolidation pass. With no `fallbackModel` configured, a failed memory model skips or fails safely exactly as before.
 
 Set `showWorkerNotifications` to `false` to hide routine worker start and completion messages (including deliberate-empty observer info messages). Model fallback/unavailability, worker failures (including observer stream errors), compaction notifications, and explicit `/om:*` command output remain visible.
 

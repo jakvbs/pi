@@ -4,7 +4,7 @@ import { Type } from "@earendil-works/pi-ai";
 import type { Static } from "typebox";
 import { hashId } from "../../ids.ts";
 import { logAgentStreamError } from "../stream-errors.ts";
-import { resolveWorkerStreamSimple, type StreamableModelRegistry, type WorkerStreamSimple } from "../worker-stream.ts";
+import { type WorkerModelRegistry, workerStream } from "../worker-stream.ts";
 import { AGENT_LOOP_MAX_TOKENS, boundedMaxTokens } from "../../model-budget.ts";
 import { OBSERVER_SYSTEM } from "./prompts.ts";
 import { nowTimestamp, truncateRecordContent } from "../../serialize.ts";
@@ -13,9 +13,6 @@ import { observationLineTokenCount } from "../../tokens.ts";
 
 interface RunObserverArgs {
 	model: Model<any>;
-	apiKey?: string;
-	headers?: Record<string, string>;
-	env?: Record<string, string>;
 	priorReflections: string[];
 	priorObservations: string[];
 	chunk: string;
@@ -26,8 +23,7 @@ interface RunObserverArgs {
 	/** Maximum output tokens for the loop (defaults to {@link AGENT_LOOP_MAX_TOKENS}). */
 	maxOutputTokens?: number;
 	thinkingLevel?: ModelThinkingLevel;
-	modelRegistry?: StreamableModelRegistry;
-	streamSimple?: WorkerStreamSimple;
+	modelRegistry: WorkerModelRegistry;
 }
 
 const RelevanceSchema = Type.Union([
@@ -104,7 +100,7 @@ export function normalizeSourceEntryIds(
 }
 
 export async function runObserver(args: RunObserverArgs): Promise<Observation[] | undefined> {
-	const { model, apiKey, headers, env, priorReflections, priorObservations, chunk, allowedSourceEntryIds, signal } = args;
+	const { model, priorReflections, priorObservations, chunk, allowedSourceEntryIds, signal } = args;
 	const conversation = chunk.trim();
 	if (!conversation) return undefined;
 
@@ -195,9 +191,6 @@ ${conversation}`;
 	let turnCount = 0;
 	const config: AgentLoopConfig = {
 		model,
-		apiKey,
-		headers,
-		env,
 		maxTokens: boundedMaxTokens(model, args.maxOutputTokens ?? AGENT_LOOP_MAX_TOKENS),
 		convertToLlm: (msgs) => msgs as Message[],
 		toolExecution: "sequential",
@@ -219,7 +212,7 @@ ${conversation}`;
 		context,
 		config,
 		signal,
-		resolveWorkerStreamSimple(model, args.modelRegistry, args.streamSimple),
+		workerStream(args.modelRegistry),
 	);
 	let streamError: { stopReason: string; errorMessage?: string } | undefined;
 	for await (const event of stream) {
