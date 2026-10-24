@@ -1,0 +1,26 @@
+{
+  "name": "pi-composer-predictions",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Prototype: completes the word being typed from the user's prompt history, as ghost text in the editor.",
+  "license": "MIT",
+  "main": "index.ts",
+  "pi": {
+    "extensions": [
+      "index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --import ../../packages/coding-agent/src/experimental/source-resolver.ts --test ghost.test.ts words.test.ts",
+    "replay": "node --experimental-strip-types --import ../../packages/coding-agent/src/experimental/source-resolver.ts replay.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  }
+}
