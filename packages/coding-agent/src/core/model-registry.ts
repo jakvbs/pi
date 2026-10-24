@@ -19,11 +19,13 @@ import type {
 	ModelsImagesOptions,
 	ModelsRefreshOptions,
 	ModelsRefreshResult,
+	ModelsRequestTransforms,
 	ModelsSimpleStreamOptions,
 	ModelType,
 	ModelTypeMap,
 	Provider,
 	ProviderHeaders,
+	StreamOptions,
 } from "@earendil-works/pi-ai";
 import type { ModelRuntime } from "./model-runtime.ts";
 import type { AuthStatus, ProviderConfigInput } from "./provider-composer.ts";
@@ -41,15 +43,26 @@ export type ResolvedRequestAuth =
 	| { ok: false; error: string };
 export { clearApiKeyCache } from "./provider-composer.ts";
 
+/** Adds a session's request settings to the options of one model request. */
+export type RequestOptionsTransform = <TOptions extends StreamOptions & ModelsRequestTransforms>(
+	options: TOptions | undefined,
+) => TOptions | undefined;
+
 /**
  * Synchronous compatibility facade exposed to extensions.
  * Coding-agent internals use ModelRuntime directly.
  */
 export class ModelRegistry {
 	private readonly runtime: ModelRuntime;
+	private readonly requestOptions: RequestOptionsTransform;
 
-	constructor(runtime: ModelRuntime) {
+	/**
+	 * `requestOptions` gives extension model requests the settings a session applies to its own
+	 * requests: timeouts, provider retries, client identity and `before_provider_headers` hooks.
+	 */
+	constructor(runtime: ModelRuntime, requestOptions: RequestOptionsTransform = (options) => options) {
 		this.runtime = runtime;
+		this.requestOptions = requestOptions;
 	}
 
 	/** Reload models.json asynchronously. Await before making synchronous registry reads. */
@@ -131,12 +144,12 @@ export class ModelRegistry {
 		context: Context,
 		options?: ModelsApiStreamOptions<TApi>,
 	): AssistantMessageEventStream {
-		return this.runtime.stream(model, context, options);
+		return this.runtime.stream(model, context, this.requestOptions(options));
 	}
 
 	/** Stream with provider-neutral options and request-time authentication. */
 	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
-		return this.runtime.streamSimple(model, context, options);
+		return this.runtime.streamSimple(model, context, this.requestOptions(options));
 	}
 
 	complete<TApi extends Api>(
@@ -144,7 +157,7 @@ export class ModelRegistry {
 		context: Context,
 		options?: ModelsApiStreamOptions<TApi>,
 	): Promise<AssistantMessage> {
-		return this.runtime.complete(model, context, options);
+		return this.runtime.complete(model, context, this.requestOptions(options));
 	}
 
 	/** Every known model of a type (chat, image, classifier), optionally for one provider. */
