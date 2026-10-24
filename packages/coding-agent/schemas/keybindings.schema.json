@@ -239,6 +239,10 @@
       "$ref": "#/$defs/KeybindingValue",
       "description": "Toggle thinking blocks"
     },
+    "app.tools.toggle": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Toggle tool call visibility"
+    },
     "app.session.toggleNamedFilter": {
       "$ref": "#/$defs/KeybindingValue",
       "description": "Toggle named session filter"
