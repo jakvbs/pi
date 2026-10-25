@@ -32,8 +32,8 @@ user and assistant messages, so:
 ## Install and test
 
 ```bash
-pi install ~/.repos/pi/extensions/timing
-cd ~/.repos/pi/extensions/timing && npm test && npm run typecheck
+pi install ~/projects/pi/extensions/timing
+cd ~/projects/pi/extensions/timing && npm test && npm run typecheck
 ```
 
 It replaces `@carlosgtrz/pi-run-timer` (footer) and `@narumitw/pi-stamp` (transcript stamps), whose state
