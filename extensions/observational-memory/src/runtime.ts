@@ -17,6 +17,22 @@ export type ResolveResult =
 	  }
 	| { ok: false; reason: string };
 
+/**
+ * Upper bound for the error text shown in a TUI warning.
+ *
+ * Provider failures can carry an entire response body (a gateway 400 is often a JSON
+ * document), and `ui.notify(..., "warning")` is rendered into pi's transcript, not a
+ * transient toast: every newline in the message becomes a transcript row. Flatten the
+ * text to one bounded line for the UI while the raw message keeps flowing into
+ * `lastObserverError` / `debugLog`, where multi-line detail is still useful.
+ */
+export const MAX_NOTIFY_ERROR_CHARS = 200;
+
+export function formatNotifyError(message: string): string {
+	const flattened = message.replace(/\s+/g, " ").trim();
+	return flattened.length > MAX_NOTIFY_ERROR_CHARS ? `${flattened.slice(0, MAX_NOTIFY_ERROR_CHARS)}…` : flattened;
+}
+
 type NotifyLevel = "warning" | "info" | "error";
 type Notify = (message: string, type?: NotifyLevel) => void;
 export type ConsolidationPhase = "observer" | "reflector" | "dropper";
@@ -169,7 +185,7 @@ export class Runtime {
 		if (phase === "observer") this.lastObserverError = message;
 		if (phase === "reflector") this.lastReflectorError = message;
 		if (phase === "dropper") this.lastDropperError = message;
-		this.warnings.warn(ctx, `${phase} failed`, `Observational memory: ${phase} failed: ${message}`);
+		this.warnings.warn(ctx, `${phase} failed`, `Observational memory: ${phase} failed: ${formatNotifyError(message)}`);
 		return message;
 	}
 
@@ -187,7 +203,11 @@ export class Runtime {
 				this.warnings.clear("consolidation failed");
 			} catch (error) {
 				errorMessage = error instanceof Error ? error.message : String(error);
-				this.warnings.warn(reportTo, "consolidation failed", `Observational memory: consolidation failed: ${errorMessage}`);
+				this.warnings.warn(
+					reportTo,
+					"consolidation failed",
+					`Observational memory: consolidation failed: ${formatNotifyError(errorMessage)}`,
+				);
 			} finally {
 				onFinally(errorMessage);
 			}
