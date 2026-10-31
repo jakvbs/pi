@@ -3507,6 +3507,11 @@ var Warnings = class {
 };
 
 // src/runtime.ts
+var MAX_NOTIFY_ERROR_CHARS = 200;
+function formatNotifyError(message) {
+  const flattened = message.replace(/\s+/g, " ").trim();
+  return flattened.length > MAX_NOTIFY_ERROR_CHARS ? `${flattened.slice(0, MAX_NOTIFY_ERROR_CHARS)}\u2026` : flattened;
+}
 var Runtime = class {
   config = { ...DEFAULTS };
   configLoaded = false;
@@ -3624,7 +3629,7 @@ var Runtime = class {
     if (phase === "observer") this.lastObserverError = message;
     if (phase === "reflector") this.lastReflectorError = message;
     if (phase === "dropper") this.lastDropperError = message;
-    this.warnings.warn(ctx, `${phase} failed`, `Observational memory: ${phase} failed: ${message}`);
+    this.warnings.warn(ctx, `${phase} failed`, `Observational memory: ${phase} failed: ${formatNotifyError(message)}`);
     return message;
   }
   launchTrackedTask(ctx, work, onFinally) {
@@ -3636,7 +3641,11 @@ var Runtime = class {
         this.warnings.clear("consolidation failed");
       } catch (error) {
         errorMessage = error instanceof Error ? error.message : String(error);
-        this.warnings.warn(reportTo, "consolidation failed", `Observational memory: consolidation failed: ${errorMessage}`);
+        this.warnings.warn(
+          reportTo,
+          "consolidation failed",
+          `Observational memory: consolidation failed: ${formatNotifyError(errorMessage)}`
+        );
       } finally {
         onFinally(errorMessage);
       }
