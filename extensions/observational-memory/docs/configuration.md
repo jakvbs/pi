@@ -63,7 +63,7 @@ You can omit everything. Defaults work for ordinary sessions, and if `model` is 
 | `observeAfterTokens` | positive integer | `10000` | Raw/source token threshold for observer runs. |
 | `reflectAfterTokens` | positive integer | `20000` | Raw/source token threshold for reflector runs; successful reflection creates dropper maintenance opportunities. |
 | `observerChunkMaxTokens` | positive integer | derived; minimum `256` | Maximum estimated tokens sent to one observer run. Unset: 20% of the resolved memory model's context window, or `60000` when unknown. |
-| `compactAfterTokens` | positive integer | `81000` | Activation threshold: source-entry tokens in context after the latest compaction boundary, counted in provider tokens. Reaching it at `turn_end` replaces the observed part of that history with memory and keeps the newest ~20% raw. |
+| `compactAfterTokens` | positive integer | `81000` | Activation threshold: the whole context Pi reports, with the system prompt, tool schemas, memory summary and history. Reaching it at `turn_end` replaces the observed part of the history with memory and keeps the newest ~20% of the threshold raw. |
 | `compactionMaxRetainedTokens` | positive integer | derived | Maximum estimated source tokens the compaction hook may keep in context when it retains entries the observer has not reached yet. Unset: half of the active session model's context window, or `60000` when unknown. |
 | `observationsPoolMaxTokens` | positive integer | `20000` | Normal compaction-projection observation-token pressure that makes compaction do a full fold. |
 | `observationsPoolTargetTokens` | positive integer below max | half of `observationsPoolMaxTokens` | Folded active observation target used by post-reflection dropper maintenance. |
@@ -123,18 +123,21 @@ Lower values distill reflections more often and therefore create more opportunit
 
 Default: `81000`.
 
-Memory activation runs from Pi's actionable `turn_end` boundary, after every model turn, including the turns between tool calls of one agent run. It counts source-entry tokens in context after the latest compaction boundary: the count starts at `firstKeptEntryId`, so retained source entries remain part of the metric, and memory ledger entries and compaction metadata contribute zero. Entries are counted in provider tokens. Every assistant reply carries the provider's context usage, and the growth between two consecutive replies is the size of the entries between them, spread in proportion to the local estimate. Entries without a usable bracket (before the first reply, across a compaction or context edit, after the latest reply, or where the reported context shrank) keep the local 4-characters estimate. The system prompt, tool schemas, and memory summary are not source entries, so the context Pi shows at activation is higher than the threshold by that overhead. Turns that were aborted or ended in an error do not activate.
+Memory activation runs from Pi's actionable `turn_end` boundary, after every model turn, including the turns between tool calls of one agent run. It compares the threshold with the context Pi reports (`ctx.getContextUsage()`), the same number Pi shows in the footer and compacts on: the latest assistant usage plus an estimate of the entries after it. It includes the system prompt, tool schemas, the memory summary and the retained history. Right after a compaction the context is unknown until the next reply, and activation waits. Turns that were aborted or ended in an error do not activate.
 
-When the count reaches `compactAfterTokens`, the handler returns a compaction entry that Pi persists before the next model request:
+The cut is sized in source entries after the latest compaction boundary, counted in provider tokens: every assistant reply carries the provider's context usage, and the growth between two consecutive replies is the size of the entries between them, spread in proportion to the local estimate. Entries without a usable bracket (before the first reply, across a compaction or context edit, after the latest reply, or where the reported context shrank) keep the local 4-characters estimate.
+
+When the context reaches `compactAfterTokens`, the handler returns a compaction entry that Pi persists before the next model request:
 
 - The cut keeps the newest ~20% of the threshold as raw history (Mastra's `bufferActivation: 0.8`), on a valid cut point so no tool result loses its call.
+- The context after the cut, estimated as the reported context minus the source tokens the cut removes, must leave at least ~20% of the threshold free. Otherwise activation waits: when the system prompt, tools and memory alone nearly fill the threshold, a cut would fold a sliver and fire again a turn later. The context then grows until the observer catches up or Pi's own compaction runs.
 - The cut never passes the first source entry the observer has not reached. When the observer is behind, activation folds what it has covered and keeps the rest in context.
 - When the history kept after the cut would still be at least 1.2× the threshold (Mastra's `blockAfter`), activation first waits for an in-flight observer run, then observes the gap synchronously (up to `compactionCatchUpMaxChunks` chunks), and cuts again.
 - The summary folds every recorded observation, including a chunk that straddles the cut, rendered within `compactionSummaryMaxTokens`. Activation with no memory record to render waits for the observer instead.
 
 Activation does not call `ctx.compact()` and never reaches Pi's native summarizer. Pi's own window-pressure compaction, overflow recovery, and manual `/compact` still go through `session_before_compact`. See [`compactionMaxRetainedTokens`](#compactionmaxretainedtokens) for how the hook protects unobserved context in those cases.
 
-Every activation is a compaction entry, so Pi's TUI redraws the transcript from the retained history each time. A small threshold (Mastra uses 30,000) keeps the model's context small and the transcript short.
+Every activation is a compaction entry, so Pi's TUI redraws the transcript from the retained history each time. A small threshold keeps the model's context small and the transcript short, but it must leave room above the system prompt, tool schemas and memory summary: activation needs them to take less than ~60% of the threshold.
 
 ## `compactionMaxRetainedTokens`
 

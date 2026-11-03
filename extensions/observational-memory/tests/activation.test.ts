@@ -58,10 +58,13 @@ function conversation(): TestEntry[] {
 function setup(args: {
 	entries: TestEntry[];
 	compactAfterTokens: number;
+	/** Context Pi reports; defaults to exactly the threshold. */
+	contextTokens?: number | null;
 	passive?: boolean;
 	consolidationPromise?: Promise<void>;
 }) {
 	let entries = [...args.entries];
+	let contextTokens = args.contextTokens === undefined ? args.compactAfterTokens : args.contextTokens;
 	let handler: ((event: unknown, ctx: unknown) => Promise<unknown>) | undefined;
 	const pi = {
 		on: vi.fn((eventName: string, cb: typeof handler) => {
@@ -108,6 +111,7 @@ function setup(args: {
 		modelRegistry: { find: vi.fn(() => undefined), streamSimple: vi.fn() },
 		signal: undefined,
 		sessionManager: { getBranch: vi.fn(() => entries) },
+		getContextUsage: () => ({ tokens: contextTokens, contextWindow: 200_000, percent: null }),
 	};
 	const run = (event: { outcome?: string; entries?: unknown[] } = {}) => handler!({
 		type: "turn_end",
@@ -123,7 +127,15 @@ function setup(args: {
 		pushEntry: (entry: TestEntry) => {
 			entries = [...entries, entry];
 		},
+		setContextTokens: (tokens: number | null) => {
+			contextTokens = tokens;
+		},
 	};
+}
+
+/** conversation() plus u2 and a3, observed through a3: ~800 source tokens. */
+function observedConversation(): TestEntry[] {
+	return [...conversation(), userMessage("u2"), assistantMessage("a3"), coverage("om-a3", "a3", "aaaaaaaaaaaa")];
 }
 
 beforeEach(() => {
@@ -174,15 +186,57 @@ describe("turn_end memory activation", () => {
 		);
 	});
 
-	it("does nothing while the history since the compaction boundary is below the threshold", async () => {
+	it("counts the system prompt, tools and memory Pi reports toward the threshold", async () => {
+		// ~800 source tokens; Pi's context adds the system prompt, tools and memory.
+		const below = setup({ entries: observedConversation(), compactAfterTokens: 1_000, contextTokens: 999 });
+		const reached = setup({ entries: observedConversation(), compactAfterTokens: 1_000, contextTokens: 1_000 });
+
+		expect(await below.run()).toBeUndefined();
+		const [draft] = (await reached.run()).entries;
+		expect(draft.firstKeptEntryId).toBe("u2");
+		expect(reached.ctx.ui.notify).toHaveBeenCalledWith(
+			"Observational memory: activated memory over ~600 source tokens; ~200 kept as history",
+			"info",
+		);
+	});
+
+	it("does not activate on source history while the context Pi reports is below the threshold", async () => {
+		// Weighted by the replies' usage the history is ~1,400 tokens, e.g. with thinking the provider later stops counting.
 		const entries = [
-			...conversation(),
+			userMessage("u0"),
+			assistantMessage("a0", 1_000),
+			userMessage("u1"),
+			assistantMessage("a1", 1_600),
+			toolResultMessage("t1"),
+			assistantMessage("a2", 2_200),
 			coverage("om-a2", "a2", "aaaaaaaaaaaa"),
-			compactionEntry("cmp", { firstKeptEntryId: "a1" }),
 		];
-		const { run } = setup({ entries, compactAfterTokens: 500 });
+
+		expect(await setup({ entries, compactAfterTokens: 1_000, contextTokens: 900 }).run()).toBeUndefined();
+	});
+
+	it("waits until Pi knows the context size again", async () => {
+		const { run, setContextTokens } = setup({ entries: observedConversation(), compactAfterTokens: 1_000, contextTokens: null });
 
 		expect(await run()).toBeUndefined();
+		setContextTokens(1_000);
+		expect((await run()).entries[0].firstKeptEntryId).toBe("u2");
+	});
+
+	it("does not compact again when memory leaves less than a fifth of the threshold free after the cut", async () => {
+		const { run, pushEntry, setContextTokens } = setup({ entries: observedConversation(), compactAfterTokens: 1_000 });
+		const [first] = (await run()).entries;
+		expect(first.firstKeptEntryId).toBe("u2");
+		pushEntry(compactionEntry("cmp", { firstKeptEntryId: "u2" }));
+		pushEntry(userMessage("u3"));
+		pushEntry(assistantMessage("a4"));
+		pushEntry(coverage("om-a4", "a4", "bbbbbbbbbbbb"));
+
+		// 400 source tokens since u2; the cut at u3 frees 200 of them.
+		setContextTokens(1_100);
+		expect(await run()).toBeUndefined();
+		setContextTokens(1_000);
+		expect((await run()).entries[0].firstKeptEntryId).toBe("u3");
 	});
 
 	it("cuts no later than the observer frontier and folds through the coverage marker", async () => {

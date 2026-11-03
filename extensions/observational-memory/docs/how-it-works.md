@@ -12,7 +12,7 @@ V3 is ledger-centered: memory state is reconstructed by folding V3 ledger entrie
 |---|---|
 | `turn_end` observer trigger | Maybe run the observer in the background. |
 | `turn_end` reflect/drop trigger | Maybe run the due reflector, then run dropper maintenance only after same-run successful reflection. |
-| `turn_end` memory activation | Return a compaction entry when the history in context reaches `compactAfterTokens`; runs before the worker triggers. |
+| `turn_end` memory activation | Return a compaction entry when the context Pi reports reaches `compactAfterTokens`; runs before the worker triggers. |
 | `session_before_compact` hook | Build the V3 compaction payload deterministically. |
 | `/om:status` | Show ledger counts, drift, progress clocks, and worker state. |
 | `/om:view` | Show visible or full memory content and attempt to copy the rendered memory text. |
@@ -36,7 +36,7 @@ flowchart TD
     Reflector[Reflector model call<br/>append om.reflections.recorded]
     Dropper[Dropper model call<br/>append om.observations.dropped]
 
-    ActivateDue{source tokens since compaction<br/>≥ compactAfterTokens?}
+    ActivateDue{context Pi reports<br/>≥ compactAfterTokens?}
     Activate[cut at the observer frontier<br/>return a compaction entry]
 
     Fold[fold/project V3 ledger]
@@ -208,15 +208,21 @@ It skips when:
 - `passive` is true;
 - the turn was aborted or ended in an error;
 - an earlier `turn_end` handler already proposed a compaction entry;
-- source-entry tokens after the latest compaction boundary are below `compactAfterTokens`;
-- no cut can fold an observed source entry, or no memory record fits the summary budget.
+- the context Pi reports (`ctx.getContextUsage()`) is below `compactAfterTokens`, or unknown because no reply has arrived since the latest compaction;
+- no cut can fold an observed source entry, or no memory record fits the summary budget;
+- the context after the cut would leave less than `floor(compactAfterTokens * 0.2)` free under the threshold.
 
-The count starts at `firstKeptEntryId` of the latest compaction. Memory ledger
-entries and compaction metadata contribute zero. Source entries are weighted in
-provider tokens by `measuredSourceTokens`: the usage growth between two
-consecutive assistant replies, spread over the entries between them; entries no
-usage brackets keep the local estimate. The keep-recent and 1.2× retained
-budgets below use the same weights.
+The context is the number Pi shows in the footer and compacts on: the latest
+assistant usage plus an estimate of the entries after it, so it includes the
+system prompt, tool schemas, the memory summary and the retained history. The
+keep-recent and 1.2× retained budgets below count source entries after the
+latest compaction boundary in provider tokens (`measuredSourceTokens`: the
+usage growth between two consecutive assistant replies, spread over the entries
+between them; entries no usage brackets keep the local estimate). The context
+after the cut is estimated as the reported context minus the source tokens the
+cut removes. The last skip condition keeps activation from repeating every turn
+when the system prompt, tools and memory alone nearly fill the threshold; the
+context then grows until the observer catches up or Pi's own compaction runs.
 
 The cut keeps the newest `floor(compactAfterTokens * 0.2)` source tokens and is
 then moved back with `resolveCompactionCut` so it never passes the first

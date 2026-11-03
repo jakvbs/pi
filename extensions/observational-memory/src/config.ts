@@ -40,10 +40,10 @@ export interface Config {
 	 */
 	observerChunkMaxTokens?: number;
 	/**
-	 * Activation threshold: source tokens in context after the latest compaction
-	 * boundary, in provider units where usage brackets an entry
-	 * (`measuredSourceTokens`). Reaching it at `turn_end` replaces the observed part
-	 * of that history with the rendered memory (see `hooks/activation.ts`).
+	 * Activation threshold: the whole context Pi reports (`ctx.getContextUsage()`:
+	 * system prompt, tools, memory and history). Reaching it at `turn_end` replaces
+	 * the observed part of the history with the rendered memory (see
+	 * `hooks/activation.ts`).
 	 */
 	compactAfterTokens: number;
 	compactAfterTokensMode: CompactAfterTokensMode;
