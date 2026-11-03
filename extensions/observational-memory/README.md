@@ -368,7 +368,10 @@ The important part: compaction does not need to rethink the whole session from s
 The activation threshold is the whole context Pi reports, the number in Pi's
 footer: the latest assistant usage plus an estimate of the entries after it,
 with the system prompt, tool schemas, the memory summary and the history.
-`/om:status` shows the same number. Activation waits when the cut would leave
+`/om:status` shows the same number, and the footer status `compact N%` shows it
+as a share of the threshold (`?` until the first reply after a compaction; hidden
+when memory is passive or the threshold does not fit the model's context window,
+where Pi's own compaction comes first). Activation waits when the cut would leave
 less than ~20% of the threshold free, so it does not fire every turn when the
 system prompt, tools and memory alone nearly fill the threshold. Pi's own
 window-pressure compaction remains independent.
