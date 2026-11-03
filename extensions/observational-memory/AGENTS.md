@@ -10,8 +10,9 @@ Copied into the pi monorepo at `extensions/observational-memory` from the `jakvb
 fork (branch `fix/omit-memory-thinking`, commit `25c63ea`) of `elpapi42/pi-observational-memory`, without
 git history. It is a standalone package outside the root npm workspaces with no dependencies or lockfile of
 its own: build, typecheck and tests use the monorepo root `node_modules` (`npm install` in the
-root) and resolve `@earendil-works/*` to the fork's `packages/*/src` through the root `tsconfig.json` paths and
-`vitest.base.ts` aliases. It is `private`, is not published, and no CI runs it. pi loads it by path from
+root) and resolve `@earendil-works/*` to the fork's `packages/*/src` through the paths of
+`packages/coding-agent/examples/tsconfig.json` (`@earendil-works/pi-ai` as the extension view pi gives
+extensions, see `../README.md`) and the `vitest.base.ts` aliases. It is `private`, is not published, and no CI runs it. pi loads it by path from
 `settings.json` `packages`. `UPSTREAM` (git config format) records the last imported upstream commit; newer
 upstream commits are imported on top of it with `git am -3 --directory=extensions/observational-memory`.
 
