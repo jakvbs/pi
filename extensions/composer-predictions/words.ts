@@ -155,13 +155,13 @@ export class WordModel {
 }
 
 /**
- * The rest of the word the draft ends in, or the next word after a space or in an empty draft.
+ * The rest of the word the draft ends in, or the next word after whitespace or a line break, or in an empty draft.
  * Nothing while the draft ends in punctuation or the likeliest word is the one already typed.
  */
 export function suggest(model: WordModel, draft: string): Ghost | undefined {
 	const typed = TRAILING_WORD.exec(draft)?.[0] ?? "";
 	const before = draft.slice(0, draft.length - typed.length);
-	if (!typed && before !== "" && !before.endsWith(" ")) return undefined;
+	if (!typed && before !== "" && !/\s$/u.test(before)) return undefined;
 	const words = wordsOf(before);
 	const prefix = typed.toLowerCase();
 	const completion = model.complete([words.at(-2) ?? START, words.at(-1) ?? START], prefix);

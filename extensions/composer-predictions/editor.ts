@@ -38,7 +38,9 @@ export class WordEditor extends CustomEditor {
 
 	private ghost(draft: string): Ghost | undefined {
 		if (this.isShowingAutocomplete()) return undefined;
-		if (draft.includes("\n") || this.getCursor().col !== draft.length) return undefined;
+		const lines = this.getLines();
+		const cursor = this.getCursor();
+		if (cursor.line !== lines.length - 1 || cursor.col !== lines[cursor.line]!.length) return undefined;
 		if (this.cached?.draft !== draft) this.cached = { draft, ghost: this.ghostFor(draft) };
 		return this.cached.ghost;
 	}
