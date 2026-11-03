@@ -1,0 +1,4 @@
+[upstream]
+	url = https://github.com/light4/pi-prompt-history
+	branch = main
+	commit = 4bbee2fd68dfcc494a9044e2969540a110e08735
