@@ -212,6 +212,8 @@ export default function (pi: ExtensionAPI) {
 
 		oauth: {
 			name: "Anthropic Subscription (Claude Pro/Max)",
+			// Usage is billed to the subscription: the footer marks the cost "(sub)" as an API-price estimate.
+			isSubscription: true,
 			login: loginAnthropic,
 			refreshToken: (credentials) =>
 				refreshAnthropicToken(credentials as PiSubOAuthCredentials),
