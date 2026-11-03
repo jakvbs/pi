@@ -4,9 +4,11 @@ Shows how long agent runs take, and when each message was sent, in Pi's interact
 
 - Footer: `● 0:42` - elapsed time of the current run, shown only while it runs. Finished runs show their
   duration in the transcript instead.
-- Transcript: a dim right-aligned stamp under every user message (send time), under the last text block of
+- Transcript: a dim right-aligned stamp after every user message (send time), after the last text block of
   every response (completion time) and, on the response that ends a run, the run duration:
-  `14:35:10 · 2:37`. Days other than today also show the date.
+  `14:35:10 · 2:37`. Days other than today also show the date. The stamp shares the last line of a closing
+  paragraph when it fits, so a one-line message stays one line; otherwise it takes the next line, and after
+  a list, table, quote or code block it follows a blank line.
 
 A run lasts from the first user message after the previous final response to the response that ends it
 (any stop reason except `toolUse` and `error`), so tool calls, retries and steering messages count toward
