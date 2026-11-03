@@ -215,6 +215,9 @@ It skips when:
 The context is the number Pi shows in the footer and compacts on: the latest
 assistant usage plus an estimate of the entries after it, so it includes the
 system prompt, tool schemas, the memory summary and the retained history. The
+footer status `compact N%` shows it as a share of the threshold after every
+turn; it is hidden when memory is passive or the threshold does not fit the
+model's context window, since Pi's own compaction comes first there. The
 keep-recent and 1.2× retained budgets below count source entries after the
 latest compaction boundary in provider tokens (`measuredSourceTokens`: the
 usage growth between two consecutive assistant replies, spread over the entries
