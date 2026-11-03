@@ -1,0 +1,5 @@
+[upstream]
+	url = https://github.com/jvm/pi-mono
+	branch = main
+	path = packages/pi-codex-tools
+	commit = 91fd55fdfd7c5516ac8d08267f34b49f1b37d050
