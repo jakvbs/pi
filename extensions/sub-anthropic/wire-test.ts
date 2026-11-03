@@ -11,6 +11,7 @@
  */
 
 import http from "node:http";
+import piSubAnthropic from "./index.ts";
 import { createPiSubAnthropicStream } from "./stream.ts";
 import { CLAUDE_BILLING_HEADER_PREFIX, xxHash64 } from "./fingerprint.ts";
 
@@ -498,6 +499,11 @@ for (const [delta, expected] of [
 	check(`${delta.stop_reason}: one error, no success`, terminal.length === 1 && last?.type === "error");
 	check(`${delta.stop_reason}: diagnostic preserved`, last?.type === "error" && last.error.stopReason === "error" && last.error.errorMessage === expected, last?.type === "error" ? last.error.errorMessage : "no error");
 }
+
+console.log("\n=== PROVIDER REGISTRATION ===");
+let registered: any;
+piSubAnthropic({ registerProvider: (_id: string, config: unknown) => { registered = config; } } as any);
+check("OAuth login is marked as a subscription", registered?.oauth?.isSubscription === true);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
