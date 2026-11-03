@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -102,7 +102,21 @@ test("global history ranks repeated prompts by frequency and then recency", () =
 	assert.equal(globalHistory.find((item) => item.text === "old frequent")?.frequency, 2);
 });
 
-test("history picker uses inline layout so transcript images cannot cover it", async () => {
+test("history picker opens on global history in inline layout so transcript images cannot cover it", async (t) => {
+	// Global history lives under the home directory; point it at a fixture with one prompt.
+	const home = mkdtempSync(join(tmpdir(), "pi-prompt-history-home-"));
+	const previousHome = process.env.HOME;
+	process.env.HOME = home;
+	t.after(() => {
+		process.env.HOME = previousHome;
+		rmSync(home, { recursive: true, force: true });
+	});
+	mkdirSync(join(home, ".pi", "agent"), { recursive: true });
+	writeFileSync(
+		join(home, ".pi", "agent", "pi-prompt-history-history.json"),
+		JSON.stringify({ version: 2, prompts: [{ text: "global prompt", lastUsedAt: 2, useCount: 1 }], sessionHistoryCached: true }),
+	);
+
 	const handlers: Array<(ctx: ExtensionCommandContext) => Promise<void>> = [];
 	const pi: Pick<ExtensionAPI, "on" | "registerShortcut" | "registerCommand"> = {
 		on() { return () => {}; },
@@ -143,20 +157,20 @@ test("history picker uses inline layout so transcript images cannot cover it", a
 						for (const width of [40, 120]) {
 							const lines = layout.render(width);
 							assert.deepEqual(lines.slice(0, 8), imageLines);
-							assert.match(lines[9], /Prompt history/);
+							assert.match(lines[9], /Prompt history — Global/);
 							assert.ok(lines.slice(8).some((line) => line.includes(CURSOR_MARKER)));
 							assert.ok(lines.slice(8).some((line) => line.includes("esc cancel")));
 							assert.ok(lines.slice(8).every((line) => visibleWidth(line) <= width));
 						}
 						component.handleInput?.(key);
-						assert.equal(result, key === "\r" ? "inspect screenshot" : null);
+						assert.equal(result, key === "\r" ? "global prompt" : null);
 						return result;
 					},
 					setEditorText(text: string) { editorText = text; },
 				},
 			} as unknown as ExtensionCommandContext;
 			await handler(ctx);
-			assert.equal(editorText, key === "\r" ? "inspect screenshot" : "unfinished draft");
+			assert.equal(editorText, key === "\r" ? "global prompt" : "unfinished draft");
 			assert.ok(renders > 0);
 		}
 	}
