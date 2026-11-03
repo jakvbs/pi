@@ -62,10 +62,16 @@ export function registerStatusCommand(pi: ExtensionAPI, runtime: Runtime): void 
 			);
 			const obsProgress = rawTokensSinceObservationCoverage(entries);
 			const reflectionProgress = rawObservedTokensSinceReflectionCoverage(entries);
-			const activationProgress = measuredTokensSinceLastCompaction(entries);
-			const unobservedSinceCompaction = Math.max(0, activationProgress - measuredObservedTokensSinceLastCompaction(entries));
+			const unobservedSinceCompaction = Math.max(
+				0,
+				measuredTokensSinceLastCompaction(entries) - measuredObservedTokensSinceLastCompaction(entries),
+			);
 			const contextWindow = typeof ctx.model?.contextWindow === "number" ? ctx.model.contextWindow : undefined;
 			const activationThreshold = resolveCompactAfterTokens(runtime.config, contextWindow);
+			const contextTokens = ctx.getContextUsage()?.tokens;
+			const activationLine = contextTokens == null
+				? `Next activation:  context size unknown until the next response / ${activationThreshold.toLocaleString()} context tokens`
+				: `Next activation:  ~${contextTokens.toLocaleString()} / ${activationThreshold.toLocaleString()} context tokens (${pct(contextTokens, activationThreshold)}%)`;
 
 			const passiveLines = runtime.config.passive === true
 				? [
@@ -84,7 +90,7 @@ export function registerStatusCommand(pi: ExtensionAPI, runtime: Runtime): void 
 				"── Activity ──",
 				`Next observation: ~${obsProgress.toLocaleString()} / ${runtime.config.observeAfterTokens.toLocaleString()} tokens (${pct(obsProgress, runtime.config.observeAfterTokens)}%)`,
 				`Next reflection:  ~${reflectionProgress.toLocaleString()} / ${runtime.config.reflectAfterTokens.toLocaleString()} observed source tokens (${pct(reflectionProgress, runtime.config.reflectAfterTokens)}%)`,
-				`Next activation:  ~${activationProgress.toLocaleString()} / ${activationThreshold.toLocaleString()} source tokens (${pct(activationProgress, activationThreshold)}%)`,
+				activationLine,
 				`Observer backlog: ~${unobservedSinceCompaction.toLocaleString()} unobserved source tokens since the compaction boundary`,
 				`Visible observation pool: ~${visibleObservationTokens.toLocaleString()} / ${runtime.config.observationsPoolMaxTokens.toLocaleString()} tokens (${pct(visibleObservationTokens, runtime.config.observationsPoolMaxTokens)}%)`,
 				`Active observation pool: ~${activeObservationPool.observationTokens.toLocaleString()} / ${runtime.config.observationsPoolTargetTokens.toLocaleString()} target tokens (${pct(activeObservationPool.observationTokens, runtime.config.observationsPoolTargetTokens)}%)`,

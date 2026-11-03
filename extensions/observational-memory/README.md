@@ -236,11 +236,11 @@ If your memory model is a local llama.cpp server, size `agentMaxTokens` so that 
 ### Scaling activation to the model's context window
 
 By default `compactAfterTokensMode` is `"calibrated"`, so memory activation
-uses the fixed `compactAfterTokens` source-entry threshold (81,000 by
+uses the fixed `compactAfterTokens` context threshold (81,000 by
 default), sized for typical ~128K–200K context models.
 
 On a large-context model (e.g. 1M tokens) the calibrated default activates
-memory at ~81K. Lower it for a Mastra-like small context (e.g. `30000`), or switch to `"ratio"` mode to let
+memory at ~81K. Set your own size, or switch to `"ratio"` mode to let
 the threshold scale with the active model's `contextWindow`:
 
 ```json
@@ -255,12 +255,11 @@ the threshold scale with the active model's `contextWindow`:
 
 In ratio mode the effective threshold is
 `floor(model.contextWindow * compactAfterTokensRatio)` (clamped to a minimum of
-1). With the example above, a 1,000,000-token window activates memory after about
-500,000 source-entry tokens after the latest compaction boundary; a
-200,000-token window uses about 100,000. The threshold counts source entries,
-not Pi's system prompt, tool schemas, or the memory summary, so the context Pi
-shows at activation is higher by that overhead. Pi's native window-pressure
-compaction remains independent.
+1). With the example above, a 1,000,000-token window activates memory once the
+context reaches about 500,000 tokens; a 200,000-token window uses about 100,000.
+In both modes the threshold is the whole context Pi reports and shows in the
+footer, with the system prompt, tool schemas, the memory summary and the
+history. Pi's native window-pressure compaction remains independent.
 
 `compactAfterTokensRatio` is user-tunable precisely because **context window ≠
 attention**. Some models advertise a large window but degrade at long range; set
@@ -280,9 +279,9 @@ on the `Next activation` line regardless of mode.
 | `observeAfterTokens`        | `10000`       | Raw/source token threshold for observation runs.                                                  |
 | `observerChunkMaxTokens`    | derived       | Max estimated tokens serialized into one observer chunk (minimum `256`). Unset: `floor(contextWindow * 0.2)` of the resolved memory model, or `60000` when the window is unknown. Larger backlogs drain oldest-first; a single over-budget source is sent as a marked head/tail excerpt while the original source remains in the session ledger. |
 | `reflectAfterTokens`        | `20000`       | Raw/source token threshold for reflection runs; successful reflection creates dropper opportunities. |
-| `compactAfterTokens`        | `81000`       | Activation threshold: source-entry tokens in context after the latest compaction boundary, counted in provider tokens. At `turn_end` the observed part is replaced by memory and the newest ~20% of the threshold stays raw. |
+| `compactAfterTokens`        | `81000`       | Activation threshold: the whole context Pi reports, with the system prompt, tool schemas, memory summary and history. At `turn_end` the observed part of the history is replaced by memory and the newest ~20% of the threshold stays raw. |
 | `compactionMaxRetainedTokens` | derived     | Max estimated source tokens the compaction hook keeps in context when it retains entries the observer has not reached yet. Unset: half of the session model's context window, or `60000` when unknown. |
-| `compactAfterTokensMode`    | `"calibrated"`| `"calibrated"` uses `compactAfterTokens` directly. `"ratio"` scales the source-entry threshold by the active model's `contextWindow`. |
+| `compactAfterTokensMode`    | `"calibrated"`| `"calibrated"` uses `compactAfterTokens` directly. `"ratio"` scales the threshold by the active model's `contextWindow`. |
 | `compactAfterTokensRatio`   | `0.68`        | In `"ratio"` mode, the threshold is `floor(contextWindow * ratio)`. Tunable because large windows do not always mean strong long-range attention. Must be in `(0, 1)`. |
 | `observationsPoolMaxTokens` | `20000`       | Observation-token budget used for compaction full-fold pressure.                                  |
 | `observationsPoolTargetTokens` | half of max | Active observation target used by post-reflection dropper maintenance.                            |
@@ -361,20 +360,18 @@ The high-level lifecycle:
 1. Pi session continues normally.
 2. The extension captures observations from the session as work happens.
 3. Durable reflections are distilled in the background.
-4. When the history in context reaches `compactAfterTokens`, the observed part is replaced by prepared memory at the end of that turn, also between tool calls.
+4. When the context reaches `compactAfterTokens`, the observed part of the history is replaced by prepared memory at the end of that turn, also between tool calls.
 5. The agent continues with a compact but useful view of the work so far.
 
 The important part: compaction does not need to rethink the whole session from scratch.
 
-The activation threshold counts source-entry tokens after the latest
-compaction boundary. It includes source entries retained by `firstKeptEntryId`
-and newer source entries, while memory ledger entries and compaction metadata
-contribute zero. Entries are counted in provider tokens: the context growth the
-provider reports between two assistant replies is the size of the entries
-between them. Only entries no usage brackets (before the first reply after a
-compaction, or after the latest reply) fall back to the local 4-characters
-estimate, which undercounts code, JSON, and non-English text. `/om:status` uses
-the same metric. Pi's own window-pressure compaction remains independent.
+The activation threshold is the whole context Pi reports, the number in Pi's
+footer: the latest assistant usage plus an estimate of the entries after it,
+with the system prompt, tool schemas, the memory summary and the history.
+`/om:status` shows the same number. Activation waits when the cut would leave
+less than ~20% of the threshold free, so it does not fire every turn when the
+system prompt, tools and memory alone nearly fill the threshold. Pi's own
+window-pressure compaction remains independent.
 
 ---
 
@@ -386,7 +383,7 @@ Current behavior:
 * **Durable reflections.** The extension distills stable facts that help the agent stay oriented over time.
 * **Fast compaction.** When prepared V3 memory exists, `session_before_compact` renders it without calling a model or waiting for background workers. Pi's native summarizer never runs: a compaction the memory cannot cover is postponed until the observer catches up instead of replacing prior context with an empty summary.
 * **Bounded summaries.** The rendered memory summary respects `compactionSummaryMaxTokens`, and when the observer is behind the hook observes the gap synchronously (`compactionCatchUpMaxChunks`) so most compactions land on Pi's boundary instead of retaining the tail or postponing.
-* **Continuous activation.** Once the history in context reaches `compactAfterTokens`, the `turn_end` handler returns a compaction entry that Pi persists before the next model request. The cut keeps the newest ~20% of the threshold and never passes the observer frontier; when the retained history would stay above 1.2× the threshold, activation first waits for an in-flight observer run or observes the gap synchronously.
+* **Continuous activation.** Once the context Pi reports reaches `compactAfterTokens`, the `turn_end` handler returns a compaction entry that Pi persists before the next model request. The cut keeps the newest ~20% of the threshold and never passes the observer frontier; when the retained history would stay above 1.2× the threshold, activation first waits for an in-flight observer run or observes the gap synchronously.
 * **No unobserved context is discarded.** Activation never cuts past the observer frontier, and the compaction hook keeps entries the observer has not reached yet in context (within `compactionMaxRetainedTokens`) or postpones the compaction, instead of dropping them with no memory record. Only overflow recovery cuts past them, and its summary says so.
 * **Background memory work.** Observation and reflection work run from `turn_end` when their token clocks are due; dropper work runs only after successful reflection and prunes the folded active observation ledger toward `observationsPoolTargetTokens`.
 * **Source-backed recall.** Observations and reflections can be traced back through the `recall` tool.

@@ -1252,10 +1252,14 @@ function registerStatusCommand(pi, runtime) {
       );
       const obsProgress = rawTokensSinceObservationCoverage(entries);
       const reflectionProgress = rawObservedTokensSinceReflectionCoverage(entries);
-      const activationProgress = measuredTokensSinceLastCompaction(entries);
-      const unobservedSinceCompaction = Math.max(0, activationProgress - measuredObservedTokensSinceLastCompaction(entries));
+      const unobservedSinceCompaction = Math.max(
+        0,
+        measuredTokensSinceLastCompaction(entries) - measuredObservedTokensSinceLastCompaction(entries)
+      );
       const contextWindow = typeof ctx.model?.contextWindow === "number" ? ctx.model.contextWindow : void 0;
       const activationThreshold = resolveCompactAfterTokens(runtime.config, contextWindow);
+      const contextTokens = ctx.getContextUsage()?.tokens;
+      const activationLine = contextTokens == null ? `Next activation:  context size unknown until the next response / ${activationThreshold.toLocaleString()} context tokens` : `Next activation:  ~${contextTokens.toLocaleString()} / ${activationThreshold.toLocaleString()} context tokens (${pct(contextTokens, activationThreshold)}%)`;
       const passiveLines = runtime.config.passive === true ? [
         "\u2500\u2500 Mode \u2500\u2500",
         "Passive: automatic memory workers and activation disabled; manual/Pi compaction, commands, and recall remain active",
@@ -1270,7 +1274,7 @@ function registerStatusCommand(pi, runtime) {
         "\u2500\u2500 Activity \u2500\u2500",
         `Next observation: ~${obsProgress.toLocaleString()} / ${runtime.config.observeAfterTokens.toLocaleString()} tokens (${pct(obsProgress, runtime.config.observeAfterTokens)}%)`,
         `Next reflection:  ~${reflectionProgress.toLocaleString()} / ${runtime.config.reflectAfterTokens.toLocaleString()} observed source tokens (${pct(reflectionProgress, runtime.config.reflectAfterTokens)}%)`,
-        `Next activation:  ~${activationProgress.toLocaleString()} / ${activationThreshold.toLocaleString()} source tokens (${pct(activationProgress, activationThreshold)}%)`,
+        activationLine,
         `Observer backlog: ~${unobservedSinceCompaction.toLocaleString()} unobserved source tokens since the compaction boundary`,
         `Visible observation pool: ~${visibleObservationTokens.toLocaleString()} / ${runtime.config.observationsPoolMaxTokens.toLocaleString()} tokens (${pct(visibleObservationTokens, runtime.config.observationsPoolMaxTokens)}%)`,
         `Active observation pool: ~${activeObservationPool.observationTokens.toLocaleString()} / ${runtime.config.observationsPoolTargetTokens.toLocaleString()} target tokens (${pct(activeObservationPool.observationTokens, runtime.config.observationsPoolTargetTokens)}%)`,
@@ -2363,11 +2367,12 @@ function planActivation(entries, keepRecentTokens) {
   const rangeStart = compactionRangeStartIndex(entries);
   const tailTokens = sumTokensAfterIndex(tokens, rangeStart - 1);
   const proposed = keepRecentCutIndex(entries, tokens, rangeStart, keepRecentTokens);
-  if (proposed === -1) return { retainedTokens: tailTokens };
+  if (proposed === -1) return { retainedTokens: tailTokens, freedTokens: 0 };
   const resolution = resolveCompactionCut(entries, entries[proposed].id, { maxRetainedTokens: Number.POSITIVE_INFINITY });
-  if (resolution.kind === "uncovered") return { resolution, retainedTokens: tailTokens };
+  if (resolution.kind === "uncovered") return { resolution, retainedTokens: tailTokens, freedTokens: 0 };
   const cutIndex = entryIndexForId(entries, resolution.cut.firstKeptEntryId);
-  return { resolution, retainedTokens: sumTokensAfterIndex(tokens, cutIndex - 1) };
+  const retainedTokens = sumTokensAfterIndex(tokens, cutIndex - 1);
+  return { resolution, retainedTokens, freedTokens: tailTokens - retainedTokens };
 }
 function branch(ctx) {
   return ctx.sessionManager.getBranch();
@@ -2378,8 +2383,8 @@ async function activate(pi, runtime, event, ctx) {
   let entries = branch(ctx);
   const contextWindow = typeof ctx.model?.contextWindow === "number" ? ctx.model.contextWindow : void 0;
   const threshold = resolveCompactAfterTokens(runtime.config, contextWindow);
-  const tailTokens = measuredTokensSinceLastCompaction(entries);
-  if (tailTokens < threshold) return void 0;
+  const contextTokens = ctx.getContextUsage()?.tokens;
+  if (contextTokens == null || contextTokens < threshold) return void 0;
   const keepRecentTokens = Math.floor(threshold * ACTIVATION_KEEP_RECENT_RATIO);
   const blockAfterTokens = Math.floor(threshold * ACTIVATION_BLOCK_AFTER_RATIO);
   let plan = planActivation(entries, keepRecentTokens);
@@ -2409,9 +2414,18 @@ async function activate(pi, runtime, event, ctx) {
   const resolution = plan.resolution;
   if (resolution?.kind !== "cut") {
     debugLog("activation.waiting", {
-      tailTokens,
+      contextTokens,
       threshold,
       reason: resolution?.reason ?? "no cut point keeps the recent history"
+    });
+    return void 0;
+  }
+  if (contextTokens - plan.freedTokens > threshold - keepRecentTokens) {
+    debugLog("activation.waiting", {
+      contextTokens,
+      threshold,
+      freedTokens: plan.freedTokens,
+      reason: "the cut would leave less than the kept share of the threshold free"
     });
     return void 0;
   }
@@ -2430,8 +2444,9 @@ async function activate(pi, runtime, event, ctx) {
     return void 0;
   }
   debugLog("activation.compacted", {
-    tailTokens,
+    contextTokens,
     threshold,
+    freedTokens: plan.freedTokens,
     retainedTokens: plan.retainedTokens,
     firstKeptEntryId: resolution.cut.firstKeptEntryId,
     foldThroughEntryId,
@@ -2441,7 +2456,7 @@ async function activate(pi, runtime, event, ctx) {
   });
   if (runtime.config.showWorkerNotifications && ctx.hasUI) {
     ctx.ui.notify(
-      `Observational memory: activated memory over ~${(tailTokens - plan.retainedTokens).toLocaleString()} source tokens; ~${plan.retainedTokens.toLocaleString()} kept as history`,
+      `Observational memory: activated memory over ~${plan.freedTokens.toLocaleString()} source tokens; ~${plan.retainedTokens.toLocaleString()} kept as history`,
       "info"
     );
   }
