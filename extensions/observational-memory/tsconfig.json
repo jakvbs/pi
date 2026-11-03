@@ -1,4 +1,4 @@
 {
-  "extends": "../../tsconfig.json",
+  "extends": "../../packages/coding-agent/examples/tsconfig.json",
   "include": ["src/**/*.ts", "../../packages/*/src/**/*.d.ts"]
 }

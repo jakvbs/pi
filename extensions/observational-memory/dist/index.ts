@@ -1398,7 +1398,7 @@ Warning: failed to copy /om:view output to clipboard.`,
 
 // src/agents/observer/agent.ts
 import { agentLoop } from "@earendil-works/pi-agent-core";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 
 // src/ids.ts
 import { createHash } from "node:crypto";
@@ -2463,7 +2463,7 @@ function registerActivation(pi, runtime) {
 
 // src/agents/dropper/agent.ts
 import { agentLoop as agentLoop2 } from "@earendil-works/pi-agent-core";
-import { Type as Type2 } from "@earendil-works/pi-ai";
+import { Type as Type2 } from "typebox";
 
 // src/agents/dropper/prompts.ts
 var DROPPER_SYSTEM = `You are the dropper agent for a coding assistant.
@@ -2814,7 +2814,7 @@ This maximum is a hard upper bound, not a target. Drop fewer or none if fewer ob
 
 // src/agents/reflector/agent.ts
 import { agentLoop as agentLoop3 } from "@earendil-works/pi-agent-core";
-import { Type as Type3 } from "@earendil-works/pi-ai";
+import { Type as Type3 } from "typebox";
 
 // src/agents/reflector/prompts.ts
 var REFLECTOR_SYSTEM = `You are the reflection agent for a coding assistant.
@@ -3604,7 +3604,7 @@ var Runtime = class {
 };
 
 // src/tools/recall-observation.ts
-import { Type as Type4 } from "@earendil-works/pi-ai";
+import { Type as Type4 } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 var RECALL_OBSERVATION_TOOL_NAME = "recall";
