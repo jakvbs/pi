@@ -52,8 +52,12 @@ interface SessionStats {
 	limitsModel: unknown;
 	usageTotals: UsageTotals;
 	latestCacheHitRate: number | undefined;
+	promptedRequests: number;
 	contextUsage: ContextUsage | undefined;
 }
+
+/** Cache hit rates at or above this are normal for a continuing session and stay out of the footer. */
+const CACHE_HIT_WARNING_PERCENT = 90;
 
 /**
  * Footer component that shows pwd, token stats, and context usage.
@@ -120,6 +124,7 @@ export class FooterComponent implements Component {
 		// Calculate cumulative usage from ALL session entries (not just post-compaction messages)
 		const usageTotals = createUsageTotals();
 		let latestCacheHitRate: number | undefined;
+		let promptedRequests = 0;
 
 		for (const entry of sessionManager.getEntries()) {
 			if (entry.type === "usage") {
@@ -129,6 +134,7 @@ export class FooterComponent implements Component {
 
 				const latestPromptTokens =
 					entry.message.usage.input + entry.message.usage.cacheRead + entry.message.usage.cacheWrite;
+				if (latestPromptTokens > 0) promptedRequests++;
 				latestCacheHitRate =
 					latestPromptTokens > 0 ? (entry.message.usage.cacheRead / latestPromptTokens) * 100 : undefined;
 			} else if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.usage) {
@@ -149,6 +155,7 @@ export class FooterComponent implements Component {
 			limitsModel,
 			usageTotals,
 			latestCacheHitRate,
+			promptedRequests,
 			contextUsage,
 		};
 		return this.sessionStats;
@@ -156,7 +163,7 @@ export class FooterComponent implements Component {
 
 	render(width: number): string[] {
 		const state = this.session.state;
-		const { usageTotals, latestCacheHitRate, contextUsage } = this.getSessionStats();
+		const { usageTotals, latestCacheHitRate, promptedRequests, contextUsage } = this.getSessionStats();
 		const contextPercentValue = contextUsage?.percent ?? 0;
 		const contextTokens = contextUsage?.tokens ?? null;
 
@@ -179,37 +186,33 @@ export class FooterComponent implements Component {
 			pwd = `${pwd} • ${this.session.sessionManager.getSessionId()}`;
 		}
 
-		// Build stats line
+		// Session token totals live in /session; the footer keeps what changes the next decision.
 		const statsParts = [];
-		if (usageTotals.input) statsParts.push(`↑${formatTokens(usageTotals.input)}`);
-		if (usageTotals.output) statsParts.push(`↓${formatTokens(usageTotals.output)}`);
-		if (usageTotals.cacheRead) statsParts.push(`R${formatTokens(usageTotals.cacheRead)}`);
-		if (usageTotals.cacheWrite) statsParts.push(`W${formatTokens(usageTotals.cacheWrite)}`);
-		if ((usageTotals.cacheRead > 0 || usageTotals.cacheWrite > 0) && latestCacheHitRate !== undefined) {
-			statsParts.push(`CH${latestCacheHitRate.toFixed(1)}%`);
+		const contextDisplay = `ctx ${contextTokens === null ? "?" : formatTokens(contextTokens)}${this.autoCompactEnabled ? "" : " (auto off)"}`;
+		// Each part carries its own color: a colored part ends with a foreground reset, which would
+		// drop an outer dim wrapper for every part after it.
+		statsParts.push(
+			theme.fg(contextPercentValue > 90 ? "error" : contextPercentValue > 70 ? "warning" : "dim", contextDisplay),
+		);
+
+		// The first request of a session has nothing cached yet; a later miss means the cache was lost.
+		if (
+			(usageTotals.cacheRead > 0 || usageTotals.cacheWrite > 0) &&
+			promptedRequests > 1 &&
+			latestCacheHitRate !== undefined &&
+			latestCacheHitRate < CACHE_HIT_WARNING_PERCENT
+		) {
+			statsParts.push(theme.fg("warning", `cache ${latestCacheHitRate.toFixed(0)}%`));
 		}
 
-		// Kimi Coding is subscription-backed despite using API-key authentication.
+		// Kimi Coding is subscription-backed despite using API-key authentication. A subscription's
+		// cost is only an estimate of API pricing, so it stays in /session.
 		const usingSubscription = state.model
 			? state.model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(state.model.provider)
 			: false;
-		if (usageTotals.cost || usingSubscription) {
-			const costStr = `$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
-			statsParts.push(costStr);
+		if (usageTotals.cost && !usingSubscription) {
+			statsParts.push(theme.fg("dim", `$${usageTotals.cost.toFixed(3)}`));
 		}
-
-		// Colorize context percentage based on usage
-		let contextPercentStr: string;
-		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
-		const contextPercentDisplay = `ctx ${contextTokens === null ? "?" : contextTokens.toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ")}${autoIndicator}`;
-		if (contextPercentValue > 90) {
-			contextPercentStr = theme.fg("error", contextPercentDisplay);
-		} else if (contextPercentValue > 70) {
-			contextPercentStr = theme.fg("warning", contextPercentDisplay);
-		} else {
-			contextPercentStr = contextPercentDisplay;
-		}
-		statsParts.push(contextPercentStr);
 		if (areExperimentalFeaturesEnabled()) {
 			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
 		}
