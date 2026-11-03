@@ -1,0 +1,10 @@
+[reference "pi-stamp"]
+	url = https://github.com/narumiruna/pi-extensions
+	branch = main
+	path = packages/pi-stamp
+	commit = bd22995d09179767588f8f71981bdb01eedee132
+[reference "pi-run-timer"]
+	url = https://github.com/CarlosGtrz/carlosgtrz-pi-extensions
+	branch = master
+	path = packages/run-timer
+	commit = c126154f180e7ff850f08b38e2b5a87229a13123
