@@ -12,14 +12,15 @@
     ]
   },
   "scripts": {
-    "test": "node --test timing.test.ts",
+    "test": "node --experimental-strip-types --import ../../packages/coding-agent/src/experimental/source-resolver.ts --test timing.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=22.6.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "keywords": [
     "pi",

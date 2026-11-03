@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { appendStamp, formatDuration, lastText, runDuration } from "./timing.ts";
 
 const T0 = Date.parse("2026-10-23T10:00:00.000Z");
@@ -74,12 +75,54 @@ test("stamps go after the last non-empty text block", () => {
 	assert.equal(lastText([{ type: "toolCall" }]), undefined);
 });
 
-test("durations and stamp layout", () => {
+test("durations", () => {
 	assert.equal(formatDuration(37_400), "0:37");
 	assert.equal(formatDuration(157_000), "2:37");
 	assert.equal(formatDuration(3_757_000), "1:02:37");
-	assert.equal(
-		appendStamp("text", "10:00:00", 12, (label) => `<${label}>`),
-		"text\n\n`\u00a0\u00a0\u00a0\u00a0<10:00:00>`",
-	);
+});
+
+const plainTheme: MarkdownTheme = {
+	heading: (text) => text,
+	link: (text) => text,
+	linkUrl: (text) => text,
+	code: (text) => text,
+	codeBlock: (text) => text,
+	codeBlockBorder: (text) => text,
+	quote: (text) => text,
+	quoteBorder: (text) => text,
+	hr: (text) => text,
+	listBullet: (text) => text,
+	bold: (text) => text,
+	italic: (text) => text,
+	strikethrough: (text) => text,
+	underline: (text) => text,
+};
+
+/** Renders Markdown with a stamp the way pi's transcript does, with trailing padding and NBSPs as spaces. */
+function renderStamped(markdown: string, width: number, label = "10:21:31"): string[] {
+	const component = new Markdown(markdown, 1, 0, plainTheme, undefined, {
+		transform: (text, availableWidth) => appendStamp(text, label, availableWidth, (stamp) => stamp),
+	});
+	return component.render(width).map((line) => line.replaceAll("\u00a0", " ").trimEnd());
+}
+
+test("a stamp shares the last line of a closing paragraph when it fits", () => {
+	assert.deepEqual(renderStamped("zatwierdzam", 30), [" zatwierdzam         10:21:31"]);
+	assert.deepEqual(renderStamped("first paragraph\n\nsee **this** and `code`", 40), [
+		" first paragraph",
+		"",
+		" see this and code             10:21:31",
+	]);
+});
+
+test("a stamp that does not fit the last line takes the next line without a blank one", () => {
+	assert.deepEqual(renderStamped("a line that nearly fills it", 30), [
+		" a line that nearly fills it",
+		"                     10:21:31",
+	]);
+});
+
+test("a stamp after a list or code block stays a paragraph of its own", () => {
+	assert.deepEqual(renderStamped("- one\n- two", 30), [" - one", " - two", "", "                     10:21:31"]);
+	assert.deepEqual(renderStamped("see [docs](https://example.com)", 30).at(-1), "                     10:21:31");
 });

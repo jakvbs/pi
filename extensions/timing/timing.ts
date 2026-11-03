@@ -1,4 +1,5 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { Marked, type Token, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 export type EntryLookup = (id: string) => SessionEntry | undefined;
 
@@ -84,12 +85,52 @@ export function responseLabel(completedAt: number, runMs: number | undefined, no
 	return runMs === undefined ? clock : `${clock} · ${formatDuration(runMs)}`;
 }
 
+const parser = new Marked();
+
+/** Columns kept between the text and a stamp that shares its line. */
+const MIN_GAP = 3;
+
 /**
- * Appends a right-aligned stamp line to Markdown. Markdown keeps ANSI styling and spacing only inside a
- * code span, so the line is one code span padded with non-breaking spaces. Labels are ASCII plus "·",
- * so their length equals their terminal width.
+ * The text a paragraph's inline tokens render to in pi's Markdown component, or undefined when a token
+ * can render wider or narrower than this text (links may print their URL, HTML and math are rewritten).
+ */
+function renderedInline(tokens: readonly Token[]): string | undefined {
+	let text = "";
+	for (const token of tokens) {
+		if (token.type === "br") text += "\n";
+		else if (token.type === "codespan" || token.type === "escape") text += token.text;
+		else if (
+			token.type === "text" ||
+			token.type === "strong" ||
+			token.type === "em" ||
+			token.type === "del"
+		) {
+			const nested = token.tokens?.length ? renderedInline(token.tokens) : token.text;
+			if (nested === undefined) return undefined;
+			text += nested;
+		} else return undefined;
+	}
+	return text;
+}
+
+/**
+ * Appends a right-aligned stamp to Markdown, keeping the message as short as possible: at the end of
+ * the last line when the message ends with a paragraph whose last line leaves room, on the next line of
+ * that paragraph otherwise, and as a paragraph of its own after any other block. Markdown keeps ANSI
+ * styling and spacing only inside a code span, so the stamp is one code span padded with non-breaking
+ * spaces. Labels are ASCII plus "·", so their length equals their terminal width.
  */
 export function appendStamp(markdown: string, label: string, width: number, style: (text: string) => string): string {
-	const padding = "\u00a0".repeat(Math.max(0, width - label.length));
-	return `${markdown}\n\n\`${padding}${style(label)}\``;
+	const stamp = (padding: number) => `\`${"\u00a0".repeat(Math.max(0, padding))}${style(label)}\``;
+	const body = markdown.trimEnd();
+	const last = parser.lexer(body).at(-1);
+	// pi renders $$ blocks as math, which a plain parser reads as a paragraph.
+	const inline =
+		last?.type === "paragraph" && !last.raw.includes("$") ? renderedInline(last.tokens ?? []) : undefined;
+	if (inline === undefined) return `${body}\n\n${stamp(width - label.length)}`;
+	// pi wraps the paragraph with the same function; text before the last line wraps the same with the stamp.
+	const lastLine = wrapTextWithAnsi(inline, width).at(-1) ?? "";
+	const room = width - visibleWidth(lastLine) - label.length;
+	// The first space stays outside the code span: a body ending in one would merge the two backtick runs.
+	return room >= MIN_GAP ? `${body}\u00a0${stamp(room - 1)}` : `${body}\n${stamp(width - label.length)}`;
 }
