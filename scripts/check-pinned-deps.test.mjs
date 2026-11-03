@@ -1,17 +1,24 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const script = fileURLToPath(new URL("./check-pinned-deps.mjs", import.meta.url));
 
-async function check(t, manifest) {
+/** Runs the check in a fresh git repository holding `manifest` as its root package.json and `files` by path. */
+async function check(t, manifest, files = {}) {
 	const root = await mkdtemp(join(tmpdir(), "pi-pinned-deps-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
+	// The check lists package.json files through git, so outside a repository it has nothing to read.
+	execFileSync("git", ["init", "--quiet"], { cwd: root });
 	await writeFile(join(root, "package.json"), JSON.stringify(manifest));
+	for (const [path, content] of Object.entries(files)) {
+		await mkdir(dirname(join(root, path)), { recursive: true });
+		await writeFile(join(root, path), content);
+	}
 	return spawnSync(process.execPath, [script], { cwd: root, encoding: "utf8" });
 }
 
@@ -60,4 +67,13 @@ test("rejects registry alias ranges", async (t) => {
 	});
 	assert.equal(result.status, 1);
 	assert.match(result.stderr, /dependencies\.alias must be pinned/);
+});
+
+test("skips a package.json that git ignores, like the one pi installs project packages into, but not an untracked one", async (t) => {
+	const ranged = JSON.stringify({ dependencies: { "pi-subagents": "npm:@tintinweb/pi-subagents@^1.0.0" } });
+	const ignored = await check(t, {}, { ".gitignore": ".pi/npm/\n", ".pi/npm/package.json": ranged });
+	assert.equal(ignored.status, 0, ignored.stderr);
+	const untracked = await check(t, {}, { ".gitignore": ".pi/npm/\n", "extensions/probe/package.json": ranged });
+	assert.equal(untracked.status, 1);
+	assert.match(untracked.stderr, /extensions\/probe\/package\.json: dependencies\.pi-subagents must be pinned/);
 });
