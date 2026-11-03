@@ -39,7 +39,9 @@ permissions:
 
 jobs:
   generate:
-    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main') }}
+    # Only earendil-works/pi pushes the release tags the compatibility check reads and holds the R2 secrets of the
+    # publish job; in a fork both jobs fail, so this one is skipped there and the publish job, which needs it, with it.
+    if: ${{ github.repository == 'earendil-works/pi' && (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')) }}
     runs-on: ubuntu-latest
     env:
       SOURCE_REF: ${{ github.event.workflow_run.head_sha || inputs.source_ref || github.sha }}
