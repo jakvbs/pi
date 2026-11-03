@@ -5,6 +5,7 @@ import { WordEditor } from "./editor.ts";
 
 const LEFT = "\x1b[D";
 const RIGHT = "\x1b[C";
+const UP = "\x1b[A";
 const TAB = "\t";
 const plain = (text: string) => text;
 
@@ -18,10 +19,23 @@ const theme = {
 };
 
 function painted(draft: string): WordEditor {
-	const ghostFor = (text: string) => (text === "pu" ? { start: 0, rest: "shnij", confidence: 1 } : undefined);
+	const ghostFor = (text: string) =>
+		text.endsWith("pu") ? { start: text.length - 2, rest: "shnij", confidence: 1 } : undefined;
 	const editor = new WordEditor(tui, theme, keybindings, ghostFor, plain);
 	editor.focused = true;
 	editor.setText(draft);
+	editor.render(40);
+	return editor;
+}
+
+/** The cursor ends the first line of "pu\nnext", and every draft has a ghost. */
+function atEndOfEarlierLine(): WordEditor {
+	const ghostFor = () => ({ start: 0, rest: "shnij", confidence: 1 });
+	const editor = new WordEditor(tui, theme, keybindings, ghostFor, plain);
+	editor.focused = true;
+	editor.setText("pu\nnext");
+	editor.handleInput(UP);
+	assert.deepEqual(editor.getCursor(), { line: 0, col: 2 });
 	editor.render(40);
 	return editor;
 }
@@ -44,4 +58,23 @@ test("a key that moved the cursor before the next frame leaves the painted ghost
 	tab.handleInput(LEFT);
 	tab.handleInput(TAB);
 	assert.equal(tab.getText(), "pu");
+});
+
+test("at the end of a multi-line draft Tab and Right take the ghost of the last line", () => {
+	const tab = painted("first line\npu");
+	tab.handleInput(TAB);
+	assert.equal(tab.getText(), "first line\npushnij ");
+	const right = painted("first line\npu");
+	right.handleInput(RIGHT);
+	assert.equal(right.getText(), "first line\npushnij");
+});
+
+test("at the end of an earlier line Right moves to the next line and Tab leaves the text", () => {
+	const right = atEndOfEarlierLine();
+	right.handleInput(RIGHT);
+	assert.equal(right.getText(), "pu\nnext");
+	assert.deepEqual(right.getCursor(), { line: 1, col: 0 });
+	const tab = atEndOfEarlierLine();
+	tab.handleInput(TAB);
+	assert.equal(tab.getText(), "pu\nnext");
 });

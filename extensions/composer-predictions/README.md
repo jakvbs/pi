@@ -63,7 +63,8 @@ next message.
 
 ## Limits
 
-- Single-line drafts with the cursor at the end only, and only while the editor has focus.
+- A ghost shows only with the cursor at the end of the whole draft, of any number of lines, and only while the
+  editor has focus. At the end of an earlier line or inside a line, Tab and Right keep the editor's meaning.
 - The editor is replaced by a `CustomEditor` subclass. Another extension calling `setEditorComponent`
   replaces it or is replaced by it, whichever runs later.
 - The history and the model take about 70 MiB.

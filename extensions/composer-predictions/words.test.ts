@@ -43,6 +43,13 @@ test("no ghost after punctuation, for an unknown prefix, or when the typed word 
 	assert.equal(suggest(model, "run the"), undefined);
 });
 
+test("a line break is a word boundary and the words before it count as context", () => {
+	const lines = trained("run the tests", "run the tests", "run the tests");
+	assertGhost(suggest(lines, "run the\n"), 8, "tests", 23 / 27);
+	assertGhost(suggest(lines, "run\nthe te"), 8, "sts", 1);
+	assert.equal(suggest(lines, "run the,"), undefined);
+});
+
 test("a word becomes a ghost from its second use, also when learned after the first completion", () => {
 	const growing = trained("run the tests");
 	assert.equal(suggest(growing, "dep"), undefined);
