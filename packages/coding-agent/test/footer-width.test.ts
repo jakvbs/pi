@@ -21,6 +21,9 @@ function createSession(options: {
 	reasoning?: boolean;
 	thinkingLevel?: string;
 	usage?: AssistantUsage;
+	/** Requests answered before `usage`, each with the same usage. */
+	earlierRequests?: number;
+	contextTokens?: number | null;
 	branchUsage?: AssistantUsage;
 	compactionUsage?: AssistantUsage;
 	toolUsage?: AssistantUsage;
@@ -32,6 +35,9 @@ function createSession(options: {
 	const entries: Array<Record<string, unknown>> = [];
 
 	if (usage !== undefined) {
+		for (let i = 0; i < (options.earlierRequests ?? 0); i++) {
+			entries.push({ type: "message", message: { role: "assistant", usage } });
+		}
 		entries.push({
 			type: "message",
 			message: {
@@ -84,7 +90,11 @@ function createSession(options: {
 			getSessionName: () => options.sessionName,
 			getCwd: () => "/tmp/project",
 		},
-		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
+		getContextUsage: () => ({
+			tokens: options.contextTokens ?? null,
+			contextWindow: 200_000,
+			percent: ((options.contextTokens ?? 0) / 200_000) * 100,
+		}),
 		routedModel: options.routedModel,
 		modelRuntime: {
 			isUsingSubscription: () => options.usingSubscription ?? false,
@@ -236,45 +246,52 @@ describe("FooterComponent width handling", () => {
 		expect(stripAnsi(footer.render(120)[1])).toContain("$1.000");
 	});
 
-	it("shows the latest cache hit rate when cache usage is present", () => {
+	it("shows the context size and leaves session token totals to /session", () => {
 		const session = createSession({
 			sessionName: "",
-			usage: {
-				input: 100,
-				output: 10,
-				cacheRead: 50,
-				cacheWrite: 50,
-				cost: { total: 0.001 },
-			},
+			contextTokens: 161_234,
+			usage: { input: 520, output: 127_000, cacheRead: 28_000_000, cacheWrite: 477_000, cost: { total: 0 } },
+			earlierRequests: 1,
 		});
 		const footer = new FooterComponent(session, createFooterData(1));
 
-		const statsLine = stripAnsi(footer.render(120)[1]);
-		expect(statsLine).toContain("CH25.0%");
+		expect(stripAnsi(footer.render(120)[1]).trimEnd()).toBe(`ctx 161k${" ".repeat(102)}test-model`);
 	});
 
-	it("marks Kimi Coding costs as subscription estimates", () => {
-		const session = createSession({
-			sessionName: "",
-			provider: "kimi-coding",
-			usage: {
-				input: 100,
-				output: 10,
-				cacheRead: 0,
-				cacheWrite: 0,
-				cost: { total: 1.234 },
-			},
-		});
-		const footer = new FooterComponent(session, createFooterData(1));
+	it("marks the context size when auto-compaction is off", () => {
+		const footer = new FooterComponent(createSession({ sessionName: "", contextTokens: 9_500 }), createFooterData(1));
 
-		expect(stripAnsi(footer.render(120)[1])).toContain("$1.234 (sub)");
+		footer.setAutoCompactEnabled(false);
+
+		expect(stripAnsi(footer.render(120)[1])).toMatch(/^ctx 9\.5k \(auto off\) /);
 	});
 
-	it("marks explicitly identified subscription auth", () => {
-		const session = createSession({ sessionName: "", provider: "anthropic", usingSubscription: true });
-		const footer = new FooterComponent(session, createFooterData(1));
+	it("shows the cache hit rate only when a later request misses the cache", () => {
+		const missed = { input: 100, output: 10, cacheRead: 50, cacheWrite: 50, cost: { total: 0 } };
+		const hit = { input: 5, output: 10, cacheRead: 950, cacheWrite: 45, cost: { total: 0 } };
+		const stats = (usage: AssistantUsage, earlierRequests: number) =>
+			stripAnsi(
+				new FooterComponent(
+					createSession({ sessionName: "", contextTokens: 200, usage, earlierRequests }),
+					createFooterData(1),
+				).render(120)[1],
+			);
 
-		expect(stripAnsi(footer.render(120)[1])).toContain("$0.000 (sub)");
+		expect(stats(missed, 1)).toMatch(/^ctx 200 cache 25% /);
+		expect(stats(missed, 0)).toMatch(/^ctx 200 /);
+		expect(stats(missed, 0)).not.toContain("cache");
+		expect(stats(hit, 1)).not.toContain("cache");
+	});
+
+	it("leaves the estimated cost of a subscription out of the footer", () => {
+		const usage = { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost: { total: 1.234 } };
+		const kimi = createSession({ sessionName: "", provider: "kimi-coding", usage });
+		const subscription = createSession({ sessionName: "", provider: "anthropic", usingSubscription: true, usage });
+		const apiKey = createSession({ sessionName: "", provider: "anthropic", usage });
+
+		expect(stripAnsi(new FooterComponent(kimi, createFooterData(1)).render(120)[1])).not.toContain("$");
+		expect(stripAnsi(new FooterComponent(subscription, createFooterData(1)).render(120)[1])).not.toContain("$");
+		expect(stripAnsi(new FooterComponent(apiKey, createFooterData(1)).render(120)[1])).toMatch(/^ctx \? \$1\.234 /);
 	});
 
 	it("does not mark generic OAuth sign-in as a subscription", () => {
