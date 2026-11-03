@@ -54,7 +54,7 @@
 
 - Tool output starts in compact mode (one line per call) in every interactive session; `Ctrl+O` cycles to collapsed and expanded as before.
 - The footer shows the session ID after the working directory, branch, and session name. Sessions started with `--no-session` show none, since nothing can resume them.
-- The footer stats line shows the context size in short form (`ctx 161k`) and only what changes the next step: the cache hit rate when a request after the first one hits less than 90% of its prompt, and the session cost when the model is billed per token. Session token totals (`↑ ↓ R W`) and a subscription's estimated cost moved out; `/session` still shows them. `(auto)` is gone; `(auto off)` marks disabled auto-compaction.
+- The footer stats line shows the context size in short form (`ctx 161k`) and only what changes the next step: the cache hit rate when a request after the first one hits less than 90% of its prompt, and the session cost when the model is billed per token. Session token totals (`↑ ↓ R W`) and a subscription's estimated cost moved out; `/session` still shows them. `(auto)` is gone; `(auto off)` marks disabled auto-compaction. Extension statuses join the stats line when they fit next to the model name, so the footer stays two lines; otherwise they keep a line of their own.
 
 ### Fixed
 

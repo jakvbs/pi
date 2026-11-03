@@ -2891,7 +2891,8 @@ See [examples/extensions/timed-confirm.ts](../examples/extensions/timed-confirm.
 ### Widgets, Status, and Footer
 
 ```typescript
-// Status in footer (persistent until cleared)
+// Status in footer (persistent until cleared). Statuses, sorted by key, join the stats line
+// when they fit next to the model name, and take a line of their own otherwise.
 ctx.ui.setStatus("my-ext", "Processing...");
 ctx.ui.setStatus("my-ext", undefined);  // Clear
 

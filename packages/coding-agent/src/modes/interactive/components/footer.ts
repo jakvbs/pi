@@ -222,14 +222,6 @@ export class FooterComponent implements Component {
 		// Add model name on the right side, plus thinking level if model supports it
 		const modelName = state.model?.id || "no-model";
 
-		let statsLeftWidth = visibleWidth(statsLeft);
-
-		// If statsLeft is too wide, truncate it
-		if (statsLeftWidth > width) {
-			statsLeft = truncateToWidth(statsLeft, width, "...");
-			statsLeftWidth = visibleWidth(statsLeft);
-		}
-
 		// Calculate available space for padding (minimum 2 spaces between stats and model)
 		const minPadding = 2;
 
@@ -245,6 +237,26 @@ export class FooterComponent implements Component {
 		if (routed) {
 			const level = routed.thinkingLevel ? ` • ${routed.thinkingLevel}` : "";
 			rightSideWithoutProvider += ` → ${routed.model.id}${level}`;
+		}
+
+		// Extension statuses, sorted by key. They join the stats line when they fit next to the model,
+		// and take a line of their own otherwise.
+		const statusText = Array.from(this.footerData.getExtensionStatuses().entries())
+			.sort(([a], [b]) => a.localeCompare(b))
+			.map(([, text]) => sanitizeStatusText(text))
+			.join(" ");
+		const inlineStatuses =
+			statusText !== "" &&
+			visibleWidth(statsLeft) + 1 + visibleWidth(statusText) + minPadding + visibleWidth(rightSideWithoutProvider) <=
+				width;
+		if (inlineStatuses) statsLeft = `${statsLeft} ${statusText}`;
+
+		let statsLeftWidth = visibleWidth(statsLeft);
+
+		// If statsLeft is too wide, truncate it
+		if (statsLeftWidth > width) {
+			statsLeft = truncateToWidth(statsLeft, width, "...");
+			statsLeftWidth = visibleWidth(statsLeft);
 		}
 
 		// Prepend the provider in parentheses if there are multiple providers and there's enough room
@@ -289,15 +301,9 @@ export class FooterComponent implements Component {
 		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
 		const lines = [pwdLine, dimStatsLeft + dimRemainder];
 
-		// Add extension statuses on a single line, sorted by key alphabetically
-		const extensionStatuses = this.footerData.getExtensionStatuses();
-		if (extensionStatuses.size > 0) {
-			const sortedStatuses = Array.from(extensionStatuses.entries())
-				.sort(([a], [b]) => a.localeCompare(b))
-				.map(([, text]) => sanitizeStatusText(text));
-			const statusLine = sortedStatuses.join(" ");
+		if (statusText !== "" && !inlineStatuses) {
 			// Truncate to terminal width with dim ellipsis for consistency with footer style
-			lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
+			lines.push(truncateToWidth(statusText, width, theme.fg("dim", "...")));
 		}
 
 		return lines;

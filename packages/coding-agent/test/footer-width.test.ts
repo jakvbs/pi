@@ -104,10 +104,10 @@ function createSession(options: {
 	return session as unknown as AgentSession;
 }
 
-function createFooterData(providerCount: number): ReadonlyFooterDataProvider {
+function createFooterData(providerCount: number, statuses: Record<string, string> = {}): ReadonlyFooterDataProvider {
 	const provider = {
 		getGitBranch: () => "main",
-		getExtensionStatuses: () => new Map<string, string>(),
+		getExtensionStatuses: () => new Map(Object.entries(statuses)),
 		getAvailableProviderCount: () => providerCount,
 		onBranchChange: (callback: () => void) => {
 			void callback;
@@ -256,6 +256,20 @@ describe("FooterComponent width handling", () => {
 		const footer = new FooterComponent(session, createFooterData(1));
 
 		expect(stripAnsi(footer.render(120)[1]).trimEnd()).toBe(`ctx 161k${" ".repeat(102)}test-model`);
+	});
+
+	it("puts extension statuses on the stats line when they fit next to the model", () => {
+		const session = createSession({ sessionName: "", contextTokens: 12_000 });
+		const footerData = createFooterData(1, { timing: "● 0:12", "observational-memory": "compact 3%" });
+
+		const wide = new FooterComponent(session, footerData).render(60).map((line) => stripAnsi(line).trimEnd());
+		expect(wide).toEqual([
+			"/tmp/project (main) • test-session",
+			`ctx 12k compact 3% ● 0:12${" ".repeat(25)}test-model`,
+		]);
+
+		const narrow = new FooterComponent(session, footerData).render(30).map((line) => stripAnsi(line).trimEnd());
+		expect(narrow.slice(1)).toEqual([`ctx 12k${" ".repeat(13)}test-model`, "compact 3% ● 0:12"]);
 	});
 
 	it("marks the context size when auto-compaction is off", () => {
