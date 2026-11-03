@@ -1,0 +1,4 @@
+[upstream]
+	url = https://github.com/nicobailon/pi-web-access
+	branch = main
+	commit = fc63125608faef80c446687c79edd2626f511019
