@@ -343,12 +343,13 @@ async function showHistory(ctx: ExtensionContext, globalHistoryLimit: number): P
 		const container = new Container();
 		const input = new Input();
 		let selectList: SelectList;
-		let scope: "session" | "workspace" | "global" = "session";
+		// The picker opens on global history; tab cycles to the session and workspace scopes.
+		let scope: "session" | "workspace" | "global" = "global";
 		let loadingWorkspace = false;
 		let loadingGlobal = false;
 		let workspaceHistory: HistoryItem[] | undefined;
 		let globalHistory: HistoryItem[] | undefined;
-		let history = sessionHistory;
+		let history: HistoryItem[] = [];
 		let matches = history;
 		let selectedIndex = 0;
 
@@ -402,6 +403,15 @@ async function showHistory(ctx: ExtensionContext, globalHistoryLimit: number): P
 			});
 		};
 
+		const showGlobalHistory = () => {
+			if (!globalHistory && !loadingGlobal) {
+				const cachedGlobalHistory = loadGlobalHistory();
+				if (cachedGlobalHistory.sessionHistoryCached) globalHistory = cachedGlobalHistory.history;
+				else rebuildGlobalHistory();
+			}
+			history = globalHistory ?? [];
+		};
+
 		const switchScope = () => {
 			scope = scope === "session" ? "workspace" : scope === "workspace" ? "global" : "session";
 			if (scope === "session") {
@@ -423,16 +433,12 @@ async function showHistory(ctx: ExtensionContext, globalHistoryLimit: number): P
 					});
 				}
 			} else {
-				if (!globalHistory && !loadingGlobal) {
-					const cachedGlobalHistory = loadGlobalHistory();
-					if (cachedGlobalHistory.sessionHistoryCached) globalHistory = cachedGlobalHistory.history;
-					else rebuildGlobalHistory();
-				}
-				history = globalHistory ?? [];
+				showGlobalHistory();
 			}
 			refresh();
 		};
-		createList();
+		showGlobalHistory();
+		refresh();
 
 		return {
 			get focused() {
@@ -450,7 +456,7 @@ async function showHistory(ctx: ExtensionContext, globalHistoryLimit: number): P
 				container.addChild(new Text(theme.fg("dim", "fuzzy filter: "), 1, 0));
 				container.addChild(input);
 				container.addChild(selectList);
-				container.addChild(new Text(theme.fg("dim", "↑↓ navigate • tab scope (session → workspace → global) • ctrl+g rebuild global • enter restore • esc cancel"), 1, 0));
+				container.addChild(new Text(theme.fg("dim", "↑↓ navigate • tab scope (global → session → workspace) • ctrl+g rebuild global • enter restore • esc cancel"), 1, 0));
 				container.addChild(new DynamicBorder((text: string) => theme.fg("accent", text)));
 				return container.render(width);
 			},
@@ -523,7 +529,7 @@ export default function promptHistoryExtension(pi: ExtensionAPI) {
 		handler: (ctx) => showHistory(ctx, globalHistoryLimit),
 	});
 	pi.registerCommand("history", {
-		description: "Fuzzy-search prompts in the current session",
+		description: "Fuzzy-search prompt history",
 		handler: async (_args, ctx) => showHistory(ctx, globalHistoryLimit),
 	});
 }

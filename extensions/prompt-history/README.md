@@ -5,8 +5,8 @@ A Pi extension that restores a previous prompt with a fuzzy picker.
 ## Use
 
 - Press the configured shortcut (default **Ctrl+R**) at any time, or run `/history`. The picker opens inline in Pi's editor area so transcript images cannot cover it.
-- Type to fuzzy-filter prompts from the **current session's active branch**. The most recently used prompt is listed first by default.
-- Press `Tab` to cycle through **This session → This workspace → Global**. Workspace history includes saved sessions from the current working directory (plus the current session); global history includes every saved Pi session and the local history retained for ephemeral sessions. Workspace and global results show use count and last-used time. The first global search builds a local cache; later searches reuse it. Press `Ctrl+G` to rebuild that cache from the saved sessions.
+- Type to fuzzy-filter prompts from the **global history**, ranked by use count and then by most recent use.
+- Press `Tab` to cycle through **Global → This session → This workspace**. The session scope lists the current session's active branch, most recent first. Workspace history includes saved sessions from the current working directory (plus the current session); global history includes every saved Pi session and the local history retained for ephemeral sessions. Workspace and global results show use count and last-used time. The first global search builds a local cache; later searches reuse it. Press `Ctrl+G` to rebuild that cache from the saved sessions.
 - Use `↑` / `↓` to select a result, then `Enter` to put it back into Pi's editor.
 - `!` / `!!` bash commands are recorded too, with their prefix, so a restored command runs again as typed.
 - It only restores text; it does **not** submit the prompt.
