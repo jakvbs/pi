@@ -1,25 +1,16 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 
 const dependencySections = ["dependencies", "devDependencies", "optionalDependencies"];
 const exactVersionPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
-const ignoredDirectories = new Set([".git", "dist", "node_modules"]);
-const packageJsonFiles = [];
-
-function collectPackageJsonFiles(directory) {
-	for (const entry of readdirSync(directory, { withFileTypes: true })) {
-		if (entry.isDirectory()) {
-			if (!ignoredDirectories.has(entry.name)) {
-				collectPackageJsonFiles(join(directory, entry.name));
-			}
-			continue;
-		}
-
-		if (entry.isFile() && entry.name === "package.json") {
-			packageJsonFiles.push(join(directory, entry.name));
-		}
-	}
-}
+// Tracked and untracked-but-not-ignored files only: pi installs project packages into the gitignored
+// .pi/npm/package.json with caret ranges, and that file is not part of the repo.
+const packageJsonFiles = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+	encoding: "utf8",
+	maxBuffer: 64 * 1024 * 1024,
+})
+	.split("\0")
+	.filter((file) => file === "package.json" || file.endsWith("/package.json"));
 
 function isNonRegistrySpecifier(specifier) {
 	return /^(?:workspace:|file:|link:|portal:|git\+|github:|git:|https?:|ssh:|git:\/\/)/.test(specifier);
@@ -35,9 +26,9 @@ function getVersionSpecifier(specifier) {
 
 const failures = [];
 
-collectPackageJsonFiles(".");
-
 for (const file of packageJsonFiles.sort()) {
+	// Listed by the index but deleted in the working tree.
+	if (!existsSync(file)) continue;
 	const packageJson = JSON.parse(readFileSync(file, "utf8"));
 
 	for (const section of dependencySections) {
