@@ -12,12 +12,13 @@ Usage is read from the endpoints the official clients use for the same view, wit
 | Claude Pro/Max | `pi-sub-anthropic` | `GET https://api.anthropic.com/api/oauth/usage` |
 | ChatGPT (Codex) | `openai-codex` | `GET https://chatgpt.com/backend-api/wham/usage` |
 
-A subscription appears only when its provider has credentials (`/login`). Usage is checked at session start, after an agent run (at most every 30 seconds) and every five minutes.
+A subscription appears only when its provider has credentials (`/login`). Both endpoints are checked at session start and by `/usage`. After that, Claude follows the `anthropic-ratelimit-unified-*` headers of its model responses, and Codex is checked after an agent run (at most every 30 seconds) and every five minutes.
 
 ## Limits
 
 - Claude reports a window as `null` until it has usage, so an idle 5-hour window is not shown rather than shown as 0%.
 - Codex windows are labelled by their length; a Pro plan currently has only a weekly window.
+- Claude's endpoint answers HTTP 429 when several sessions poll it, so it is not polled. A session that sends no Claude request keeps its last value and does not see usage from other sessions or devices until its next request or `/usage`.
 - Both endpoints are undocumented. A changed response shape shows as `?` in the footer and `no usage windows in the response` in `/usage`.
 
 ## Install and test
