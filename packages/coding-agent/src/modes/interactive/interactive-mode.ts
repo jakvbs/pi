@@ -532,6 +532,8 @@ export class InteractiveMode {
 	// Thinking block visibility state
 	private hideThinkingBlock = false;
 	private hideToolCalls = false;
+	/** Latest top-level tool call of the current agent run; the working line names it while tool calls are hidden. */
+	private lastToolActivity: ToolExecutionComponent | undefined = undefined;
 	private outputPad = 1;
 	private readonly mermaidMarkdownTransformer: MarkdownTransformer = createMermaidMarkdownTransformer({
 		getMode: () => this.settingsManager.getMermaidRenderingMode(),
@@ -2488,13 +2490,20 @@ export class InteractiveMode {
 					(this.editor.borderColor ?? theme.getThinkingBorderColor(this.session.thinkingLevel || "off"))(text)
 			: undefined;
 		this.showStatusIndicator(
-			new WorkingStatusIndicator(
-				this.ui,
-				this.workingMessage ?? this.defaultWorkingMessage,
-				this.workingIndicatorOptions,
-				colorFn,
-			),
+			new WorkingStatusIndicator(this.ui, this.getWorkingMessage(), this.workingIndicatorOptions, colorFn),
 		);
+	}
+
+	private getWorkingMessage(): string {
+		const message = this.workingMessage ?? this.defaultWorkingMessage;
+		const tool = this.hideToolCalls ? this.lastToolActivity : undefined;
+		return tool ? `${message} · ${tool.getActivityLine()}` : message;
+	}
+
+	private refreshWorkingMessage(): void {
+		if (this.activeStatusIndicator?.kind === "working") {
+			this.activeStatusIndicator.setMessage(this.getWorkingMessage());
+		}
 	}
 
 	private setWorkingVisible(visible: boolean): void {
@@ -2779,9 +2788,7 @@ export class InteractiveMode {
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;
-				if (this.activeStatusIndicator?.kind === "working") {
-					this.activeStatusIndicator.setMessage(message ?? this.defaultWorkingMessage);
-				}
+				this.refreshWorkingMessage();
 			},
 			setWorkingVisible: (visible) => this.setWorkingVisible(visible),
 			setWorkingIndicator: (options) => this.setWorkingIndicator(options),
@@ -3536,6 +3543,7 @@ export class InteractiveMode {
 		switch (event.type) {
 			case "agent_start":
 				this.pendingTools.clear();
+				this.lastToolActivity = undefined;
 				// Restore main escape handler if retry handler is still active
 				// (retry success event fires later, but we need main handler now)
 				if (this.retryEscapeHandler) {
@@ -3668,6 +3676,7 @@ export class InteractiveMode {
 								component.setDisplayMode(this.toolDisplayMode);
 								this.chatContainer.addChild(component);
 								this.pendingTools.set(content.id, component);
+								this.lastToolActivity = component;
 							} else {
 								const component = this.pendingTools.get(content.id);
 								if (component) {
@@ -3676,6 +3685,7 @@ export class InteractiveMode {
 							}
 						}
 					}
+					this.refreshWorkingMessage();
 					this.ui.requestRender();
 				}
 				break;
@@ -3706,6 +3716,7 @@ export class InteractiveMode {
 							});
 						}
 						this.pendingTools.clear();
+						this.refreshWorkingMessage();
 						this.maybeSuggestBugReport(this.streamingMessage);
 					} else {
 						// Args are now complete - trigger diff computation for edit tools
@@ -3750,6 +3761,8 @@ export class InteractiveMode {
 					this.pendingTools.set(event.toolCallId, component);
 				}
 				component.markExecutionStarted();
+				this.lastToolActivity = component;
+				this.refreshWorkingMessage();
 				this.ui.requestRender();
 				break;
 			}
@@ -3769,6 +3782,7 @@ export class InteractiveMode {
 				if (component) {
 					component.updateResult({ ...event.result, isError: event.isError, durationMs: event.durationMs });
 					this.pendingTools.delete(event.toolCallId);
+					this.refreshWorkingMessage();
 					this.ui.requestRender();
 				}
 				break;
@@ -4794,6 +4808,7 @@ export class InteractiveMode {
 				child.setHidden(this.hideToolCalls);
 			}
 		}
+		this.refreshWorkingMessage();
 		this.ui.requestRender();
 		this.showStatus(`Tool calls: ${this.hideToolCalls ? "hidden" : "visible"}`);
 	}

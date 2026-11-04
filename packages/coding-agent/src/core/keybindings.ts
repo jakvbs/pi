@@ -53,7 +53,7 @@ const APP_KEYBINDINGS = {
 		description: "Toggle thinking blocks",
 	},
 	"app.tools.toggle": {
-		defaultKeys: windowsKeybindings ? "alt+t" : "shift+ctrl+t",
+		defaultKeys: "alt+h",
 		description: "Toggle tool call visibility",
 	},
 	"app.session.toggleNamedFilter": {

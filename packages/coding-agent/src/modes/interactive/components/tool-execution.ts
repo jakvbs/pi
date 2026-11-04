@@ -24,8 +24,19 @@ import { theme } from "../theme/theme.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
 
 const FALLBACK_PREVIEW_LINES = 10;
+/** Widest main argument in an activity line, so the working line above the editor stays one row. */
+const ACTIVITY_ARGS_WIDTH = 60;
 
 export type ToolDisplayMode = "collapsed" | "expanded" | "compact";
+
+type ToolRowSummary = { status: "pending" | "running" | "error" | "success"; name: string; args: string };
+
+const STATUS_GLYPHS: Record<ToolRowSummary["status"], string> = {
+	pending: "○",
+	running: "…",
+	error: "✗",
+	success: "✓",
+};
 
 export interface ToolExecutionOptions {
 	showImages?: boolean;
@@ -255,6 +266,29 @@ export class ToolExecutionComponent extends Container {
 		return this.displayMode === "compact" && !this.hidden;
 	}
 
+	/** Plain one-line summary (status glyph, tool name, main argument) for showing activity outside the transcript. */
+	getActivityLine(): string {
+		const { status, name, args } = this.getRowSummary();
+		return `${STATUS_GLYPHS[status]} ${name} ${stripAnsi(truncateToWidth(args, ACTIVITY_ARGS_WIDTH))}`.trimEnd();
+	}
+
+	private getRowSummary(): ToolRowSummary {
+		const status = this.isPartial
+			? this.executionStarted
+				? "running"
+				: "pending"
+			: this.result?.isError
+				? "error"
+				: "success";
+		const target = [this.args?.path, this.args?.file_path, this.args?.command].find(
+			(value): value is string => typeof value === "string",
+		);
+		const plain = (text: string) => sanitizeBinaryOutput(stripAnsi(text)).replace(/\s+/g, " ").trim();
+		const args =
+			target ?? plain(formatToolCallWithArgs(this.toolName, this.args, theme, false)).slice(this.toolName.length);
+		return { status, name: plain(this.toolName), args: plain(args) };
+	}
+
 	setCompactGroupStart(start: boolean): void {
 		this.compactGroupStart = start;
 	}
@@ -271,18 +305,9 @@ export class ToolExecutionComponent extends Container {
 		}
 
 		if (this.displayMode === "compact") {
-			const status = this.isPartial
-				? theme.fg("muted", this.executionStarted ? "…" : "○")
-				: this.result?.isError
-					? theme.fg("error", "✗")
-					: theme.fg("success", "✓");
-			const target = [this.args?.path, this.args?.file_path, this.args?.command].find(
-				(value): value is string => typeof value === "string",
-			);
-			const plain = (text: string) => sanitizeBinaryOutput(stripAnsi(text)).replace(/\s+/g, " ").trim();
-			const args =
-				target ?? plain(formatToolCallWithArgs(this.toolName, this.args, theme, false)).slice(this.toolName.length);
-			const row = `${" ".repeat(this.outputPad)}${status} ${theme.fg("toolTitle", theme.bold(plain(this.toolName)))} ${theme.fg("muted", plain(args))}`;
+			const { status, name, args } = this.getRowSummary();
+			const statusColor = status === "error" ? "error" : status === "success" ? "success" : "muted";
+			const row = `${" ".repeat(this.outputPad)}${theme.fg(statusColor, STATUS_GLYPHS[status])} ${theme.fg("toolTitle", theme.bold(name))} ${theme.fg("muted", args)}`;
 			const line = truncateToWidth(row.trimEnd(), width);
 			return this.compactGroupStart ? ["", line] : [line];
 		}
