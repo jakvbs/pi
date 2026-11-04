@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
+const piClipboard = vi.hoisted(() => ({ copyToClipboard: vi.fn<(text: string) => Promise<void>>() }));
+vi.mock(import("@earendil-works/pi-coding-agent"), async (importOriginal) => ({
+	...(await importOriginal()),
+	copyToClipboard: piClipboard.copyToClipboard,
+}));
+
 import { registerViewCommand } from "../src/commands/view.ts";
 import {
 	compactionEntry,
@@ -155,6 +161,23 @@ describe("V3 /om:view", () => {
 		expect(clipboardText).toBe(expected);
 		expect(clipboardText).not.toContain("failed to copy");
 		expect(output).toBe(`${expected}\n\n${COPY_FAILURE}`);
+	});
+
+	it("copies through Pi's clipboard writer by default, which reaches the Windows clipboard from WSL", async () => {
+		let handler: ((args: unknown, ctx: any) => Promise<void>) | undefined;
+		const pi = { registerCommand: vi.fn((_name: string, command: { handler: typeof handler }) => (handler = command.handler)) };
+		registerViewCommand(pi as any, { ensureConfig: vi.fn() } as any);
+		const notify = vi.fn();
+		const ctx = { cwd: "/tmp/project", ui: { notify }, sessionManager: { getBranch: () => [] } };
+
+		piClipboard.copyToClipboard.mockResolvedValueOnce(undefined);
+		await handler!([], ctx);
+		expect(piClipboard.copyToClipboard).toHaveBeenCalledTimes(1);
+		expect(notify.mock.calls.at(-1)?.[0]).toContain(COPY_SUCCESS);
+
+		piClipboard.copyToClipboard.mockRejectedValueOnce(new Error("Clipboard unavailable"));
+		await handler!([], ctx);
+		expect(notify.mock.calls.at(-1)?.[0]).toContain(COPY_FAILURE);
 	});
 
 	it("rejects unsupported view arguments without copying", async () => {

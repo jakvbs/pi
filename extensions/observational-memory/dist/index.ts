@@ -1325,54 +1325,8 @@ function registerStatusCommand(pi, runtime) {
   });
 }
 
-// src/clipboard.ts
-import { spawn } from "node:child_process";
-function getClipboardCommands(platform = process.platform) {
-  switch (platform) {
-    case "darwin":
-      return [{ command: "pbcopy", args: [] }];
-    case "win32":
-      return [{ command: "clip", args: [] }];
-    default:
-      return [
-        { command: "wl-copy", args: [] },
-        { command: "xclip", args: ["-selection", "clipboard"] },
-        { command: "xsel", args: ["--clipboard", "--input"] },
-        { command: "termux-clipboard-set", args: [] }
-      ];
-  }
-}
-async function copyTextToClipboard(text, runner = runClipboardCommand, commands = getClipboardCommands()) {
-  for (const command of commands) {
-    if (await runner(command, text)) return true;
-  }
-  return false;
-}
-function runClipboardCommand(command, text) {
-  return new Promise((resolve) => {
-    let settled = false;
-    let timeout;
-    const finish = (ok) => {
-      if (settled) return;
-      settled = true;
-      if (timeout) clearTimeout(timeout);
-      resolve(ok);
-    };
-    const child = spawn(command.command, command.args, {
-      stdio: ["pipe", "ignore", "ignore"]
-    });
-    timeout = setTimeout(() => {
-      child.kill();
-      finish(false);
-    }, 2e3);
-    child.on("error", () => finish(false));
-    child.on("close", (code) => finish(code === 0));
-    child.stdin.on("error", () => void 0);
-    child.stdin.end(text, "utf8");
-  });
-}
-
 // src/commands/view.ts
+import { copyToClipboard as copyTextToClipboard } from "@earendil-works/pi-coding-agent";
 function firstArg(args) {
   if (Array.isArray(args)) return typeof args[0] === "string" ? args[0] : void 0;
   if (typeof args === "string") return args.trim().split(/\s+/)[0];
@@ -1395,7 +1349,7 @@ function renderContentOnlyProjection(projection, emptyScope) {
   ].join("\n");
 }
 function registerViewCommand(pi, runtime, options = {}) {
-  const copyToClipboard = options.copyToClipboard ?? copyTextToClipboard;
+  const copyToClipboard = options.copyToClipboard ?? ((text) => copyTextToClipboard(text).then(() => true));
   pi.registerCommand("om:view", {
     description: "Print and copy observational memory content (visible by default, full for recorded memory)",
     handler: async (args, ctx) => {
