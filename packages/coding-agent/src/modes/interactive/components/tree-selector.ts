@@ -1064,7 +1064,6 @@ class TreeList implements Component {
 			this.foldedNodes.clear();
 			this.applyFilter();
 		} else if (kb.matches(keyData, "app.tree.filter.conversation")) {
-			// Toggle filter: conversation ↔ default
 			this.filterMode = this.filterMode === "conversation" ? "default" : "conversation";
 			this.foldedNodes.clear();
 			this.applyFilter();
