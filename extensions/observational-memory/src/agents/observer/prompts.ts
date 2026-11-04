@@ -33,6 +33,9 @@ Format.
 - Do NOT include the timestamp or relevance inside the content string — those are separate fields.
 - No structured fields embedded in the text (no "key: value" lines, no JSON).
 
+Language.
+Write the content in the language the user writes in, judged from the user's messages in the chunk; when the chunk has none, follow the language of the newest current observations. The examples below are in English only for illustration. Keep identifiers, paths, commands, code, error messages, and quoted user words verbatim, untranslated.
+
 Preserve user assertions exactly.
 When the user TELLS you something about themselves, their project, or their environment, capture it as an assertion. When the user ASKS something, capture it as a question. Assertions are authoritative — a later question on the same topic does not invalidate them.
   BAD:  User wondered if they have two kids.
