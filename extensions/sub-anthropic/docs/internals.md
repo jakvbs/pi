@@ -14,6 +14,13 @@ provider keeps its own OAuth credential under its own id in
 The OAuth flow requests the `user:inference` scope, which is what permits
 inference directly against the subscription rather than an issued API key.
 
+Like pi's built-in provider, the stream passes each response's status and
+headers to `options.onResponse`, which pi emits as `after_provider_response`,
+also for error statuses. Subscription responses carry the plan's quota in
+`anthropic-ratelimit-unified-*` headers (measured 2026-11-04:
+`anthropic-ratelimit-unified-7d-utilization: 0.49`, `-7d-reset` in epoch
+seconds); the `usage` extension shows it from there.
+
 ## Why the fingerprint exists
 
 Anthropic accepts a subscription token for inference only from a client that
