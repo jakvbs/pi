@@ -536,6 +536,10 @@
         },
         {
           "type": "string",
+          "const": "conversation"
+        },
+        {
+          "type": "string",
           "const": "labeled-only"
         },
         {

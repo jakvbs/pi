@@ -361,6 +361,7 @@ export const SettingsSchema = Type.Object(
 					Type.Literal("default"),
 					Type.Literal("no-tools"),
 					Type.Literal("user-only"),
+					Type.Literal("conversation"),
 					Type.Literal("labeled-only"),
 					Type.Literal("all"),
 				],

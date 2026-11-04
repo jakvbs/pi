@@ -180,6 +180,7 @@ Tool output starts in compact mode. Compact tool output shows one line per call 
 | `app.tree.filter.default` | `ctrl+d` | Set tree filter to default view |
 | `app.tree.filter.noTools` | `ctrl+t` | Toggle tree filter that hides tool results |
 | `app.tree.filter.userOnly` | `ctrl+u` | Toggle tree filter that shows only user messages |
+| `app.tree.filter.conversation` | `ctrl+r` | Toggle tree filter that shows user messages and final assistant replies |
 | `app.tree.filter.labeledOnly` | `ctrl+l` | Toggle tree filter that shows only labeled entries |
 | `app.tree.filter.all` | `ctrl+a` | Toggle tree filter that shows all entries |
 | `app.tree.filter.cycleForward` | `ctrl+o` | Cycle tree filter forward |

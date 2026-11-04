@@ -156,6 +156,10 @@ const APP_KEYBINDINGS = {
 		defaultKeys: "ctrl+u",
 		description: "Tree filter: user messages only",
 	},
+	"app.tree.filter.conversation": {
+		defaultKeys: "ctrl+r",
+		description: "Tree filter: user messages and final replies",
+	},
 	"app.tree.filter.labeledOnly": {
 		defaultKeys: "ctrl+l",
 		description: "Tree filter: labeled entries only",

@@ -95,7 +95,9 @@ function renderHorizontalViewport(rows: HorizontalViewportRow[], width: number):
 }
 
 /** Filter mode for tree display */
-export type FilterMode = "default" | "no-tools" | "user-only" | "labeled-only" | "all";
+export type FilterMode = "default" | "no-tools" | "user-only" | "conversation" | "labeled-only" | "all";
+
+const FILTER_CYCLE: FilterMode[] = ["default", "no-tools", "user-only", "conversation", "labeled-only", "all"];
 
 /**
  * Tree list component with selection and ASCII art visualization
@@ -371,6 +373,14 @@ class TreeList implements Component {
 				case "user-only":
 					// Just user messages
 					passesFilter = entry.type === "message" && entry.message.role === "user";
+					break;
+				case "conversation":
+					// User messages and the assistant message that ends each turn; replies that continue
+					// with tool calls are intermediate steps
+					passesFilter =
+						entry.type === "message" &&
+						(entry.message.role === "user" ||
+							(entry.message.role === "assistant" && entry.message.stopReason !== "toolUse"));
 					break;
 				case "no-tools":
 					// Default minus tool results
@@ -655,6 +665,9 @@ class TreeList implements Component {
 				break;
 			case "user-only":
 				labels += " [user]";
+				break;
+			case "conversation":
+				labels += " [conversation]";
 				break;
 			case "labeled-only":
 				labels += " [labeled]";
@@ -1050,6 +1063,11 @@ class TreeList implements Component {
 			this.filterMode = this.filterMode === "user-only" ? "default" : "user-only";
 			this.foldedNodes.clear();
 			this.applyFilter();
+		} else if (kb.matches(keyData, "app.tree.filter.conversation")) {
+			// Toggle filter: conversation ↔ default
+			this.filterMode = this.filterMode === "conversation" ? "default" : "conversation";
+			this.foldedNodes.clear();
+			this.applyFilter();
 		} else if (kb.matches(keyData, "app.tree.filter.labeledOnly")) {
 			// Toggle filter: labeled-only ↔ default
 			this.filterMode = this.filterMode === "labeled-only" ? "default" : "labeled-only";
@@ -1062,16 +1080,14 @@ class TreeList implements Component {
 			this.applyFilter();
 		} else if (kb.matches(keyData, "app.tree.filter.cycleBackward")) {
 			// Cycle filter backwards
-			const modes: FilterMode[] = ["default", "no-tools", "user-only", "labeled-only", "all"];
-			const currentIndex = modes.indexOf(this.filterMode);
-			this.filterMode = modes[(currentIndex - 1 + modes.length) % modes.length];
+			const currentIndex = FILTER_CYCLE.indexOf(this.filterMode);
+			this.filterMode = FILTER_CYCLE[(currentIndex - 1 + FILTER_CYCLE.length) % FILTER_CYCLE.length];
 			this.foldedNodes.clear();
 			this.applyFilter();
 		} else if (kb.matches(keyData, "app.tree.filter.cycleForward")) {
-			// Cycle filter forwards: default → no-tools → user-only → labeled-only → all → default
-			const modes: FilterMode[] = ["default", "no-tools", "user-only", "labeled-only", "all"];
-			const currentIndex = modes.indexOf(this.filterMode);
-			this.filterMode = modes[(currentIndex + 1) % modes.length];
+			// Cycle filter forwards: default → no-tools → user-only → conversation → labeled-only → all → default
+			const currentIndex = FILTER_CYCLE.indexOf(this.filterMode);
+			this.filterMode = FILTER_CYCLE[(currentIndex + 1) % FILTER_CYCLE.length];
 			this.foldedNodes.clear();
 			this.applyFilter();
 		} else if (kb.matches(keyData, "tui.editor.deleteCharBackward")) {
@@ -1231,6 +1247,7 @@ const TREE_HELP_ITEMS: Array<{ keys: Keybinding[]; label: string; labelFirst?: b
 			"app.tree.filter.default",
 			"app.tree.filter.noTools",
 			"app.tree.filter.userOnly",
+			"app.tree.filter.conversation",
 			"app.tree.filter.labeledOnly",
 			"app.tree.filter.all",
 		],
