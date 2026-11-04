@@ -1329,6 +1329,7 @@ async function* parseWebSocket(
 	socket: WebSocketLike,
 	signal?: AbortSignal,
 	idleTimeoutMs?: number,
+	onFrame?: () => void,
 ): AsyncGenerator<Record<string, unknown>> {
 	const queue: Record<string, unknown>[] = [];
 	let pending: (() => void) | null = null;
@@ -1344,6 +1345,7 @@ async function* parseWebSocket(
 	};
 
 	const onMessage: WebSocketListener = (event) => {
+		onFrame?.();
 		void (async () => {
 			let text: string | null = null;
 			try {
@@ -1559,12 +1561,18 @@ async function processWebSocketStream(
 			stats.lastPreviousResponseId = undefined;
 		}
 	}
+	const sentAt = Date.now();
+	let framesReceived = 0;
+	let lastFrameAt = sentAt;
 	try {
 		socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
 		await processResponsesStream(
 			startWebSocketOutputOnFirstEvent(
 				mapCodexEvents(
-					parseWebSocket(socket, options?.signal, idleTimeoutMs),
+					parseWebSocket(socket, options?.signal, idleTimeoutMs, () => {
+						framesReceived++;
+						lastFrameAt = Date.now();
+					}),
 					output,
 					model,
 					options?.onProviderStreamEvent,
@@ -1600,6 +1608,20 @@ async function processWebSocketStream(
 			};
 		}
 	} catch (error) {
+		if (!options?.signal?.aborted) {
+			// A bare "WebSocket error" carries no close code; the timing tells a drop amid traffic
+			// from one after a long silence (an idle cutoff) or on a stale reused socket.
+			const failedAt = Date.now();
+			appendAssistantMessageDiagnostic(
+				output,
+				createAssistantMessageDiagnostic("websocket_stream_failure", error, {
+					socketReused: reused,
+					framesReceived,
+					msSinceRequest: failedAt - sentAt,
+					msSinceLastFrame: failedAt - lastFrameAt,
+				}),
+			);
+		}
 		if (entry) {
 			entry.continuation = undefined;
 		}
