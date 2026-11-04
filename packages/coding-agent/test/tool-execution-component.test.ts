@@ -255,6 +255,29 @@ describe("ToolExecutionComponent parity", () => {
 		expect(component.render(120)).toEqual([]);
 	});
 
+	test("activity line names a hidden call with its status and a shortened main argument", () => {
+		const component = new ToolExecutionComponent(
+			"bash",
+			"activity",
+			{ command: `ls ~/CLIProxyAPI\n${"x".repeat(80)}` },
+			{ hidden: true },
+			undefined,
+			createFakeTui(),
+			process.cwd(),
+		);
+		expect(component.getActivityLine()).toBe(`○ bash ls ~/CLIProxyAPI ${"x".repeat(40)}...`);
+
+		component.markExecutionStarted();
+		expect(component.getActivityLine()).toMatch(/^… bash ls/);
+
+		component.updateResult({ content: [{ type: "text", text: "boom" }], isError: true });
+		expect(component.getActivityLine()).toMatch(/^✗ bash ls/);
+
+		component.updateResult({ content: [{ type: "text", text: "ok" }], isError: false });
+		expect(component.getActivityLine()).toMatch(/^✓ bash ls/);
+		expect(component.render(120)).toEqual([]);
+	});
+
 	test("hidden tool rows take no layout space until shown again", () => {
 		const component = new ToolExecutionComponent(
 			"custom_tool",
