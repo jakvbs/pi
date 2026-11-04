@@ -1,24 +1,29 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { report, SOURCES, statusLine, type Usage, type UsageSource } from "./usage.ts";
 
-type Result = { label: string; usage: Usage };
+/** `usage` is undefined when pi has no credentials for the subscription. */
+type Result = { label: string; usage: Usage | undefined };
 
 const STATUS_KEY = "usage";
 const POLL_MS = 5 * 60_000;
 /** Back-to-back runs would otherwise check usage after each one. */
 const MIN_REFRESH_MS = 30_000;
 const TIMEOUT_MS = 10_000;
+/** Claude's usage endpoint answers 429 when every session polls it; its model responses carry the usage. */
+const POLLED = SOURCES.filter((source) => source.parseResponseHeaders === undefined);
 
 /**
  * Footer: usage of the Claude and Codex subscriptions pi is logged in to, per quota window.
  * `/usage` refreshes it and lists every window with its reset time.
  *
- * Usage is read from the plans' usage endpoints with the providers' OAuth tokens; no model request is
- * made. It is checked at session start, after agent runs and every five minutes.
+ * Usage is read from the plans' usage endpoints with the providers' OAuth tokens at session start and by
+ * `/usage`; no model request is made. Afterwards Claude follows the quota headers of its model responses,
+ * and Codex is checked after agent runs and every five minutes.
  */
 export default function (pi: ExtensionAPI) {
 	let ctx: ExtensionContext | undefined;
-	let results: readonly Result[] = [];
+	/** Keyed by label; the first check inserts the subscriptions in `SOURCES` order. */
+	const results = new Map<string, { label: string; usage: Usage }>();
 	let checkedAt = 0;
 	let pending: Promise<void> | undefined;
 	let timer: ReturnType<typeof setInterval> | undefined;
@@ -26,36 +31,47 @@ export default function (pi: ExtensionAPI) {
 	function render(): void {
 		if (!ctx?.hasUI) return;
 		const theme = ctx.ui.theme;
-		const line = statusLine(results, Date.now(), (color, text) => theme.fg(color, text));
+		const line = statusLine([...results.values()], Date.now(), (color, text) => theme.fg(color, text));
 		ctx.ui.setStatus(STATUS_KEY, line === "" ? undefined : line);
 	}
 
-	function refresh(context: ExtensionContext): Promise<void> {
-		pending ??= check(context)
-			.then((checked) => {
-				results = checked;
-				checkedAt = Date.now();
-				render();
-			})
-			.finally(() => {
-				pending = undefined;
-			});
-		return pending;
+	async function update(context: ExtensionContext, sources: readonly UsageSource[]): Promise<void> {
+		for (const { label, usage } of await check(context, sources)) {
+			if (usage === undefined) results.delete(label);
+			else results.set(label, { label, usage });
+		}
+		checkedAt = Date.now();
+		render();
+	}
+
+	function poll(context: ExtensionContext): void {
+		pending ??= update(context, POLLED).finally(() => {
+			pending = undefined;
+		});
 	}
 
 	pi.on("session_start", (_event, eventCtx) => {
 		ctx = eventCtx;
 		if (!eventCtx.hasUI) return;
 		render();
-		void refresh(eventCtx);
+		void update(eventCtx, SOURCES);
 		timer ??= setInterval(() => {
-			if (ctx) void refresh(ctx);
+			if (ctx) poll(ctx);
 		}, POLL_MS);
 		timer.unref();
 	});
 
 	pi.on("agent_settled", (_event, eventCtx) => {
-		if (eventCtx.hasUI && Date.now() - checkedAt >= MIN_REFRESH_MS) void refresh(eventCtx);
+		if (eventCtx.hasUI && Date.now() - checkedAt >= MIN_REFRESH_MS) poll(eventCtx);
+	});
+
+	pi.on("after_provider_response", (event) => {
+		for (const source of SOURCES) {
+			const usage = source.parseResponseHeaders?.(event.headers);
+			if (usage === undefined) continue;
+			results.set(source.label, { label: source.label, usage });
+			render();
+		}
 	});
 
 	pi.on("session_shutdown", () => {
@@ -68,23 +84,24 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("usage", {
 		description: "Show Claude and Codex subscription usage",
 		handler: async (_args, commandCtx) => {
-			await refresh(commandCtx);
+			await update(commandCtx, SOURCES);
 			commandCtx.ui.notify(
-				results.length === 0 ? "Not logged in to a Claude or Codex subscription (/login)." : report(results, Date.now()),
+				results.size === 0
+					? "Not logged in to a Claude or Codex subscription (/login)."
+					: report([...results.values()], Date.now()),
 				"info",
 			);
 		},
 	});
 }
 
-async function check(context: ExtensionContext): Promise<Result[]> {
-	const checked = await Promise.all(
-		SOURCES.map(async (source) => {
+function check(context: ExtensionContext, sources: readonly UsageSource[]): Promise<Result[]> {
+	return Promise.all(
+		sources.map(async (source) => {
 			const token = await context.modelRegistry.getApiKeyForProvider(source.provider);
-			return token === undefined ? undefined : { label: source.label, usage: await fetchUsage(source, token) };
+			return { label: source.label, usage: token === undefined ? undefined : await fetchUsage(source, token) };
 		}),
 	);
-	return checked.filter((result) => result !== undefined);
 }
 
 async function fetchUsage(source: UsageSource, token: string): Promise<Usage> {

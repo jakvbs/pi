@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { codexAccountId, parseClaudeUsage, parseCodexUsage, report, statusLine } from "./usage.ts";
+import { codexAccountId, parseClaudeHeaders, parseClaudeUsage, parseCodexUsage, report, statusLine } from "./usage.ts";
 
 const NOW = Date.parse("2026-11-04T07:00:00Z");
 
@@ -35,6 +35,29 @@ test("Claude windows come from five_hour and seven_day; a null window is absent"
 		{ kind: "ok", windows: [{ label: "5h", percent: 100, resetsAt: Date.parse("2026-11-04T09:00:00Z") }], limited: true },
 	);
 	assert.deepEqual(parseClaudeUsage({ error: "x" }), { kind: "error", message: "no usage windows in the response" });
+});
+
+test("Claude windows also come from the quota headers of a model response", () => {
+	// Trimmed headers of a live pi-sub-anthropic response, 2026-11-04.
+	const headers = {
+		"content-type": "text/event-stream",
+		"anthropic-ratelimit-unified-status": "allowed",
+		"anthropic-ratelimit-unified-representative-claim": "seven_day",
+		"anthropic-ratelimit-unified-7d-status": "allowed",
+		"anthropic-ratelimit-unified-7d-utilization": "0.49",
+		"anthropic-ratelimit-unified-7d-reset": "1794038400",
+	};
+	assert.deepEqual(parseClaudeHeaders(headers), {
+		kind: "ok",
+		windows: [{ label: "7d", percent: 49, resetsAt: Date.parse("2026-11-07T08:00:00Z") }],
+		limited: false,
+	});
+	// The 5h names follow the 7d ones; the live response had no 5h window, like the endpoint.
+	assert.deepEqual(
+		parseClaudeHeaders({ "anthropic-ratelimit-unified-5h-utilization": "1", "anthropic-ratelimit-unified-5h-reset": "1794000000" }),
+		{ kind: "ok", windows: [{ label: "5h", percent: 100, resetsAt: 1794000000000 }], limited: true },
+	);
+	assert.equal(parseClaudeHeaders({ "content-type": "text/event-stream" }), undefined);
 });
 
 test("Codex windows are labelled by their length", () => {

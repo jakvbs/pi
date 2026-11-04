@@ -8,13 +8,18 @@ export type Usage =
 	| { kind: "ok"; windows: readonly UsageWindow[]; limited: boolean }
 	| { kind: "error"; message: string };
 
-/** A subscription whose usage endpoint accepts the OAuth access token of a pi provider. */
+/**
+ * A subscription whose usage endpoint accepts the OAuth access token of a pi provider.
+ * A source with `parseResponseHeaders` is updated from the headers of model responses instead of being
+ * polled; its endpoint is still read at session start and by `/usage`.
+ */
 export type UsageSource = {
 	provider: string;
 	label: string;
 	url: string;
 	headers: (token: string) => Record<string, string>;
 	parse: (body: unknown) => Usage;
+	parseResponseHeaders?: (headers: Record<string, string>) => Usage | undefined;
 };
 
 export const SOURCES: readonly UsageSource[] = [
@@ -24,6 +29,7 @@ export const SOURCES: readonly UsageSource[] = [
 		url: "https://api.anthropic.com/api/oauth/usage",
 		headers: (token) => ({ Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" }),
 		parse: parseClaudeUsage,
+		parseResponseHeaders: parseClaudeHeaders,
 	},
 	{
 		provider: "openai-codex",
@@ -55,6 +61,22 @@ export function parseClaudeUsage(body: unknown): Usage {
 		return [{ label, percent, resetsAt: typeof resetsAt === "string" ? Date.parse(resetsAt) : undefined }];
 	});
 	if (windows.length === 0) return { kind: "error", message: "no usage windows in the response" };
+	return { kind: "ok", windows, limited: windows.some((window) => window.percent >= 100) };
+}
+
+/**
+ * Claude model responses carry the same windows as `anthropic-ratelimit-unified-<window>-utilization`
+ * (a fraction) and `-reset` (epoch seconds). Responses without them, e.g. to an API key, are not usage.
+ */
+export function parseClaudeHeaders(headers: Record<string, string>): Usage | undefined {
+	const number = (key: string) => finite(Number(headers[`anthropic-ratelimit-unified-${key}`]));
+	const windows = CLAUDE_WINDOWS.flatMap(([, label]): UsageWindow[] => {
+		const utilization = number(`${label}-utilization`);
+		if (utilization === undefined) return [];
+		const reset = number(`${label}-reset`);
+		return [{ label, percent: utilization * 100, resetsAt: reset === undefined ? undefined : reset * 1000 }];
+	});
+	if (windows.length === 0) return undefined;
 	return { kind: "ok", windows, limited: windows.some((window) => window.percent >= 100) };
 }
 
