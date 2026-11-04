@@ -1,7 +1,6 @@
 import { Container, Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { reportInstallTelemetry } from "../src/install-telemetry.ts";
 import { applyPatch, APPLY_PATCH_GRAMMAR, MAX_PATCH_BYTES } from "../src/apply-patch.ts";
 import { createFreeformInputSchema, createOpenAILarkSampling, type OpenAIGrammarSampling } from "../src/grammar.ts";
 import { supportsOpenAIGrammarTools } from "../src/model-support.ts";
@@ -34,8 +33,6 @@ const APPLY_PATCH_PARAMETERS = createFreeformInputSchema(
 );
 
 export default function piCodexTools(pi: ExtensionAPI): void {
-  reportInstallTelemetry();
-
   const registerGrammarTool = pi.registerTool as (tool: Parameters<ExtensionAPI["registerTool"]>[0] & {
     constrainedSampling?: OpenAIGrammarSampling;
   }) => void;
