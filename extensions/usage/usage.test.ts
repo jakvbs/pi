@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { codexAccountId, parseClaudeHeaders, parseClaudeUsage, parseCodexUsage, report, statusLine } from "./usage.ts";
+import {
+	codexAccountId,
+	parseClaudeHeaders,
+	parseClaudeUsage,
+	parseCodexUsage,
+	parseSnapshot,
+	report,
+	SOURCES,
+	shouldFetch,
+	statusLine,
+} from "./usage.ts";
 
 const NOW = Date.parse("2026-11-04T07:00:00Z");
 
@@ -114,8 +124,66 @@ test("the footer shows reset times only for windows close to their limit", () =>
 
 test("/usage lists every window with its reset time", () => {
 	const results = [
-		{ label: "Claude", usage: parseClaudeUsage(CLAUDE) },
-		{ label: "Codex", usage: { kind: "error" as const, message: "HTTP 401" } },
+		{ label: "Claude", usage: parseClaudeUsage(CLAUDE), at: NOW },
+		{ label: "Codex", usage: { kind: "error" as const, message: "HTTP 401" }, at: NOW },
 	];
 	assert.equal(report(results, NOW), "Claude\n  7d 47%, resets in 3d1h (Sat 08:00)\nCodex: HTTP 401");
+});
+
+test("/usage names a failed check that kept an earlier value", () => {
+	const results = [{ label: "Claude", usage: parseClaudeUsage(CLAUDE), at: NOW - 4 * 60_000, failure: "HTTP 429" }];
+	assert.equal(
+		report(results, NOW),
+		"Claude (check failed: HTTP 429; usage from 4m ago)\n  7d 47%, resets in 3d1h (Sat 08:00)",
+	);
+});
+
+test("a saved snapshot keeps only windows that have not reset", () => {
+	const saved = JSON.parse(
+		JSON.stringify({
+			at: NOW - 60_000,
+			usage: {
+				kind: "ok",
+				windows: [
+					{ label: "5h", percent: 80, resetsAt: NOW - 1 },
+					{ label: "7d", percent: 49, resetsAt: NOW + 3_600_000 },
+					{ label: "window", percent: 3, resetsAt: undefined },
+				],
+				limited: false,
+			},
+		}),
+	);
+	assert.deepEqual(parseSnapshot(saved, NOW), {
+		at: NOW - 60_000,
+		usage: {
+			kind: "ok",
+			windows: [
+				{ label: "7d", percent: 49, resetsAt: NOW + 3_600_000 },
+				{ label: "window", percent: 3, resetsAt: undefined },
+			],
+			limited: false,
+		},
+	});
+	assert.equal(parseSnapshot({ at: NOW, usage: { kind: "ok", windows: [{ label: "5h", percent: 80, resetsAt: NOW }] } }, NOW), undefined);
+	assert.equal(parseSnapshot({ at: NOW, usage: { kind: "error", message: "HTTP 429" } }, NOW), undefined);
+	assert.equal(parseSnapshot("not json object", NOW), undefined);
+});
+
+test("checks read an endpoint only when no current value is known", () => {
+	const [claude, codex] = SOURCES;
+	const minutes = (n: number) => NOW - n * 60_000;
+	const cases = [
+		["start", claude, undefined, true],
+		["start", claude, minutes(4), false],
+		["start", claude, minutes(6), true],
+		["start", codex, minutes(4), false],
+		["poll", claude, undefined, false],
+		["poll", claude, minutes(60), false],
+		["poll", codex, minutes(0.25), false],
+		["poll", codex, minutes(1), true],
+		["command", claude, minutes(0), true],
+	] as const;
+	for (const [trigger, source, knownAt, expected] of cases) {
+		assert.equal(shouldFetch(trigger, source, knownAt, NOW), expected, `${trigger} ${source.label} ${knownAt}`);
+	}
 });

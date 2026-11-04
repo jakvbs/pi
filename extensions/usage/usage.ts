@@ -1,12 +1,16 @@
-// Subscription usage endpoints of Claude and Codex: requests, response parsing and footer/report text.
+// Subscription usage of Claude and Codex: endpoint requests, parsing of responses and saved snapshots, when to check, and footer/report text.
 
 /** One quota window of a subscription plan. `resetsAt` is epoch ms. */
 export type UsageWindow = { label: string; percent: number; resetsAt: number | undefined };
 
+/** The plan's windows as read at one moment. */
+export type KnownUsage = { kind: "ok"; windows: readonly UsageWindow[]; limited: boolean };
+
 /** Result of one usage check: the plan's windows, or why they could not be read. */
-export type Usage =
-	| { kind: "ok"; windows: readonly UsageWindow[]; limited: boolean }
-	| { kind: "error"; message: string };
+export type Usage = KnownUsage | { kind: "error"; message: string };
+
+/** The last known usage of a subscription and when it was read (epoch ms), shared by sessions through a file. */
+export type Snapshot = { usage: KnownUsage; at: number };
 
 /**
  * A subscription whose usage endpoint accepts the OAuth access token of a pi provider.
@@ -80,6 +84,39 @@ export function parseClaudeHeaders(headers: Record<string, string>): Usage | und
 	return { kind: "ok", windows, limited: windows.some((window) => window.percent >= 100) };
 }
 
+/** A snapshot file written by any session; windows whose reset has passed no longer describe the plan. */
+export function parseSnapshot(body: unknown, now: number): Snapshot | undefined {
+	const at = finite(field(body, "at"));
+	const usage = field(body, "usage");
+	const saved = field(usage, "windows");
+	if (at === undefined || field(usage, "kind") !== "ok" || !Array.isArray(saved)) return undefined;
+	const windows = saved.flatMap((window): UsageWindow[] => {
+		const label = field(window, "label");
+		const percent = finite(field(window, "percent"));
+		const resetsAt = finite(field(window, "resetsAt"));
+		if (typeof label !== "string" || percent === undefined || (resetsAt !== undefined && resetsAt <= now)) return [];
+		return [{ label, percent, resetsAt }];
+	});
+	if (windows.length === 0) return undefined;
+	return { usage: { kind: "ok", windows, limited: field(usage, "limited") === true }, at };
+}
+
+/** What starts a check: a session start, a poll (agent run or timer), or `/usage`. */
+export type Trigger = "start" | "poll" | "command";
+
+/**
+ * How old a known value, read by this or any session, may be before a check reads the endpoint again.
+ * Sessions started together then share one read; back-to-back agent runs share one as well.
+ */
+const CURRENT_MS = { start: 5 * 60_000, poll: 30_000 };
+
+/** `/usage` always reads the endpoints; a source updated from response headers is not polled. */
+export function shouldFetch(trigger: Trigger, source: UsageSource, knownAt: number | undefined, now: number): boolean {
+	if (trigger === "command") return true;
+	if (knownAt !== undefined && now - knownAt < CURRENT_MS[trigger]) return false;
+	return trigger === "start" || source.parseResponseHeaders === undefined;
+}
+
 /** Codex names windows primary/secondary; their length depends on the plan (Pro has only a weekly one). */
 export function parseCodexUsage(body: unknown): Usage {
 	const rateLimit = field(body, "rate_limit");
@@ -137,11 +174,18 @@ export function statusLine(results: readonly { label: string; usage: Usage }[], 
 		.join(paint("dim", " · "));
 }
 
-/** Multi-line report for `/usage`, with every window's reset time. */
-export function report(results: readonly { label: string; usage: Usage }[], now: number): string {
+/**
+ * Multi-line report for `/usage`, with every window's reset time. `failure` is the error of a check that
+ * kept the usage read at `at`.
+ */
+export function report(
+	results: readonly { label: string; usage: Usage; at: number; failure?: string }[],
+	now: number,
+): string {
 	return results
-		.map(({ label, usage }) => {
+		.map(({ label, usage, at, failure }) => {
 			if (usage.kind === "error") return `${label}: ${usage.message}`;
+			const kept = failure === undefined ? "" : ` (check failed: ${failure}; usage from ${formatRemaining(now - at)} ago)`;
 			const windows = usage.windows.map((window) => {
 				const reset =
 					window.resetsAt === undefined
@@ -149,7 +193,7 @@ export function report(results: readonly { label: string; usage: Usage }[], now:
 						: `, resets in ${formatRemaining(window.resetsAt - now)} (${formatClock(window.resetsAt)})`;
 				return `  ${window.label} ${Math.round(window.percent)}%${reset}`;
 			});
-			return [`${label}${usage.limited ? " (limit reached)" : ""}`, ...windows].join("\n");
+			return [`${label}${usage.limited ? " (limit reached)" : ""}${kept}`, ...windows].join("\n");
 		})
 		.join("\n");
 }
