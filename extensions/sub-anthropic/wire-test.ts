@@ -500,6 +500,34 @@ for (const [delta, expected] of [
 	check(`${delta.stop_reason}: diagnostic preserved`, last?.type === "error" && last.error.stopReason === "error" && last.error.errorMessage === expected, last?.type === "error" ? last.error.errorMessage : "no error");
 }
 
+console.log("\n=== RESPONSE STATUS AND HEADERS REACH pi ===");
+{
+	// pi emits `after_provider_response` from `onResponse`; the usage extension
+	// reads the subscription quota from these headers.
+	const quota = { "anthropic-ratelimit-unified-7d-utilization": "0.49", "anthropic-ratelimit-unified-7d-reset": "1794038400" };
+	for (const status of [200, 429]) {
+		const seen: { status: number; headers: Record<string, string> }[] = [];
+		const result = createPiSubAnthropicStream()(model, context, {
+			apiKey: "sk-ant-oat01-FAKE",
+			fetch: async () => new Response(status === 200 ? SSE : "{}", { status, headers: { "Content-Type": "text/event-stream", ...quota } }),
+			onResponse: (response) => {
+				seen.push(response);
+			},
+		});
+		for await (const _ of result) {
+			/* drain */
+		}
+		check(
+			`HTTP ${status}: onResponse gets the status and headers once`,
+			seen.length === 1 &&
+				seen[0].status === status &&
+				seen[0].headers["anthropic-ratelimit-unified-7d-utilization"] === "0.49" &&
+				seen[0].headers["anthropic-ratelimit-unified-7d-reset"] === "1794038400",
+			JSON.stringify(seen),
+		);
+	}
+}
+
 console.log("\n=== PROVIDER REGISTRATION ===");
 let registered: any;
 piSubAnthropic({ registerProvider: (_id: string, config: unknown) => { registered = config; } } as any);

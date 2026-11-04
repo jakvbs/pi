@@ -714,6 +714,8 @@ export function createPiSubAnthropicStream(config: PiSubStreamConfig = {}) {
 					body: serialized,
 					signal: options?.signal,
 				});
+				// Before the status check: `after_provider_response` handlers also see error statuses such as 429.
+				await options?.onResponse?.({ status: response.status, headers: Object.fromEntries(response.headers) }, model);
 
 				if (!response.ok || !response.body) {
 					const errText = await response.text().catch(() => "");
