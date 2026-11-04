@@ -1,0 +1,29 @@
+{
+  "name": "pi-usage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Claude and Codex subscription usage in the footer and in /usage.",
+  "license": "MIT",
+  "main": "index.ts",
+  "pi": {
+    "extensions": [
+      "index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "TZ=UTC node --experimental-strip-types --import ../../packages/coding-agent/src/experimental/source-resolver.ts --test usage.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension"
+  ]
+}
