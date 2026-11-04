@@ -170,14 +170,21 @@ describe("V3 /om:view", () => {
 		const notify = vi.fn();
 		const ctx = { cwd: "/tmp/project", ui: { notify }, sessionManager: { getBranch: () => [] } };
 
+		const expected = [
+			"── Reflections ──",
+			"No visible reflections.",
+			"",
+			"── Observations ──",
+			"No visible observations.",
+		].join("\n");
 		piClipboard.copyToClipboard.mockResolvedValueOnce(undefined);
 		await handler!([], ctx);
-		expect(piClipboard.copyToClipboard).toHaveBeenCalledTimes(1);
-		expect(notify.mock.calls.at(-1)?.[0]).toContain(COPY_SUCCESS);
+		expect(piClipboard.copyToClipboard.mock.calls).toEqual([[expected]]);
+		expect(notify.mock.calls.at(-1)?.[0]).toBe(`${expected}\n\n${COPY_SUCCESS}`);
 
 		piClipboard.copyToClipboard.mockRejectedValueOnce(new Error("Clipboard unavailable"));
 		await handler!([], ctx);
-		expect(notify.mock.calls.at(-1)?.[0]).toContain(COPY_FAILURE);
+		expect(notify.mock.calls.at(-1)?.[0]).toBe(`${expected}\n\n${COPY_FAILURE}`);
 	});
 
 	it("rejects unsupported view arguments without copying", async () => {
