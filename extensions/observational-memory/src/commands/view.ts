@@ -1,6 +1,5 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { copyToClipboard as copyTextToClipboard, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Runtime } from "../runtime.ts";
-import { copyTextToClipboard } from "../clipboard.ts";
 import {
 	fullProjection,
 	observationToSummaryLine,
@@ -39,7 +38,8 @@ interface ViewCommandOptions {
 }
 
 export function registerViewCommand(pi: ExtensionAPI, runtime: Runtime, options: ViewCommandOptions = {}): void {
-	const copyToClipboard = options.copyToClipboard ?? copyTextToClipboard;
+	// Pi's clipboard writer covers WSL, OSC 52 and remote sessions; it throws when no route works.
+	const copyToClipboard = options.copyToClipboard ?? ((text: string) => copyTextToClipboard(text).then(() => true));
 
 	pi.registerCommand("om:view", {
 		description: "Print and copy observational memory content (visible by default, full for recorded memory)",
