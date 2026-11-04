@@ -355,6 +355,10 @@
       "$ref": "#/$defs/KeybindingValue",
       "description": "Tree filter: user messages only"
     },
+    "app.tree.filter.conversation": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Tree filter: user messages and final replies"
+    },
     "app.tree.filter.labeledOnly": {
       "$ref": "#/$defs/KeybindingValue",
       "description": "Tree filter: labeled entries only"

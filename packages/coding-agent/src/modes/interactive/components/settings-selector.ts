@@ -86,7 +86,7 @@ export interface SettingsConfig {
 	collapseChangelog: boolean;
 	enableInstallTelemetry: boolean;
 	doubleEscapeAction: "fork" | "tree" | "none";
-	treeFilterMode: "default" | "no-tools" | "user-only" | "labeled-only" | "all";
+	treeFilterMode: "default" | "no-tools" | "user-only" | "conversation" | "labeled-only" | "all";
 	showHardwareCursor: boolean;
 	editorPaddingX: number;
 	outputPad: 0 | 1;
@@ -126,7 +126,9 @@ export interface SettingsCallbacks {
 	onCollapseChangelogChange: (collapsed: boolean) => void;
 	onEnableInstallTelemetryChange: (enabled: boolean) => void;
 	onDoubleEscapeActionChange: (action: "fork" | "tree" | "none") => void;
-	onTreeFilterModeChange: (mode: "default" | "no-tools" | "user-only" | "labeled-only" | "all") => void;
+	onTreeFilterModeChange: (
+		mode: "default" | "no-tools" | "user-only" | "conversation" | "labeled-only" | "all",
+	) => void;
 	onShowHardwareCursorChange: (enabled: boolean) => void;
 	onEditorPaddingXChange: (padding: number) => void;
 	onOutputPadChange: (padding: 0 | 1) => void;
@@ -597,7 +599,7 @@ export class SettingsSelectorComponent extends Container {
 				label: "Tree filter mode",
 				description: "Default filter when opening /tree",
 				currentValue: config.treeFilterMode,
-				values: ["default", "no-tools", "user-only", "labeled-only", "all"],
+				values: ["default", "no-tools", "user-only", "conversation", "labeled-only", "all"],
 			},
 			{
 				id: "warnings",
@@ -954,7 +956,7 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "tree-filter-mode":
 						callbacks.onTreeFilterModeChange(
-							newValue as "default" | "no-tools" | "user-only" | "labeled-only" | "all",
+							newValue as "default" | "no-tools" | "user-only" | "conversation" | "labeled-only" | "all",
 						);
 						break;
 					case "show-hardware-cursor":

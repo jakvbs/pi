@@ -286,6 +286,60 @@ describe("TreeSelectorComponent", () => {
 		});
 	});
 
+	describe("conversation filter", () => {
+		test("ctrl+r shows only user messages and the assistant reply that ends each turn", () => {
+			const commentary = assistantMessage("asst-commentary", "result-1", "Now the regression test.");
+			if (commentary.message.role !== "assistant") throw new Error("expected an assistant message");
+			commentary.message.stopReason = "toolUse";
+			commentary.message.content.push({ type: "toolCall", id: "tc-2", name: "edit", arguments: {} });
+			const toolResult = (id: string, parentId: string): SessionMessageEntry => ({
+				type: "message",
+				id,
+				parentId,
+				timestamp: new Date().toISOString(),
+				message: {
+					role: "toolResult",
+					toolCallId: `tc-${id}`,
+					toolName: "read",
+					content: [{ type: "text", text: `output of ${id}` }],
+					isError: false,
+					timestamp: Date.now(),
+				},
+			});
+			const entries = [
+				userMessage("user-1", null, "first question"),
+				toolCallOnlyAssistant("asst-tools", "user-1"),
+				toolResult("result-1", "asst-tools"),
+				commentary,
+				toolResult("result-2", "asst-commentary"),
+				assistantMessage("asst-final-1", "result-2", "first answer"),
+				modelChange("model-1", "asst-final-1"),
+				userMessage("user-2", "model-1", "second question"),
+				assistantMessage("asst-final-2", "user-2", "second answer"),
+			];
+			const selector = new TreeSelectorComponent(
+				buildTree(entries),
+				"asst-final-2",
+				24,
+				() => {},
+				() => {},
+			);
+			const rendered = () => selector.getTreeList().render(200).map(stripVTControlCharacters).join("\n");
+
+			selector.handleInput("\x12"); // Ctrl+R
+			const conversation = rendered();
+			for (const text of ["first question", "first answer", "second question", "second answer"]) {
+				expect(conversation).toContain(text);
+			}
+			expect(conversation).not.toContain("Now the regression test.");
+			expect(conversation).not.toContain("output of");
+			expect(conversation).toContain("(4/4) [conversation]");
+
+			selector.handleInput("\x12"); // Ctrl+R again returns to the default filter
+			expect(rendered()).toContain("Now the regression test.");
+		});
+	});
+
 	describe("help", () => {
 		test("renders semantic help rows without truncating narrow terminal controls", () => {
 			const entries = [userMessage("user-1", null, "hello"), assistantMessage("asst-1", "user-1", "hi")];

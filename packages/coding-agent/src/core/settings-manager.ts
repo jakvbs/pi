@@ -1386,13 +1386,13 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getTreeFilterMode(): "default" | "no-tools" | "user-only" | "labeled-only" | "all" {
+	getTreeFilterMode(): "default" | "no-tools" | "user-only" | "conversation" | "labeled-only" | "all" {
 		const mode = this.settings.treeFilterMode;
-		const valid = ["default", "no-tools", "user-only", "labeled-only", "all"];
+		const valid = ["default", "no-tools", "user-only", "conversation", "labeled-only", "all"];
 		return mode && valid.includes(mode) ? mode : SETTINGS_DEFAULTS.treeFilterMode;
 	}
 
-	setTreeFilterMode(mode: "default" | "no-tools" | "user-only" | "labeled-only" | "all"): void {
+	setTreeFilterMode(mode: "default" | "no-tools" | "user-only" | "conversation" | "labeled-only" | "all"): void {
 		this.globalSettings.treeFilterMode = mode;
 		this.markModified("treeFilterMode");
 		this.save();
