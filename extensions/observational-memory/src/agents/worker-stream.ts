@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentContext, AgentLoopConfig, AgentMessage, agentLoop, StreamFn } from "@earendil-works/pi-agent-core";
-import { cleanupSessionResources } from "@earendil-works/pi-ai";
+import { type AssistantMessageDiagnostic, cleanupSessionResources } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { debugLog } from "../debug-log.ts";
 import { logAgentStreamError } from "./stream-errors.ts";
@@ -49,14 +49,37 @@ export async function runWorkerConversation(conversation: WorkerConversation): P
 		for await (const event of stream) {
 			logAgentStreamError(stage, event);
 			if (event.type !== "message_end" || event.message.role !== "assistant") continue;
-			const { stopReason, errorMessage } = event.message;
-			if (stopReason === "error" || stopReason === "aborted") streamError = { stopReason, errorMessage };
+			const { stopReason, errorMessage, diagnostics } = event.message;
+			if (stopReason === "error" || stopReason === "aborted") {
+				streamError = { stopReason, errorMessage: withDiagnosticDetails(errorMessage, diagnostics) };
+			}
 		}
 		await stream.result();
 		return streamError;
 	} finally {
 		releaseConversation(stage, sessionId);
 	}
+}
+
+/**
+ * Appends the provider's diagnostic details to the error, so the failure warning itself says how the
+ * request failed, e.g. how long a dropped WebSocket had been silent.
+ */
+function withDiagnosticDetails(
+	errorMessage: string | undefined,
+	diagnostics: readonly AssistantMessageDiagnostic[] | undefined,
+): string | undefined {
+	const described = (diagnostics ?? []).flatMap(({ type, details }) =>
+		details
+			? [
+					`${type}(${Object.entries(details)
+						.map(([key, value]) => `${key}=${typeof value === "string" ? value : JSON.stringify(value)}`)
+						.join(" ")})`,
+				]
+			: [],
+	);
+	if (described.length === 0) return errorMessage;
+	return `${errorMessage ?? "no error message"} [${described.join(", ")}]`;
 }
 
 function releaseConversation(stage: WorkerConversation["stage"], sessionId: string): void {

@@ -84,3 +84,55 @@ describe("worker conversations release their provider resources", () => {
 		});
 	}
 });
+
+// A provider error alone, such as a bare "WebSocket error", cannot say whether the network or the
+// server dropped the request; the provider's diagnostic details travel with it into the warning.
+describe("worker conversations report the provider's diagnostic details", () => {
+	const modelRegistry = { streamSimple: () => ({}) as any };
+
+	function loopEndingWith(message: Record<string, unknown>): any {
+		return () => ({
+			async *[Symbol.asyncIterator]() {
+				yield { type: "message_end", message: { role: "assistant", content: [], ...message } };
+			},
+			result: async () => [],
+		});
+	}
+
+	const observe = (agentLoop: any) =>
+		runObserver({
+			model: {} as any,
+			priorReflections: [],
+			priorObservations: [],
+			chunk: "[Source entry id: entry-a]\nSome content.",
+			allowedSourceEntryIds: ["entry-a"],
+			agentLoop,
+			modelRegistry,
+		});
+
+	it("appends each diagnostic's details to the error", async () => {
+		const agentLoop = loopEndingWith({
+			stopReason: "error",
+			errorMessage: "WebSocket error",
+			diagnostics: [
+				{
+					type: "websocket_stream_failure",
+					timestamp: 1,
+					details: { socketReused: false, framesReceived: 2, msSinceRequest: 25000, msSinceLastFrame: 15000 },
+				},
+				{ type: "provider_transport_failure", timestamp: 1, details: { phase: "after_message_stream_start", requestBytes: 812 } },
+				{ type: "without_details", timestamp: 1 },
+			],
+		});
+
+		await expect(observe(agentLoop)).rejects.toThrow(
+			'observer stream ended with stopReason "error": WebSocket error [websocket_stream_failure(socketReused=false framesReceived=2 msSinceRequest=25000 msSinceLastFrame=15000), provider_transport_failure(phase=after_message_stream_start requestBytes=812)]',
+		);
+	});
+
+	it("keeps an error without diagnostics as it is", async () => {
+		const agentLoop = loopEndingWith({ stopReason: "error", errorMessage: "WebSocket error" });
+
+		await expect(observe(agentLoop)).rejects.toThrow(/^observer stream ended with stopReason "error": WebSocket error$/);
+	});
+});

@@ -1463,14 +1463,25 @@ async function runWorkerConversation(conversation) {
     for await (const event of stream) {
       logAgentStreamError(stage, event);
       if (event.type !== "message_end" || event.message.role !== "assistant") continue;
-      const { stopReason, errorMessage } = event.message;
-      if (stopReason === "error" || stopReason === "aborted") streamError = { stopReason, errorMessage };
+      const { stopReason, errorMessage, diagnostics } = event.message;
+      if (stopReason === "error" || stopReason === "aborted") {
+        streamError = { stopReason, errorMessage: withDiagnosticDetails(errorMessage, diagnostics) };
+      }
     }
     await stream.result();
     return streamError;
   } finally {
     releaseConversation(stage, sessionId);
   }
+}
+function withDiagnosticDetails(errorMessage, diagnostics) {
+  const described = (diagnostics ?? []).flatMap(
+    ({ type, details }) => details ? [
+      `${type}(${Object.entries(details).map(([key, value]) => `${key}=${typeof value === "string" ? value : JSON.stringify(value)}`).join(" ")})`
+    ] : []
+  );
+  if (described.length === 0) return errorMessage;
+  return `${errorMessage ?? "no error message"} [${described.join(", ")}]`;
 }
 function releaseConversation(stage, sessionId) {
   try {
