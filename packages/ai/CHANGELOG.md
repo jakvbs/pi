@@ -12,6 +12,7 @@
 - Added `StreamOptions.disableContinuation`, which keeps a request from using or replacing server-side continuation state such as Anthropic message threads. Set it on requests that repeat an earlier one, such as cache warming ([#11545](https://github.com/earendil-works/pi/pull/11545))
 - Added the prompt cache warming policy as shared helpers, so every host warms the same way: `getPromptCacheTtlMs()`, `getCacheWarmingDelayMs()`, `isCacheWarmingReplayable()`, `getCacheWarmingRequestOptions()`, `evaluateCacheWarming()` and the `CACHE_WARMING_*` constants (moved from pi-coding-agent's cache warmer)
 - Added `@earendil-works/pi-ai/lazy-oauth` (`registerLazyOAuthFlows()`) and `@earendil-works/pi-ai/lazy-bedrock-provider` (`registerLazyBedrockProvider()`, built on the new `setBedrockProviderLoader()`) for Node bundles that split at dynamic imports: the OAuth login flows and Bedrock load through literal dynamic imports, so the bundler keeps them inside the bundle as chunks that load on first use, instead of through the variable-specifier imports that load pi-ai's own files at runtime. Nothing changes without calling them.
+- A failed OpenAI Codex WebSocket request now adds a `websocket_stream_failure` diagnostic to the assistant message: whether the socket was reused, how many frames arrived, and the milliseconds since the request and since the last frame. A bare `WebSocket error` has no close code, so the timing is what tells a drop amid traffic from one after a long silence
 
 ### Changed
 
