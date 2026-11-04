@@ -74,6 +74,8 @@ The observer runs asynchronously from `turn_end` when raw/source tokens after th
 
 It receives an oldest-first chunk of raw/source entries, validates source ids, and appends a non-empty `om.observations.recorded` entry. Chunking targets a fixed 60,000 estimated tokens but always includes at least one entry, so a single oversized entry cannot stall coverage. If there is nothing worth recording, it writes no entry and leaves the raw range uncovered.
 
+Observations are written in the language the user writes in; the reflector follows the language of the observations. Identifiers, paths, commands, error messages and quoted user words stay verbatim.
+
 ### Reflector
 
 The reflector runs in the reflect/drop lane from `turn_end` when its raw-token clock reaches `reflectAfterTokens` and the observer is not due.

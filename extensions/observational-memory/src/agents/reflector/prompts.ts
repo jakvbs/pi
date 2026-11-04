@@ -57,6 +57,7 @@ User assertions are authoritative. If the observation pool contains both "User s
 Reflection content rules:
 - Single line of plain prose. No markdown, no bullets, no code fences, no XML/HTML tags, no emojis.
 - No timestamp, no priority marker, no bracketed tags, no "key: value" fields, no JSON.
+- Write in the language of the current observations, which follow the language the user writes in; when they mix languages, follow the newest ones. The examples below are in English only for illustration. Keep identifiers, paths, commands, code, error messages, and quoted user words verbatim, untranslated.
 - Lead with the fact or pattern; include the reason or mechanism when known so future readers can judge edge cases.
 - Preserve user assertions exactly. Use the user's exact words when non-standard.
 - Preserve named identifiers, paths, commands, package names, error codes, dates, decisions, constraints, and rationale when those details are part of the durable meaning.
