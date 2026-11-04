@@ -133,7 +133,7 @@ npm test -w packages/pi-codex-tools
 npm run -w packages/pi-codex-tools pack:dry-run
 ```
 
-Install/update telemetry is disabled in CI and can be disabled with `PI_OFFLINE=1`, `PI_TELEMETRY=0` or `PI_TELEMETRY=false`, or Pi's `enableInstallTelemetry: false` setting. See [SECURITY.md](./SECURITY.md).
+This fork removed upstream's install/update telemetry. See [SECURITY.md](./SECURITY.md).
 
 ## License
 
