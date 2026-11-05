@@ -3771,9 +3771,7 @@ export class InteractiveMode {
 					this.streamingMessage = undefined;
 				}
 				this.pendingTools.clear();
-				// An automatic retry continues the same turn in a new run.
-				if (!event.willRetry) this.turnFolds.end();
-
+				// The finished turn stays open until the owner sends the next message or `!` command.
 				this.ui.requestRender();
 				break;
 
@@ -3855,8 +3853,6 @@ export class InteractiveMode {
 				this.clearStatusIndicator("retry");
 				// Show error only on final failure (success shows normal response)
 				if (!event.success) {
-					// The run that ended for this retry kept its turn open; no run follows a failed or cancelled retry.
-					this.turnFolds.end();
 					this.showError(`Retry failed after ${event.attempt} attempts: ${event.finalError || "Unknown error"}`);
 				}
 				this.ui.requestRender();
@@ -3975,15 +3971,16 @@ export class InteractiveMode {
 		message: AgentMessage,
 		options?: { populateHistory?: boolean; messageId?: string; timestamp?: string },
 	): void {
-		// The owner's own messages and summary markers end the open turn and start the next one. A displayed extension
-		// message starts one only when no run waits for its reply; inside a run it is a notice that stays visible.
-		const startsTurn =
-			message.role === "user" ||
-			message.role === "compactionSummary" ||
-			message.role === "branchSummary" ||
-			message.role === "bashExecution" ||
-			(message.role === "custom" && message.display && !this.turnFolds.awaitsReply());
-		if (startsTurn) this.turnFolds.end();
+		// The owner's own messages and `!` commands fold the turns before them and start the next one. A summary marker
+		// in a run that waits for its reply folds the part before it too; after a reply it starts the next turn and leaves
+		// the finished one open. A displayed extension message does the same only when no run waits for its reply;
+		// inside a run it is a notice that stays visible.
+		const awaitsReply = this.turnFolds.awaitsReply();
+		const isMarker = message.role === "compactionSummary" || message.role === "branchSummary";
+		const foldsTurns = message.role === "user" || message.role === "bashExecution" || (isMarker && awaitsReply);
+		const startsTurn = foldsTurns || isMarker || (message.role === "custom" && message.display && !awaitsReply);
+		if (foldsTurns) this.turnFolds.end();
+		else if (startsTurn) this.turnFolds.finish();
 		this.renderMessage(message, options);
 		if (startsTurn) this.turnFolds.start(message.timestamp);
 	}
@@ -4234,8 +4231,7 @@ export class InteractiveMode {
 		for (const [toolCallId, component] of renderedPendingTools) {
 			this.pendingTools.set(toolCallId, component);
 		}
-		// A running turn folds at agent_end, like a live one.
-		if (!this.session.isStreaming) this.turnFolds.end();
+		// The last turn stays open until the owner's next message, like a live one.
 		this.ui.requestRender();
 	}
 
@@ -5074,7 +5070,7 @@ export class InteractiveMode {
 	private flushPendingBashComponents(): void {
 		for (const component of this.pendingBashComponents) {
 			this.pendingMessagesContainer.removeChild(component);
-			this.chatContainer.addChild(component);
+			this.addBashComponentToChat(component);
 		}
 		this.pendingBashComponents = [];
 	}
@@ -7178,6 +7174,13 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	/** Show a `!` command in the transcript; like a user message, it folds the turns before it and opens the next. */
+	private addBashComponentToChat(component: BashExecutionComponent): void {
+		this.turnFolds.end();
+		this.chatContainer.addChild(component);
+		this.turnFolds.start(Date.now());
+	}
+
 	private async handleBashCommand(command: string, excludeFromContext = false): Promise<void> {
 		const extensionRunner = this.session.extensionRunner;
 
@@ -7205,7 +7208,7 @@ export class InteractiveMode {
 				this.pendingMessagesContainer.addChild(this.bashComponent);
 				this.pendingBashComponents.push(this.bashComponent);
 			} else {
-				this.chatContainer.addChild(this.bashComponent);
+				this.addBashComponentToChat(this.bashComponent);
 			}
 
 			// Show output and complete
@@ -7236,7 +7239,7 @@ export class InteractiveMode {
 			this.pendingBashComponents.push(this.bashComponent);
 		} else {
 			// Show in chat immediately when agent is idle
-			this.chatContainer.addChild(this.bashComponent);
+			this.addBashComponentToChat(this.bashComponent);
 		}
 		this.ui.requestRender();
 
