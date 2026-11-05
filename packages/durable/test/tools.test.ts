@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { Context } from "@earendil-works/chord/context";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
+import type { OutputLimits } from "@earendil-works/chord/output";
 import type {
 	ToolDiagnostic,
 	ToolExecutionApi,
@@ -56,8 +57,14 @@ function createEnv(): NodeExecutionEnv {
 	return new NodeExecutionEnv({ cwd: createTempDir() });
 }
 
+/** The Harness's output limits for a tool without its own under the default settings: 5000 tokens, no line limit. */
+const HARNESS_LIMITS: OutputLimits = { maxBytes: 20_000, maxLines: Number.MAX_SAFE_INTEGER, retain: "head" };
+
 /** A minimal execution API: the environment, collected output and diagnostics, and nothing durable. */
-function fakeApi(env: ExecutionEnv | undefined): {
+function fakeApi(
+	env: ExecutionEnv | undefined,
+	outputLimits: OutputLimits = HARNESS_LIMITS,
+): {
 	api: ToolExecutionApi;
 	output: string[];
 	diagnostics: ToolDiagnostic[];
@@ -69,6 +76,7 @@ function fakeApi(env: ExecutionEnv | undefined): {
 		conversationId: 1,
 		callId: "call",
 		env,
+		outputLimits,
 		output: (chunk: string | Uint8Array) =>
 			output.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk)),
 		retainedOutput: () => ({ text: output.join(""), truncated: false }),
@@ -85,8 +93,9 @@ async function run(
 	args: JsonValue,
 	env: ExecutionEnv | undefined,
 	context: Context = BACKGROUND_CONTEXT,
+	limits: OutputLimits = HARNESS_LIMITS,
 ): Promise<ToolExecutionResult & { streamed: string[]; reported: ToolDiagnostic[] }> {
-	const { api, output, diagnostics } = fakeApi(env);
+	const { api, output, diagnostics } = fakeApi(env, limits);
 	return { ...(await tool.execute(args, api, context)), streamed: output, reported: diagnostics };
 }
 
@@ -224,7 +233,19 @@ describe("durable tools", () => {
 			expect(diagnosticText(result)).toBe("40 more lines in file. Use offset=61 to continue.");
 		});
 
-		it("truncates large text by line count", async () => {
+		it("cuts large text to the byte limit, in whole lines", async () => {
+			const env = createEnv();
+			const lines = Array.from({ length: 2500 }, (_, index) => `Line ${index + 1}`);
+			getOrThrow(await env.writeFile("large.txt", lines.join("\n"), BACKGROUND_CONTEXT));
+			const result = await run(createReadTool(), { path: "large.txt" }, env);
+			// Lines 1-2110 take 19993 bytes with their newlines; one more line would pass 20000.
+			expect(textOutput(result)).toBe(lines.slice(0, 2110).join("\n"));
+			expect(diagnosticText(result)).toBe(
+				"Showing lines 1-2110 of 2500 (19.5KB limit). Use offset=2111 to continue.",
+			);
+		});
+
+		it("truncates large text by line count when the call's limits count lines", async () => {
 			const env = createEnv();
 			getOrThrow(
 				await env.writeFile(
@@ -233,7 +254,8 @@ describe("durable tools", () => {
 					BACKGROUND_CONTEXT,
 				),
 			);
-			const result = await run(createReadTool(), { path: "large.txt" }, env);
+			const limits = { ...HARNESS_LIMITS, maxLines: 2000 };
+			const result = await run(createReadTool(), { path: "large.txt" }, env, BACKGROUND_CONTEXT, limits);
 			expect(diagnosticText(result)).toBe("Showing lines 1-2000 of 2500. Use offset=2001 to continue.");
 			expect(result.diagnostics?.[0]?.code).toBe("truncated");
 			expect((result.details as { truncation?: unknown } | undefined)?.truncation).toMatchObject({
@@ -253,7 +275,8 @@ describe("durable tools", () => {
 					BACKGROUND_CONTEXT,
 				),
 			);
-			const result = await run(createReadTool(), { path: "exact.txt" }, env);
+			const limits = { ...HARNESS_LIMITS, maxLines: 2000 };
+			const result = await run(createReadTool(), { path: "exact.txt" }, env, BACKGROUND_CONTEXT, limits);
 			expect(result.details).toBeUndefined();
 			expect(result.diagnostics).toEqual([]);
 		});
@@ -264,14 +287,14 @@ describe("durable tools", () => {
 			const result = await run(createReadTool(), { path: "long.txt" }, env);
 			const text = textOutput(result);
 			// Two-byte characters: the cut lands on a character boundary at or below the limit.
-			expect(text).toBe("é".repeat(25_600));
+			expect(text).toBe("é".repeat(10_000));
 			expect(diagnosticText(result)).toBe(
-				"Line 1 is 78.1KB, exceeds the 50.0KB limit; showing its first 50.0KB. Use bash: sed -n '1p' long.txt | tail -c +51201",
+				"Line 1 is 78.1KB, exceeds the 19.5KB limit; showing its first 19.5KB. Use bash: sed -n '1p' long.txt | tail -c +20001",
 			);
 			expect((result.details as { truncation: object }).truncation).toMatchObject({
 				truncated: true,
 				firstLineExceedsLimit: true,
-				outputBytes: 51_200,
+				outputBytes: 20_000,
 				outputLines: 1,
 			});
 			expect(result.details).not.toHaveProperty("truncation.content");
@@ -729,7 +752,7 @@ describe("durable tools", () => {
 			expect(result.streamed.join("")).toBe("hello");
 		});
 
-		it("streams every byte and spills complete output beyond the default limits", async () => {
+		it("streams every byte and spills complete output beyond the default limit", async () => {
 			const env = createEnv();
 			const result = await run(
 				createBashTool(),
@@ -741,6 +764,14 @@ describe("durable tools", () => {
 			const fullOutputPath = result.reported[0]?.message.match(/^Full output: (.+)$/)?.[1];
 			expect(fullOutputPath).toBeDefined();
 			expect(getOrThrow(await env.readTextFile(fullOutputPath!, BACKGROUND_CONTEXT))).toBe(expected);
+		});
+
+		it("spills output past the call's output limits", async () => {
+			const env = createEnv();
+			const limits = { ...HARNESS_LIMITS, maxBytes: 50, retain: "tail" } as const;
+			const result = await run(createBashTool(), { command: "printf '%060d' 0" }, env, BACKGROUND_CONTEXT, limits);
+			const fullOutputPath = result.reported[0]?.message.match(/^Full output: (.+)$/)?.[1];
+			expect(getOrThrow(await env.readTextFile(fullOutputPath!, BACKGROUND_CONTEXT))).toBe("0".repeat(60));
 		});
 
 		it("does not spill output within the limits", async () => {

@@ -63,6 +63,16 @@ function restartLimit(limit: number | undefined): number {
 	return typeof limit === "number" && limit >= 1 ? Math.floor(limit) : DEFAULT_RESTART_LIMIT;
 }
 
+/** Default `settings.toolOutputMaxTokens`, the coding agent's default of its setting of that name. */
+export const DEFAULT_TOOL_OUTPUT_MAX_TOKENS = 5000;
+
+/** A tool output limit as given when it is a finite number of tokens, `1` or more, rounded down; else the default. */
+function toolOutputMaxTokens(tokens: number | undefined): number {
+	return typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 1
+		? Math.floor(tokens)
+		: DEFAULT_TOOL_OUTPUT_MAX_TOKENS;
+}
+
 /** Resolve the host settings: every field over its built-in default, object fields merged. */
 export function resolveSettings(settings: HarnessSettings | undefined): Settings {
 	const extensions = settings?.extensions;
@@ -84,6 +94,7 @@ export function resolveSettings(settings: HarnessSettings | undefined): Settings
 		documentRetentionMs: documentRetention(settings?.documentRetentionMs),
 		afterFailedRun: settings?.afterFailedRun ?? "keep",
 		restartLimit: restartLimit(settings?.restartLimit),
+		toolOutputMaxTokens: toolOutputMaxTokens(settings?.toolOutputMaxTokens),
 	};
 }
 

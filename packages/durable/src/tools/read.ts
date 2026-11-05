@@ -11,14 +11,7 @@ import {
 } from "../env/index.ts";
 import { defineTool } from "../harness/define.ts";
 import type { ToolDiagnostic, ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "../harness/types.ts";
-import {
-	DEFAULT_MAX_BYTES,
-	DEFAULT_MAX_LINES,
-	formatSize,
-	type TruncationResult,
-	truncateHeadOf,
-	utf8ByteLength,
-} from "../truncate.ts";
+import { formatSize, type TruncationResult, truncateHeadOf, utf8ByteLength } from "../truncate.ts";
 import { requireEnv } from "./env.ts";
 import { detectSupportedImageMimeTypeOf, imageDimensions } from "./image.ts";
 import {
@@ -58,6 +51,9 @@ export type ReadToolDetails = {
 
 const READ_CHUNK = 64 * 1024;
 
+/** The limits the text is cut to: the call's output limits, so the Harness never cuts it again. */
+type TextLimits = { readonly maxBytes: number; readonly maxLines: number };
+
 /** `Array.prototype.slice`'s conversion of an index: NaN is 0, other values truncate toward zero. */
 function sliceIndex(value: number): number {
 	return Number.isNaN(value) ? 0 : Math.trunc(value);
@@ -65,13 +61,14 @@ function sliceIndex(value: number): number {
 
 /**
  * The decoded start of bytes `[start, end)` of the file, decoded as part of the whole file: all of it, or enough for
- * `truncateHeadOf` (more than `DEFAULT_MAX_BYTES + 1` bytes, or `DEFAULT_MAX_LINES` newlines).
+ * `truncateHeadOf` (more than `limits.maxBytes + 1` bytes, or `limits.maxLines` newlines).
  */
 async function readHead(
 	reader: BinaryReader,
 	start: number,
 	end: number,
 	skipBom: boolean,
+	limits: TextLimits,
 	context: Context,
 ): Promise<string> {
 	const decoder = rangeDecoder();
@@ -84,7 +81,7 @@ async function readHead(
 		const decoded = decoder.decode(bytes, { stream: true });
 		text += decoded;
 		for (let index = decoded.indexOf("\n"); index !== -1; index = decoded.indexOf("\n", index + 1)) newlines++;
-		if (newlines >= DEFAULT_MAX_LINES || utf8ByteLength(text) > DEFAULT_MAX_BYTES + 1) return text;
+		if (newlines >= limits.maxLines || utf8ByteLength(text) > limits.maxBytes + 1) return text;
 	}
 	return text + decoder.decode();
 }
@@ -102,7 +99,7 @@ export function createReadTool(options: ReadToolOptions = {}): ToolRegistration<
 	const formats = options.images === undefined ? "jpg, png, gif, webp" : "jpg, png, gif, webp, bmp";
 	return defineTool({
 		name: "read",
-		description: `Read the contents of a file. Supports text files and images (${formats}). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
+		description: `Read the contents of a file. Supports text files and images (${formats}). Images are sent as attachments. For text files, output past the tool output limit is cut to its first lines. Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
 		parameters: readSchema,
 		structuredOutputSchema: readStructuredOutputSchema,
 		async execute(args, api, context) {
@@ -121,7 +118,7 @@ export function createReadTool(options: ReadToolOptions = {}): ToolRegistration<
 					});
 					const result =
 						mimeType === undefined
-							? await readText(reader, path, offset, limit, context)
+							? await readText(reader, path, offset, limit, api.outputLimits, context)
 							: await readImage(
 									reader,
 									before,
@@ -238,6 +235,7 @@ async function readText(
 	path: string,
 	offset: number | undefined,
 	limit: number | undefined,
+	limits: TextLimits,
 	context: Context,
 ) {
 	const startLine = offset ? Math.max(0, offset - 1) : 0;
@@ -279,9 +277,9 @@ async function readText(
 		bytes: empty ? 0 : scan.selectedBytes,
 	};
 	const firstBytes = getOrThrow(await reader.read(0, 3, context));
-	const head = empty ? "" : await readHead(reader, scan.start, scan.end, startsWithBom(firstBytes), context);
+	const head = empty ? "" : await readHead(reader, scan.start, scan.end, startsWithBom(firstBytes), limits, context);
 
-	const { content: headText, ...truncation } = truncateHeadOf(head, totals);
+	const { content: headText, ...truncation } = truncateHeadOf(head, totals, limits);
 	const diagnostics: ToolDiagnostic[] = [];
 	let outputText = headText;
 	let details: ReadToolDetails | undefined;
@@ -291,18 +289,18 @@ async function readText(
 		const integral = Number.isInteger(startLine);
 		const lineBytes = new TextEncoder().encode(integral ? (head.split("\n")[0] ?? "") : "");
 		const lineSize = integral ? scan.firstLineBytes : 0;
-		const end = characterEnd(lineBytes, DEFAULT_MAX_BYTES);
+		const end = characterEnd(lineBytes, limits.maxBytes);
 		outputText = new TextDecoder().decode(lineBytes.subarray(0, end));
 		diagnostics.push({
 			severity: "warn",
 			code: "truncated",
-			message: `Line ${startLineDisplay} is ${formatSize(lineSize)}, exceeds the ${formatSize(DEFAULT_MAX_BYTES)} limit; showing its first ${formatSize(end)}. Use bash: sed -n '${startLineDisplay}p' ${path} | tail -c +${end + 1}`,
+			message: `Line ${startLineDisplay} is ${formatSize(lineSize)}, exceeds the ${formatSize(limits.maxBytes)} limit; showing its first ${formatSize(end)}. Use bash: sed -n '${startLineDisplay}p' ${path} | tail -c +${end + 1}`,
 		});
 		details = { truncation: { ...truncation, outputBytes: end, outputLines: 1 } };
 	} else if (truncation.truncated) {
 		const endLineDisplay = startLineDisplay + truncation.outputLines - 1;
 		const nextOffset = endLineDisplay + 1;
-		const limitText = truncation.truncatedBy === "lines" ? "" : ` (${formatSize(DEFAULT_MAX_BYTES)} limit)`;
+		const limitText = truncation.truncatedBy === "lines" ? "" : ` (${formatSize(limits.maxBytes)} limit)`;
 		diagnostics.push({
 			severity: "info",
 			code: "truncated",

@@ -8,7 +8,11 @@ import { NodeExecutionEnv } from "../src/env/node.ts";
 import type { ToolDiagnostic, ToolExecutionApi } from "../src/harness/types.ts";
 import { detectSupportedImageMimeType } from "../src/tools/image.ts";
 import { createReadTool } from "../src/tools/read.ts";
-import { DEFAULT_MAX_BYTES, formatSize, truncateHead } from "../src/truncate.ts";
+import { formatSize, truncateHead } from "../src/truncate.ts";
+
+/** The call's output limits, with a line limit so both limits are compared. */
+const OUTPUT_LIMITS = { maxBytes: 50 * 1024, maxLines: 2000, retain: "head" } as const;
+const MAX_BYTES = OUTPUT_LIMITS.maxBytes;
 
 /**
  * The `read` tool before bounded reads, kept as the reference: it decodes the whole file, splits it into lines, and
@@ -41,24 +45,24 @@ function referenceRead(bytes: Uint8Array, path: string, offset: number | undefin
 	} else {
 		selectedContent = allLines.slice(startLine).join("\n");
 	}
-	const { content: headText, ...truncation } = truncateHead(selectedContent);
+	const { content: headText, ...truncation } = truncateHead(selectedContent, OUTPUT_LIMITS);
 	const diagnostics: ToolDiagnostic[] = [];
 	let outputText = headText;
 	let details: object | undefined;
 	if (truncation.firstLineExceedsLimit) {
 		const lineBytes = new TextEncoder().encode(allLines[startLine]);
-		const end = characterEnd(lineBytes, DEFAULT_MAX_BYTES);
+		const end = characterEnd(lineBytes, MAX_BYTES);
 		outputText = new TextDecoder().decode(lineBytes.subarray(0, end));
 		diagnostics.push({
 			severity: "warn",
 			code: "truncated",
-			message: `Line ${startLineDisplay} is ${formatSize(lineBytes.byteLength)}, exceeds the ${formatSize(DEFAULT_MAX_BYTES)} limit; showing its first ${formatSize(end)}. Use bash: sed -n '${startLineDisplay}p' ${path} | tail -c +${end + 1}`,
+			message: `Line ${startLineDisplay} is ${formatSize(lineBytes.byteLength)}, exceeds the ${formatSize(MAX_BYTES)} limit; showing its first ${formatSize(end)}. Use bash: sed -n '${startLineDisplay}p' ${path} | tail -c +${end + 1}`,
 		});
 		details = { truncation: { ...truncation, outputBytes: end, outputLines: 1 } };
 	} else if (truncation.truncated) {
 		const endLineDisplay = startLineDisplay + truncation.outputLines - 1;
 		const nextOffset = endLineDisplay + 1;
-		const limitText = truncation.truncatedBy === "lines" ? "" : ` (${formatSize(DEFAULT_MAX_BYTES)} limit)`;
+		const limitText = truncation.truncatedBy === "lines" ? "" : ` (${formatSize(MAX_BYTES)} limit)`;
 		diagnostics.push({
 			severity: "info",
 			code: "truncated",
@@ -111,8 +115,8 @@ function randomFile(next: () => number): Uint8Array {
 	const kind = next();
 	if (kind < 0.1) return Uint8Array.from([0xef, 0xbb, 0xbf, ...new TextEncoder().encode("x\n".repeat(2100))]);
 	if (kind < 0.2) {
-		const line = new Uint8Array(DEFAULT_MAX_BYTES + 200 + Math.floor(next() * 400)).fill(0x61);
-		line[DEFAULT_MAX_BYTES - 1 + Math.floor(next() * 3)] = 0xc3;
+		const line = new Uint8Array(MAX_BYTES + 200 + Math.floor(next() * 400)).fill(0x61);
+		line[MAX_BYTES - 1 + Math.floor(next() * 3)] = 0xc3;
 		return Uint8Array.from([...line, 0x0a, 0x62]);
 	}
 	if (kind < 0.3) return new TextEncoder().encode(`${"0123456789".repeat(30)}\n`.repeat(200));
@@ -130,6 +134,7 @@ function apiFor(env: NodeExecutionEnv): ToolExecutionApi {
 		env,
 		output: () => {},
 		outputWindow: undefined,
+		outputLimits: OUTPUT_LIMITS,
 		diagnostic: () => {},
 		details: async () => {},
 		agent: async () => ({}),

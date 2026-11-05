@@ -226,9 +226,9 @@ describe("afterTool on results the call phase decides", () => {
 		await (await root.submit({ type: "input", content: "again" }, context)).wait(context);
 		const entries = await allEntries(root);
 		const messages = results(entries);
-		// Unresolved: the default 50 KB.
+		// Unresolved: the default 5000 tokens, 20000 bytes.
 		const unresolved = messages.get("c1")!.content[0];
-		expect(unresolved?.type === "text" && unresolved.text.length).toBe(50 * 1024);
+		expect(unresolved?.type === "text" && unresolved.text.length).toBe(20_000);
 		expect(await diagnosticsOf(entries, "c1")).toEqual(["tool_unavailable", "truncated"]);
 		const bounded = messages.get("c2")!.content[0];
 		expect(bounded?.type === "text" && bounded.text).toBe("x".repeat(10));

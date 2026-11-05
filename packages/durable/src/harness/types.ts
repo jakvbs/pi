@@ -1,5 +1,6 @@
 import type { Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
+import type { OutputLimits } from "@earendil-works/chord/output";
 import type { WatchHandle } from "@earendil-works/chord/watch";
 import type {
 	Api,
@@ -274,6 +275,11 @@ export interface ToolExecutionApi<TDetails extends JsonValue = JsonValue> extend
 	 */
 	readonly outputWindow: ShellOutputWindow | undefined;
 	/**
+	 * The limits this call's text output is bounded by: the tool's `outputLimits` within the settings'
+	 * `toolOutputMaxTokens`. A tool that cuts its own output, to say where the rest is, cuts it within these.
+	 */
+	readonly outputLimits: OutputLimits;
+	/**
 	 * The output retained so far, as the model will see it when the result omits `output`, and whether earlier output was
 	 * dropped; for a tool that also returns that text in its `structuredOutput`.
 	 */
@@ -379,6 +385,10 @@ export type ToolRegistration<
 	 * `add`, which `control.addTools` (from a tool such as `tool_search`) writes. Other tools can call it any time.
 	 */
 	readonly deferred?: true;
+	/**
+	 * How the tool's text output is bounded. `maxBytes` and `maxLines` may only lower the settings'
+	 * `toolOutputMaxTokens`, which bounds every tool's text; `retain` keeps the start (`head`, the default) or the end.
+	 */
 	readonly outputLimits?: {
 		readonly maxBytes?: number;
 		readonly maxLines?: number;
@@ -654,6 +664,12 @@ export type HarnessSettings = {
 	 * `Infinity` never ends a task for it.
 	 */
 	readonly restartLimit?: number;
+	/**
+	 * The one limit on a tool result's text, in estimated tokens of 4 bytes, as the coding agent's setting of that
+	 * name. A tool's `outputLimits` may only lower it, and lines are not limited unless a tool limits them. Default
+	 * 5000 (20000 bytes); anything else that is not a positive number means the default.
+	 */
+	readonly toolOutputMaxTokens?: number;
 };
 
 /**
@@ -678,6 +694,7 @@ export type Settings = {
 	readonly documentRetentionMs: number;
 	readonly afterFailedRun: AfterFailedRun;
 	readonly restartLimit: number;
+	readonly toolOutputMaxTokens: number;
 };
 
 /** What `HarnessOptions.env` builds an environment for. */

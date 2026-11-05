@@ -516,6 +516,8 @@ type HarnessSettings = {
   readonly afterFailedRun?: "keep" | "continue" | "withdraw";
   /** Restarts in a row without progress after which a task ends instead of running again (section 5.4). */
   readonly restartLimit?: number;
+  /** The one limit on a tool result's text, in estimated tokens of 4 bytes (section 7.3). */
+  readonly toolOutputMaxTokens?: number;
 };
 
 /** Resolved: every field over its built-in default, object fields merged. */
@@ -531,6 +533,7 @@ type Settings = {
   readonly documentRetentionMs: number; // 600000
   readonly afterFailedRun: "keep" | "continue" | "withdraw"; // "keep"
   readonly restartLimit: number; // 5
+  readonly toolOutputMaxTokens: number; // 5000
 };
 
 /** Stored choices of one conversation; names, not objects. Unset fields follow the host. */
@@ -3602,6 +3605,8 @@ interface ToolExecutionApi<TDetails extends JsonValue = JsonValue> extends Docum
   output(chunk: string | Uint8Array): void;
   /** The output retained so far, as the model will see it, and whether earlier output was dropped. */
   retainedOutput(): { readonly text: string; readonly truncated: boolean };
+  /** The limits the call's text is bounded by: the tool's `outputLimits` within the settings' `toolOutputMaxTokens`. */
+  readonly outputLimits: { readonly maxBytes: number; readonly maxLines: number; readonly retain: "head" | "tail" };
   diagnostic(diagnostic: ToolDiagnostic): void;
   details(value: TDetails, context: Context): Promise<void>;
   /** A commit of the call's task; `options` may defer storing it (section 4.1). */
@@ -3672,8 +3677,14 @@ call's arguments against that schema before it runs. `defineTool()` makes an
 inline tool literal infer its types, as in `tools: [defineTool({ ... })]`.
 `execute` is a method, so differently typed tools share one `tools` array.
 
-Omitted `replay` is `unsafe`. Omitted `outputLimits` are 50 KiB, 2,000 lines,
-and `retain: "head"`. Omitted `executionMode` follows the settings'
+Omitted `replay` is `unsafe`. Every tool's text is bounded by the settings'
+`toolOutputMaxTokens` (default 5000) at 4 bytes per token, the coding agent's
+setting of that name and its default, so 20000 bytes by default, with no line
+limit and `retain: "head"`. A tool's `outputLimits` may only lower the bytes,
+add a line limit, or keep the end (`retain: "tail"`); a larger `maxBytes` is
+lowered to the setting. `api.outputLimits` gives the limits of the call, for a
+tool that cuts its own output to say where the rest is, as `read`, `bash`, and
+code mode do. Omitted `executionMode` follows the settings'
 `toolExecution`; one `sequential` call makes its whole round sequential
 (section 8.3).
 
@@ -4391,12 +4402,11 @@ data and journaled like other globals. The result's content is a
 `Script completed`/`Script failed` header with the wall time since
 `startedAt`, the text items (`==> text N/M <==` when there are several), the
 `console` lines in one `<console_output>` block, the returned value, and on
-failure the error with the calls already made. Text past 10000 estimated
-tokens keeps its start and end, the complete text written to a file
-(`details.fullOutputPath`); images are saved to files, their paths next to them.
-The Harness cuts a result past the tool's `outputLimits` (4 MiB, 100,000 lines)
-without such a file, so the text is also cut when it exceeds 1 Mi characters or
-the line limit. The files go to a temp
+failure the error with the calls already made. A result past the call's
+`outputLimits` has its text cut to its start and end in whole lines, within the
+limit together with a warning and the path of a file with the complete text
+(`details.fullOutputPath`), so the Harness, which cuts without such a file,
+never cuts it again; images are saved to files, their paths next to them. The files go to a temp
 directory of the environment that the run creates once and records in its run
 document (`outputDir`) before writing to it, under fixed names (`output.txt`,
 `image-<n>.<ext>`): a rerun after a crash overwrites them instead of adding new

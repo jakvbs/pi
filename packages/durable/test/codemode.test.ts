@@ -1014,9 +1014,9 @@ describe("durable code mode output and tool search", () => {
 		expect(text).toContain("<console_output>\nlog 1\n</console_output>");
 	});
 
-	it("cuts text past the token budget to its start and end, with the full text in a file", async () => {
+	it("cuts text past the tool output limit to its start and end, with the full text in a file", async () => {
 		const { text, message } = await runScript(`text("BEGIN" + "x".repeat(50000) + "END");`);
-		expect(text).toContain("Warning: truncated output");
+		expect(text).toContain("Warning: truncated output (original token count: 12502)");
 		expect(text).toContain("BEGIN");
 		expect(text).toContain("END");
 		const path = message.details?.fullOutputPath;
@@ -1024,17 +1024,23 @@ describe("durable code mode output and tool search", () => {
 		expect(await readFile(path!, "utf8")).toBe(`BEGIN${"x".repeat(50000)}END`);
 	});
 
-	it("keeps a result inside the tool's output limits, spilling the rest", async () => {
-		// 6 MiB of text: over the Harness's 4 MiB limit, which would cut it without a spill file.
-		const big = await runScript(`return "x".repeat(6 * 1024 * 1024);`);
-		expect(big.text).toContain("Warning: truncated output");
-		expect(big.text.length).toBeLessThanOrEqual(1024 * 1024 + 1000);
-		expect((await readFile(big.message.details!.fullOutputPath!, "utf8")).length).toBe(6 * 1024 * 1024);
-		// 200,000 short lines: within the byte limit, over the 100,000 lines one.
-		const long = await runScript(`return Array.from({ length: 200000 }, () => "a").join("\\n");`);
-		expect(long.text).toContain("Warning: truncated output");
-		expect(long.text.split("\n").length).toBeLessThan(100_000);
-		expect(long.message.details?.fullOutputPath).toBeDefined();
+	it("fits a cut result in the settings' toolOutputMaxTokens, so the Harness keeps its spill notice", async () => {
+		const chat = codemodeChat();
+		chat.setup.settings.toolOutputMaxTokens = 200;
+		const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+		const lines = Array.from({ length: 200 }, (_, index) => `line ${index} żółw`).join("\n");
+		const { text, message } = await runScript(
+			`text(${JSON.stringify(lines)}); image("data:image/png;base64,${png}");`,
+			chat,
+		);
+		expect(new TextEncoder().encode(text.replace("<image>", "")).length).toBeLessThanOrEqual(800);
+		expect(text).not.toContain("<harness>");
+		expect(text).toMatch(/^Script completed\nWall time [\d.]+ seconds\nOutput:\nWarning: truncated output/);
+		expect(text).toMatch(/\nline 0 żółw\n[\s\S]*…\d+ tokens truncated…line [\s\S]*line 199 żółw\n\n\[Full output: /);
+		expect(text).toMatch(/\[Image saved to \S+ \(image\/png, \d+ bytes\)\]<image>$/);
+		expect(await readFile(message.details!.fullOutputPath!, "utf8")).toBe(lines);
+		// Within the limit, nothing is cut.
+		expect((await runScript(`return "short";`, chat)).text).toMatch(/Output:\nshort$/);
 	});
 
 	it("writes the result's files to the same paths when it reruns after a crash", async () => {

@@ -2,7 +2,6 @@ import type { Context } from "@earendil-works/chord/context";
 import { bool, num, obj, opt, type Static, str } from "@earendil-works/pi-schema";
 import { defineTool } from "../harness/define.ts";
 import type { ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "../harness/types.ts";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "../truncate.ts";
 import { requireEnv } from "./env.ts";
 
 const MAX_TIMEOUT_SECONDS = 2_147_483_647 / 1000;
@@ -112,7 +111,8 @@ async function runCommand(
 				inheritEnv: execution.inheritEnv,
 				...(timeout === undefined ? {} : { timeout }),
 				onOutput: (text, _context, info) => api.output(text, info.skipped),
-				spill: { afterBytes: DEFAULT_MAX_BYTES, afterLines: DEFAULT_MAX_LINES },
+				// The same limits, so output that loses text to them is whole in the spill file.
+				spill: { afterBytes: api.outputLimits.maxBytes, afterLines: api.outputLimits.maxLines },
 				// An environment may then omit output outside the retained tail and report the omission.
 				...(api.outputWindow === undefined ? {} : { window: api.outputWindow }),
 			},
@@ -147,7 +147,7 @@ async function runCommand(
 
 /**
  * Runs a command through the environment's shell. Its output streams to `api.output()`, where the Harness keeps the
- * tail within the default limits; the result content is that retained output. The retained window goes to the
+ * tail within the tool output limit; the result content is that retained output. The retained window goes to the
  * environment, which may omit output outside it and report how much it omitted, so dropped counts stay exact. Output
  * beyond the limits is spilled to a file whose path is reported as a diagnostic. A nonzero exit is an error result with
  * the exit code; a timeout throws, which makes an error result that still carries the output and diagnostics.
@@ -155,7 +155,7 @@ async function runCommand(
 export function createBashTool(options?: BashToolOptions): ToolRegistration<typeof bashSchema> {
 	return defineTool({
 		name: "bash",
-		description: `Execute a bash command in the current working directory. Returns combined stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
+		description: `Execute a bash command in the current working directory. Returns combined stdout and stderr. Output past the tool output limit is cut to its end, and the full output is saved to a temp file. Optionally provide a timeout in seconds.`,
 		parameters: bashSchema,
 		structuredOutputSchema: shellStructuredOutputSchema,
 		outputLimits: { retain: "tail" },
@@ -179,7 +179,7 @@ export function createPowerShellTool(options?: PowerShellToolOptions): ToolRegis
 	const programs = options?.programs ?? ["pwsh", "powershell"];
 	return defineTool({
 		name: "powershell",
-		description: `Execute a PowerShell command in the current working directory. Returns combined stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
+		description: `Execute a PowerShell command in the current working directory. Returns combined stdout and stderr. Output past the tool output limit is cut to its end, and the full output is saved to a temp file. Optionally provide a timeout in seconds.`,
 		parameters: powershellSchema,
 		structuredOutputSchema: shellStructuredOutputSchema,
 		outputLimits: { retain: "tail" },

@@ -79,7 +79,7 @@ import {
 	MAX_CONCURRENT_MODEL_CALLS,
 	MODEL_CALLS,
 } from "./models.ts";
-import { DEFAULT_MAX_OUTPUT_TOKENS, formatResult, type OutputFile } from "./output.ts";
+import { formatResult, type OutputFile } from "./output.ts";
 
 /**
  * Version of everything in this module that turns stored results into what a script sees: result mapping, globals,
@@ -226,9 +226,6 @@ export type CodemodeToolOptions = {
 	readonly globals?: readonly CodemodeGlobal[];
 };
 
-/** Outputs bounded by the script's own token budget; the Harness's limits only stop a runaway. */
-const OUTPUT_LIMITS = { maxBytes: 4 * 1024 * 1024, maxLines: 100_000 } as const;
-
 /** Globals for finding tools, answered from the start data, so a replay sees what the first run saw. */
 const DISCOVERY_GLOBALS = ["searchTools", "describeTool", "describeNamespace"] as const;
 const DEFAULT_SEARCH_LIMIT = 8;
@@ -239,7 +236,6 @@ export function createCodemodeTool(options: CodemodeToolOptions): ToolRegistrati
 		name: CODEMODE_TOOL_NAME,
 		description: codemodeDescription(options.models !== false),
 		parameters: codemodeSchema,
-		outputLimits: OUTPUT_LIMITS,
 		// Capable models write the script as raw text instead of a JSON-escaped string; pi-ai applies it only for them.
 		constrainedSampling: { type: "grammar", variants: { openai_lark: CODEMODE_SOURCE_GRAMMAR } },
 		callers: ["model"],
@@ -552,9 +548,8 @@ class CodemodeCall {
 		const formatted = await formatResult(result, {
 			generatedImages: this.generatedImages,
 			wallMs: this.api.now() - this.start.startedAt,
-			maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
 			calls: details.calls,
-			limits: OUTPUT_LIMITS,
+			maxBytes: this.api.outputLimits.maxBytes,
 			write: this.outputFiles(),
 		});
 		const tool: ToolExecutionResult = {

@@ -22,8 +22,9 @@ type Action = (api: ToolExecutionApi) => void | Promise<void>;
  * Drive one tool call step by step and capture the exact Chord operations of every `pi.live` commit. Each `step()`
  * runs one action inside the tool and returns the operations of the commit it caused.
  */
-async function drive(outputLimits: ToolRegistration["outputLimits"] = {}) {
+async function drive(outputLimits: ToolRegistration["outputLimits"] = {}, toolOutputMaxTokens = 5000) {
 	const setup = chatSetup();
+	setup.settings.toolOutputMaxTokens = toolOutputMaxTokens;
 	const actions: ((api: ToolExecutionApi) => Promise<boolean>)[] = [];
 	let wake: (() => void) | undefined;
 	addTool(
@@ -210,7 +211,7 @@ describe("pi.live deltas", () => {
 
 	it("writes the whole window when Chord's overlap search cannot find the shared part", async () => {
 		// A retained window beyond the 64 KiB overlap scan.
-		const wide = await drive({ maxBytes: 100 * 1024, maxLines: 1_000_000, retain: "tail" });
+		const wide = await drive({ maxLines: 1_000_000, retain: "tail" }, (100 * 1024) / 4);
 		const line = (index: number) => `${String(index).padStart(10, "0")} ${"x".repeat(989)}\n`;
 		let text = "";
 		for (let index = 0; index < 100; index++) text += line(index);
