@@ -1530,6 +1530,11 @@ export class SessionManager {
 		return { messages, thinkingLevel, model };
 	}
 
+	/** The model and thinking level the current branch last recorded, without building its messages. */
+	getBranchModelSettings(): Pick<SessionContext, "thinkingLevel" | "model"> {
+		return getSessionContextSettings(this.getBranch());
+	}
+
 	/**
 	 * Get session header.
 	 */
