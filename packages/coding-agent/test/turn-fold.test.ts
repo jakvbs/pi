@@ -24,13 +24,15 @@ type ModeThis = Record<string, unknown> & { chatContainer: TranscriptContainer; 
 
 /** The parts of InteractiveMode that render a branch and handle run events, with the real methods. */
 function createMode(
-	options: { folding?: boolean; isStreaming?: boolean; showCacheMissNotices?: boolean } = {},
+	options: { folding?: boolean; isStreaming?: boolean; showCacheMissNotices?: boolean; view?: boolean } = {},
 ): ModeThis {
 	const chatContainer = new TranscriptContainer();
 	const prototype = InteractiveMode.prototype as unknown as Record<string, unknown>;
 	const mode: ModeThis = {
 		chatContainer,
 		turnFolds: new TurnFolds(chatContainer, options.folding ?? true, 1),
+		// A view only checks that it follows a file; it never reads it here.
+		options: { viewTail: options.view ? {} : undefined },
 		pendingTools: new Map<string, ToolExecutionComponent>(),
 		hideThinkingBlock: false,
 		hiddenThinkingLabel: "Thinking...",
@@ -74,6 +76,7 @@ function createMode(
 	for (const name of [
 		"renderSessionEntries",
 		"renderSessionItems",
+		"appendSessionEntries",
 		"addMessageToChat",
 		"renderMessage",
 		"getUserMessageText",
@@ -90,11 +93,21 @@ function createMode(
 }
 
 function renderBranch(mode: ModeThis, messages: AgentMessage[]): void {
-	let parentId: string | null = null;
-	const entries = messages.map((message, index): SessionEntry => {
+	(mode.renderSessionEntries as (this: ModeThis, entries: SessionEntry[]) => void).call(mode, toEntries(messages));
+}
+
+/** Show messages the writer added to a viewed file below the rows already shown. */
+function appendBranch(mode: ModeThis, messages: AgentMessage[], firstIndex: number): void {
+	const entries = toEntries(messages, firstIndex);
+	(mode.appendSessionEntries as (this: ModeThis, entries: SessionEntry[]) => void).call(mode, entries);
+}
+
+function toEntries(messages: AgentMessage[], firstIndex = 0): SessionEntry[] {
+	let parentId: string | null = firstIndex > 0 ? `entry-${firstIndex - 1}` : null;
+	return messages.map((message, offset): SessionEntry => {
 		const entry: SessionEntry = {
 			type: "message",
-			id: `entry-${index}`,
+			id: `entry-${firstIndex + offset}`,
 			parentId,
 			timestamp: new Date(START).toISOString(),
 			message,
@@ -102,7 +115,6 @@ function renderBranch(mode: ModeThis, messages: AgentMessage[]): void {
 		parentId = entry.id;
 		return entry;
 	});
-	(mode.renderSessionEntries as (this: ModeThis, entries: SessionEntry[]) => void).call(mode, entries);
 }
 
 async function emit(mode: ModeThis, event: AgentSessionEvent): Promise<void> {
@@ -586,6 +598,60 @@ describe("TurnFolds", () => {
 			"✓ bash ls",
 			"Error: overloaded",
 			"Error: Retry failed after 1 attempts: Retry cancelled",
+		]);
+	});
+});
+
+describe("TurnFolds in a read-only view", () => {
+	beforeAll(() => {
+		initTheme("dark");
+	});
+
+	/** A finished worker session: one task, its activity and the final reply. */
+	const WORKER_SESSION = RECORDED_BRANCH.slice(0, 6);
+
+	test("a finished one-turn worker session reads as task, one row and reply; a normal session keeps it open", () => {
+		const view = createMode({ view: true });
+		renderBranch(view, WORKER_SESSION);
+		expect(visibleLines(view)).toEqual(["fix the bug", "▸ 2 tools · 2 thinking · 1:40 · 1 error", "Fixed it."]);
+
+		expect(view.turnFolds.toggleLast()).toBe(true);
+		expect(visibleLines(view)).toContain("✗ bash npm test");
+
+		const normal = createMode();
+		renderBranch(normal, WORKER_SESSION);
+		expect(visibleLines(normal)).toEqual([
+			"fix the bug",
+			"look at the file",
+			"✓ read src/a.ts",
+			"running the tests",
+			"✗ bash npm test",
+			"the test needs a fix",
+			"Fixed it.",
+		]);
+	});
+
+	test("a retry the writer appends after a failed reply folds into a row of its own", () => {
+		const mode = createMode({ view: true });
+		const failedRun: AgentMessage[] = [
+			user("check", 0),
+			assistant([fauxToolCall("bash", { command: "ls" }, { id: "t1" })], 0, 1_000),
+			toolResult("t1", "ok", false),
+			assistant("", 2_000, 1_000, "error", "overloaded"),
+		];
+		renderBranch(mode, failedRun);
+		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 0:03", "Error: overloaded"]);
+
+		appendBranch(mode, [assistant([fauxToolCall("bash", { command: "pwd" }, { id: "t2" })], 10_000, 1_000)], 4);
+		expect(visibleLines(mode).slice(-1)).toEqual(["○ bash pwd"]);
+		appendBranch(mode, [toolResult("t2", "ok", false), assistant("Checked.", 12_000, 1_000, "stop")], 5);
+
+		expect(visibleLines(mode)).toEqual([
+			"check",
+			"▸ 1 tool · 0:03",
+			"Error: overloaded",
+			"▸ 1 tool · 0:03",
+			"Checked.",
 		]);
 	});
 });

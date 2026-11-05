@@ -36,7 +36,8 @@ interface FinishedTurn extends Turn {
  * Tracks the turns of a transcript and folds them when the owner acts. A turn starts after a row that opens it (a user
  * message, a `!` command, a compaction or branch-summary marker, an extension message after a finished reply). A
  * finished turn stays in full until {@link TurnFolds.end}, which the next user message or `!` command calls, so the
- * layout changes only on the owner's action. Its reply is the last assistant message whose stop reason is not
+ * layout changes only on the owner's action; a read-only view, which has no owner's actions, folds a turn as soon as
+ * its reply arrives ({@link TurnFolds.endAnswered}). Its reply is the last assistant message whose stop reason is not
  * `toolUse`; everything else the turn added folds into one row above the reply, except extension messages (notices
  * that stay visible in their place) and rows the reply is followed by that are not tool calls (notices about the reply).
  */
@@ -57,6 +58,29 @@ export class TurnFolds {
 	/** Open a turn after the transcript's current last row. */
 	start(startedAt: number): void {
 		this.openTurn = { after: this.lastRow(), startedAt };
+	}
+
+	/**
+	 * Open a turn at a row that continues a turn already folded without a row to open it, such as a retry after a
+	 * failed reply in a view. Does nothing while a turn is open.
+	 */
+	resume(startedAt: number): void {
+		if (!this.openTurn) this.start(startedAt);
+	}
+
+	/**
+	 * Fold every finished turn, and the open turn once its reply has arrived. A view calls this after each read of the
+	 * file, because it never gets the owner's next message that {@link end} waits for.
+	 */
+	endAnswered(): void {
+		const rows = this.openTurn ? this.rowsOf(this.openTurn, undefined) : undefined;
+		if (rows?.some(isReply)) {
+			this.end();
+			return;
+		}
+		const finished = this.finished;
+		this.finished = [];
+		for (const turn of finished.reverse()) this.fold(turn, turn.last);
 	}
 
 	/** Count the rows added since the open turn started as part of the row that opened it, such as its cost notice. */
