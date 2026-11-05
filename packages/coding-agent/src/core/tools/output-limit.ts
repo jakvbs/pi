@@ -1,13 +1,14 @@
 /**
- * The one limit on tool output the model sees: the `toolOutputMaxTokens` setting. Longer output
- * keeps its start, and a notice names the file with the whole output and the line to continue from,
- * so the model can read or grep the rest on demand. The session limits every tool result. Tools
+ * The one limit on text that enters the model's context without a person writing it: the
+ * `toolOutputMaxTokens` setting. Longer output keeps its start, and a notice names the file with
+ * the whole output and the line to continue from, so the model can read or grep the rest on
+ * demand. The session limits every tool result, `!` command output, and extension message. Tools
  * that can name a better file, such as `read` naming the file it read, limit their output
  * themselves, notice included, so the session leaves it as it is.
  */
 
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import { writeOutputFile } from "../../utils/output-files.ts";
+import { writeOutputFileSync } from "../../utils/output-files.ts";
 import { cutHead, headOf, type OutputHead } from "./output-head.ts";
 import { formatSize, type TruncationResult } from "./truncate.ts";
 
@@ -68,26 +69,39 @@ function splitOutput(
 ): { head: string; notice?: string; truncation: TruncationResult } {
 	const whole = cutHead(output, maxBytes);
 	if (!whole.truncated) return { head: output.text, truncation: whole };
+	const kept = headWithin(output, Math.max(0, maxBytes - longestNoticeBytes(location, maxBytes) - "\n\n".length));
+	const notice = formatNotice(
+		location,
+		{
+			lastLine: location.firstLine + Math.max(kept.truncation.outputLines, 1) - 1,
+			partialLine: kept.truncation.firstLineExceedsLimit,
+		},
+		maxBytes,
+	);
+	return { head: kept.text, notice, truncation: kept.truncation };
+}
+
+/** The longest notice {@link formatNotice} can write for `location`, in bytes. */
+function longestNoticeBytes(location: OutputLocation, maxBytes: number): number {
 	const lastPossibleLine = location.firstLine + location.totalLines - 1;
-	const longestNotice = Math.max(
+	return Math.max(
 		...[true, false].map((partialLine) =>
 			Buffer.byteLength(formatNotice(location, { lastLine: lastPossibleLine, partialLine }, maxBytes), "utf-8"),
 		),
 	);
-	const truncation = cutHead(output, Math.max(0, maxBytes - longestNotice - "\n\n".length));
-	const head = truncation.firstLineExceedsLimit
+}
+
+/**
+ * The start of the output within `maxBytes`: whole lines, or the start of the first line when it
+ * alone is longer. `maxBytes` must not exceed the budget the head was collected for.
+ */
+export function headWithin(output: OutputHead, maxBytes: number): { text: string; truncation: TruncationResult } {
+	const truncation = cutHead(output, maxBytes);
+	const text = truncation.firstLineExceedsLimit
 		? // Streaming decode drops an incomplete trailing character instead of emitting a replacement.
 			new TextDecoder().decode(Buffer.from(output.text, "utf-8").subarray(0, truncation.maxBytes), { stream: true })
 		: truncation.content;
-	const notice = formatNotice(
-		location,
-		{
-			lastLine: location.firstLine + Math.max(truncation.outputLines, 1) - 1,
-			partialLine: truncation.firstLineExceedsLimit,
-		},
-		maxBytes,
-	);
-	return { head, notice, truncation };
+	return { text, truncation };
 }
 
 function formatNotice(
@@ -108,13 +122,13 @@ function formatNotice(
  * cut where the limit falls, later text blocks are dropped, and the notice follows the last text
  * kept. Images stay where they are. Returns `content` itself when the text fits.
  */
-export async function limitToolResultText(
+export function limitContextText(
 	content: (TextContent | ImageContent)[],
 	maxBytes: number,
-): Promise<(TextContent | ImageContent)[]> {
+): (TextContent | ImageContent)[] {
 	const text = content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
 	if (Buffer.byteLength(text, "utf-8") <= maxBytes) return content;
-	const path = await writeOutputFile("pi-tool-output", ".txt", text);
+	const path = writeOutputFileSync("pi-tool-output", ".txt", text);
 	const output = headOf(text, maxBytes);
 	const { head, notice } = splitOutput(output, maxBytes, { path, firstLine: 1, totalLines: output.totalLines });
 	const limited: (TextContent | ImageContent)[] = [];

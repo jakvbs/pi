@@ -7,9 +7,12 @@
  */
 
 import { splitIncompleteAnsiSuffix, stripAnsi } from "../utils/ansi.ts";
+import { writeOutputFileSync } from "../utils/output-files.ts";
 import { sanitizeBinaryOutput } from "../utils/shell.ts";
 import type { BashOperations } from "./tools/bash.ts";
 import { OutputAccumulator } from "./tools/output-accumulator.ts";
+import { headOf } from "./tools/output-head.ts";
+import { headWithin, toolOutputBudgetBytes } from "./tools/output-limit.ts";
 
 // ============================================================================
 // Types
@@ -20,10 +23,15 @@ export interface BashExecutorOptions {
 	onChunk?: (chunk: string) => void;
 	/** AbortSignal for cancellation */
 	signal?: AbortSignal;
+	/**
+	 * Bytes of output to keep, from its start; longer output is saved whole to `fullOutputPath`.
+	 * Default: the default `toolOutputMaxTokens` budget, less room for the notice.
+	 */
+	maxBytes?: number;
 }
 
 export interface BashResult {
-	/** Combined stdout + stderr output (sanitized, possibly truncated) */
+	/** Combined stdout + stderr output (sanitized), possibly cut to its start */
 	output: string;
 	/** Process exit code (undefined if killed/cancelled) */
 	exitCode: number | undefined;
@@ -49,7 +57,9 @@ export async function executeBashWithOperations(
 	operations: BashOperations,
 	options?: BashExecutorOptions,
 ): Promise<BashResult> {
-	const output = new OutputAccumulator({ tempFilePrefix: "pi-bash" });
+	const maxBytes = options?.maxBytes ?? toolOutputBudgetBytes();
+	// Lines are not limited, so output within `maxBytes` is never saved to a file.
+	const output = new OutputAccumulator({ maxBytes, maxLines: Number.MAX_SAFE_INTEGER, tempFilePrefix: "pi-bash" });
 	const decoder = new TextDecoder();
 	// Unfinished escape sequence at the end of the previous chunk, completed by the next chunk.
 	let pendingAnsi = "";
@@ -88,14 +98,30 @@ export async function executeBashWithOperations(
 	}
 
 	flushOutput();
-	const { content, truncation, fullOutputPath } = await output.close();
+	const { fullOutputPath } = await output.close();
+	const { text, truncation } = headWithin(output.head(), maxBytes);
 	const cancelled = options?.signal?.aborted ?? false;
 
 	return {
-		output: content,
+		output: text,
 		exitCode: cancelled ? undefined : (exitCode ?? undefined),
 		cancelled,
 		truncated: truncation.truncated,
 		fullOutputPath,
+	};
+}
+
+/**
+ * `result` with its output cut to its start within `maxBytes`, as {@link executeBashWithOperations}
+ * keeps it, for results an extension produced. Longer output is saved to a file first, unless
+ * `fullOutputPath` already holds the whole output.
+ */
+export function limitBashResult(result: BashResult, maxBytes: number): BashResult {
+	if (Buffer.byteLength(result.output, "utf-8") <= maxBytes) return result;
+	return {
+		...result,
+		output: headWithin(headOf(result.output, maxBytes), maxBytes).text,
+		truncated: true,
+		fullOutputPath: result.fullOutputPath ?? writeOutputFileSync("pi-bash", ".log", result.output),
 	};
 }

@@ -846,13 +846,23 @@ describe("Coding Agent Tools", () => {
 			expect(readFileSync(fullOutputPath!, "utf-8")).toBe(SEQ_3000);
 		});
 
-		it("executeBash should persist full output when truncation happens by line count only", async () => {
+		it("executeBash keeps output within its byte budget whole, however many lines it has", async () => {
 			const result = await executeBashWithOperations("seq 3000", process.cwd(), createLocalBashOperations());
-			const fullOutputPath = result.fullOutputPath;
 
+			expect(result.output).toBe(SEQ_3000);
+			expect(result.truncated).toBe(false);
+			expect(result.fullOutputPath).toBeUndefined();
+		});
+
+		it("executeBash keeps the start of longer output and saves all of it", async () => {
+			const result = await executeBashWithOperations("seq 3000", process.cwd(), createLocalBashOperations(), {
+				maxBytes: 100,
+			});
+
+			// Lines 1-36 take 98 bytes with the line breaks between them.
+			expect(result.output).toBe(Array.from({ length: 36 }, (_, i) => i + 1).join("\n"));
 			expect(result.truncated).toBe(true);
-			expect(fullOutputPath).toBeDefined();
-			expect(readFileSync(fullOutputPath!, "utf-8")).toBe(SEQ_3000);
+			expect(readFileSync(result.fullOutputPath!, "utf-8")).toBe(SEQ_3000);
 		});
 	});
 

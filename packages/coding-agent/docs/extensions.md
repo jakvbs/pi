@@ -1626,7 +1626,7 @@ pi.registerTool({
 
 ### pi.sendMessage(message, options?)
 
-Inject a custom message into the session. Custom messages participate in LLM context. For durable TUI-only content that should not be sent to the LLM, use [`pi.appendEntry()`](#piappendentrycustomtype-data) with [`pi.registerEntryRenderer()`](#piregisterentryrenderercustomtype-renderer).
+Inject a custom message into the session. Custom messages participate in LLM context, with their text limited like a tool result's to the [`toolOutputMaxTokens`](settings.md#tools) setting: longer text keeps its start, and a notice names a temporary file with all of it. The same limit applies to messages from `before_agent_start` and boundary entries. For durable TUI-only content that should not be sent to the LLM, use [`pi.appendEntry()`](#piappendentrycustomtype-data) with [`pi.registerEntryRenderer()`](#piregisterentryrenderercustomtype-renderer).
 
 ```typescript
 pi.sendMessage({

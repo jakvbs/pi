@@ -6,7 +6,7 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { createWriteStream, type WriteStream } from "node:fs";
+import { createWriteStream, type WriteStream, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +24,13 @@ export async function writeOutputFile(prefix: string, extension: string, data: s
 	const path = createOutputFilePath(prefix, extension);
 	// `wx` never follows a link someone else placed at the path.
 	await writeFile(path, data, { mode: OUTPUT_FILE_MODE, flag: "wx" });
+	return path;
+}
+
+/** {@link writeOutputFile} for callers that must keep the order of messages they deliver. */
+export function writeOutputFileSync(prefix: string, extension: string, data: string | Uint8Array): string {
+	const path = createOutputFilePath(prefix, extension);
+	writeFileSync(path, data, { mode: OUTPUT_FILE_MODE, flag: "wx" });
 	return path;
 }
 

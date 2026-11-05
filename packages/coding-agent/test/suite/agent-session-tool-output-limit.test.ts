@@ -4,6 +4,8 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ToolResultMessage } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import type { BashExecutionMessage, CustomMessage } from "../../src/core/messages.ts";
+import { bashExecutionToText } from "../../src/core/messages.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const TINY_PNG_BASE64 =
@@ -73,5 +75,97 @@ describe("AgentSession tool output limit", () => {
 			{ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" },
 			{ type: "text", text: "end of report" },
 		]);
+	});
+});
+
+describe("AgentSession limit on other text no person wrote", () => {
+	const harnesses: Harness[] = [];
+
+	afterEach(() => {
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+	});
+
+	const textOf = (content: CustomMessage["content"]) =>
+		typeof content === "string"
+			? content
+			: content.map((block) => (block.type === "text" ? block.text : "")).join("");
+	/** The saved whole text, after checking that `text` keeps its start within 400 bytes and names the file. */
+	const savedText = (text: string) => {
+		expect(Buffer.byteLength(text)).toBeLessThanOrEqual(400);
+		const notice = text.match(
+			/\n\n\[Showing lines 1-(\d+) of 500 \(400B output limit\)\. Full output: (\S+)\. Use read/,
+		);
+		if (!notice) throw new Error(`Expected a notice in ${text}`);
+		expect(text.slice(0, notice.index)).toBe(lines(1, Number(notice[1])));
+		return readFileSync(notice[2]!, "utf-8");
+	};
+
+	it("limits extension messages whether sent, added before a run, or appended when it settles", async () => {
+		let settled = false;
+		const harness = await createHarness({
+			settings: { toolOutputMaxTokens: 100 },
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", () => ({
+						message: { customType: "started", content: lines(1, 500), display: false },
+					}));
+					pi.on("agent_before_settle", () => {
+						if (settled) return undefined;
+						settled = true;
+						return {
+							entries: [
+								{ type: "custom_message", customType: "settled", content: lines(1, 500), display: false },
+							],
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.sendCustomMessage({ customType: "sent", content: lines(1, 500), display: false });
+		harness.setResponses([fauxAssistantMessage("done")]);
+		await harness.session.prompt("go");
+
+		const custom = harness.session.messages.filter((message): message is CustomMessage => message.role === "custom");
+		expect(custom.map((message) => message.customType)).toEqual(["sent", "started", "settled"]);
+		for (const message of custom) expect(savedText(textOf(message.content))).toBe(lines(1, 500));
+	});
+
+	it("leaves an extension message within the limit as it was sent", async () => {
+		const harness = await createHarness({ settings: { toolOutputMaxTokens: 100 } });
+		harnesses.push(harness);
+		await harness.session.sendCustomMessage({ customType: "sent", content: lines(1, 3), display: false });
+
+		const [message] = harness.session.messages;
+		expect(message).toMatchObject({ role: "custom", content: lines(1, 3) });
+	});
+
+	it("keeps the start of a ! command's output, saving the whole of it, within the limit", async () => {
+		// 200 tokens are 800 bytes, 400 of them for the output and 400 for the command and the notice.
+		const harness = await createHarness({ settings: { toolOutputMaxTokens: 200 } });
+		harnesses.push(harness);
+		const result = await harness.session.executeBash("seq 1 3000");
+
+		const [message] = harness.session.messages as BashExecutionMessage[];
+		expect(message).toMatchObject({ role: "bashExecution", output: result.output, truncated: true });
+		expect(Buffer.byteLength(result.output)).toBeLessThanOrEqual(400);
+		expect(result.output.startsWith("1\n2\n3\n")).toBe(true);
+		expect(readFileSync(result.fullOutputPath!, "utf-8")).toBe(`${lines(1, 3000).replace(/row /g, "")}\n`);
+		expect(Buffer.byteLength(bashExecutionToText(message!))).toBeLessThanOrEqual(800);
+	});
+
+	it("limits a ! command result an extension recorded, unless it stays out of the context", async () => {
+		const harness = await createHarness({ settings: { toolOutputMaxTokens: 200 } });
+		harnesses.push(harness);
+		const result = { output: lines(1, 500), exitCode: 0, cancelled: false, truncated: false };
+		harness.session.recordBashResult("remote", result);
+		harness.session.recordBashResult("remote", result, { excludeFromContext: true });
+
+		const [inContext, shownOnly] = harness.session.messages as BashExecutionMessage[];
+		expect(inContext!.output).toBe(lines(1, inContext!.output.split("\n").length));
+		expect(Buffer.byteLength(inContext!.output)).toBeLessThanOrEqual(400);
+		expect(inContext!.truncated).toBe(true);
+		expect(readFileSync(inContext!.fullOutputPath!, "utf-8")).toBe(lines(1, 500));
+		expect(shownOnly!.output).toBe(lines(1, 500));
 	});
 });
