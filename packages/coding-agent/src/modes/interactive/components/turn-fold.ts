@@ -20,34 +20,26 @@ export interface TurnSummary {
 	durationMs: number | undefined;
 }
 
-/** Where a turn's rows lie in the transcript: after its opening rows, up to its last row once it has finished. */
+/** Where a turn's rows lie in the transcript: after its opening rows, up to the end of the transcript. */
 interface Turn {
 	/** The last row of the opener; undefined when the turn opened at the top of the transcript. */
 	after: Component | undefined;
 	startedAt: number;
 }
 
-/** A finished turn that still shows in full, up to its last row. */
-interface FinishedTurn extends Turn {
-	last: Component;
-}
-
 /**
- * Tracks the turns of a transcript and folds them when the owner acts. A turn starts after a row that opens it (a user
- * message, a `!` command, a compaction or branch-summary marker, an extension message after a finished reply). A
- * finished turn stays in full until {@link TurnFolds.end}, which the next user message or `!` command calls, so the
- * layout changes only on the owner's action; a read-only view, which has no owner's actions, folds a turn as soon as
- * its reply arrives ({@link TurnFolds.endAnswered}). Its reply is the last assistant message whose stop reason is not
- * `toolUse`; everything else the turn added folds into one row above the reply, except extension messages (notices
- * that stay visible in their place) and rows the reply is followed by that are not tool calls (notices about the reply).
+ * Tracks the open turn of a transcript and folds it as soon as its reply arrives ({@link TurnFolds.end}). A turn starts
+ * after a row that opens it (a user message, a `!` command, a compaction or branch-summary marker, an extension message
+ * after a reply), or at an assistant message that follows a folded turn without such a row, such as an automatic retry
+ * after a failed reply. Its reply is the last assistant message whose stop reason is not `toolUse`; everything else the
+ * turn added folds into one row above the reply, except extension messages (notices that stay visible in their place)
+ * and rows the reply is followed by that are not tool calls (notices about the reply).
  */
 export class TurnFolds {
 	private readonly transcript: Container;
 	private folding: boolean;
 	private outputPad: number;
 	private openTurn: Turn | undefined;
-	/** Turns that finished since the owner last acted, oldest first; they fold with the open turn. */
-	private finished: FinishedTurn[] = [];
 
 	constructor(transcript: Container, folding: boolean, outputPad: number) {
 		this.transcript = transcript;
@@ -61,20 +53,11 @@ export class TurnFolds {
 	}
 
 	/**
-	 * Open a turn at a row that continues a turn already folded without a row to open it, such as a retry after a
-	 * failed reply in a view. Does nothing while a turn is open.
+	 * Open a turn at an assistant message that follows a folded turn without a row to open it, such as a retry after a
+	 * failed reply. Does nothing while a turn is open.
 	 */
 	resume(startedAt: number): void {
 		if (!this.openTurn) this.start(startedAt);
-	}
-
-	/**
-	 * Fold every finished turn, and the open turn once its reply has arrived. A view calls this at each reply, because
-	 * it never gets the owner's next message that {@link end} waits for.
-	 */
-	endAnswered(): void {
-		if (this.awaitsReply()) this.foldFinished();
-		else this.end();
 	}
 
 	/** Count the rows added since the open turn started as part of the row that opened it, such as its cost notice. */
@@ -84,47 +67,28 @@ export class TurnFolds {
 
 	/** Whether a turn is open and still waits for its reply, so a message from an extension belongs inside it. */
 	awaitsReply(): boolean {
-		const rows = this.openTurn ? this.rowsOf(this.openTurn, undefined) : undefined;
+		const rows = this.openTurn ? this.rowsOf(this.openTurn) : undefined;
 		return rows !== undefined && !rows.some(isReply);
 	}
 
-	/** Forget every turn without folding it, for a transcript that is about to be rebuilt. */
+	/** Forget the open turn without folding it, for a transcript that is about to be rebuilt. */
 	reset(): void {
-		this.openTurn = undefined;
-		this.finished = [];
-	}
-
-	/** Close the open turn without folding it, before a row that opens the next turn; it folds at the next {@link end}. */
-	finish(): void {
-		const turn = this.openTurn;
-		const last = this.lastRow();
-		// A turn without rows has nothing to fold.
-		if (turn && last && last !== turn.after) this.finished.push({ ...turn, last });
 		this.openTurn = undefined;
 	}
 
 	/**
-	 * Fold the open turn and every turn finished since the last call. A turn without tool calls and thinking keeps its
-	 * rows and gets no fold row.
+	 * Fold the open turn, at its reply or before a row that opens the next turn. A turn without tool calls and thinking
+	 * keeps its rows and gets no fold row.
 	 */
 	end(): void {
 		const open = this.openTurn;
 		this.openTurn = undefined;
-		// The latest first, so the rows of an earlier turn keep their place while a later one is spliced.
-		if (open) this.fold(open, undefined);
-		this.foldFinished();
+		if (open) this.fold(open);
 	}
 
-	/** Fold every turn finished since the last call, the latest first. */
-	private foldFinished(): void {
-		const finished = this.finished;
-		this.finished = [];
-		for (const turn of finished.reverse()) this.fold(turn, turn.last);
-	}
-
-	/** Replace the rows of one turn, up to `last` or the end of the transcript, with its fold row and visible rows. */
-	private fold(turn: Turn, last: Component | undefined): void {
-		const rows = this.rowsOf(turn, last);
+	/** Replace the rows of one turn with its fold row and visible rows. */
+	private fold(turn: Turn): void {
+		const rows = this.rowsOf(turn);
 		if (!rows) return;
 
 		const reply = rows.findLast(isReply);
@@ -152,17 +116,10 @@ export class TurnFolds {
 		this.transcript.children.splice(this.firstRowIndex(turn), rows.length, ...shown);
 	}
 
-	/**
-	 * The rows of a turn up to `last`, or to the end of the transcript without it; undefined when its opening row or
-	 * its last row was cleared since.
-	 */
-	private rowsOf(turn: Turn, last: Component | undefined): Component[] | undefined {
-		const children = this.transcript.children;
+	/** The rows of a turn, up to the end of the transcript; undefined when its opening row was cleared since. */
+	private rowsOf(turn: Turn): Component[] | undefined {
 		const from = this.firstRowIndex(turn);
-		if (from < 0) return undefined;
-		if (last === undefined) return children.slice(from);
-		const to = children.indexOf(last) + 1;
-		return to > from ? children.slice(from, to) : undefined;
+		return from < 0 ? undefined : this.transcript.children.slice(from);
 	}
 
 	/** The index of a turn's first row; -1 when its opening row was cleared. */

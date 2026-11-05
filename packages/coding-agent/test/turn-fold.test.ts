@@ -299,7 +299,7 @@ describe("TurnFolds", () => {
 		]);
 	});
 
-	test("a compaction folds the running turn's first part; the rest stays open after the run until the next message", async () => {
+	test("a compaction folds the running turn's first part; the rest folds at its reply", async () => {
 		const mode = createMode({ isStreaming: true });
 		renderBranch(mode, [
 			user("long task", 0),
@@ -308,88 +308,64 @@ describe("TurnFolds", () => {
 			{ role: "compactionSummary", summary: "summary", tokensBefore: 10, timestamp: START + 2_000 },
 			assistant([fauxToolCall("bash", { command: "pwd" }, { id: "t2" })], 3_000, 1_000),
 			toolResult("t2", "ok", false),
-			assistant("Done.", 5_000, 1_000, "stop"),
 		]);
 
 		const live = visibleLines(mode);
 		expect(live[1]).toBe("▸ 1 tool · 0:01");
 		expect(live).toContain("✓ bash pwd");
 
-		await emit(mode, { type: "agent_end", messages: [], willRetry: false });
-		expect(visibleLines(mode)).toEqual(live);
-
-		await emit(mode, { type: "message_start", message: user("next", 10_000) });
+		await respond(mode, assistant("Done.", 5_000, 1_000, "stop"));
 		const folded = visibleLines(mode);
 		expect(folded).not.toContain("✓ bash pwd");
-		expect(folded.slice(-3)).toEqual(["▸ 1 tool · 0:04", "Done.", "next"]);
+		expect(folded.slice(-2)).toEqual(["▸ 1 tool · 0:04", "Done."]);
 	});
 
-	test("a finished run keeps its turn open; the next user message folds it; a turn without tools or thinking gets no row", async () => {
+	test("a finished run folds its turn at the reply; a turn without tools or thinking gets no row", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
 		const mode = createMode();
-		const prompt = user("check", 0);
-		const call = assistant([fauxToolCall("bash", { command: "ls" }, { id: "t1" })], 1_000, 1_000);
-		const reply = assistant("All good.", 3_000, 2_000, "stop");
 
 		await emit(mode, { type: "agent_start" });
-		await emit(mode, { type: "message_start", message: prompt });
-		await emit(mode, { type: "message_end", message: prompt });
-		await emit(mode, { type: "message_start", message: call });
-		await emit(mode, { type: "message_end", message: call });
-		await emit(mode, { type: "tool_execution_start", toolCallId: "t1", toolName: "bash", args: { command: "ls" } });
-		await emit(mode, {
-			type: "tool_execution_end",
-			toolCallId: "t1",
-			toolName: "bash",
-			result: { content: [{ type: "text", text: "a.ts" }], details: undefined },
-			isError: false,
-		});
-		await emit(mode, { type: "message_start", message: reply });
-		await emit(mode, { type: "message_end", message: reply });
-		expect(visibleLines(mode)).toEqual(["check", "✓ bash ls", "All good."]);
-
+		await emit(mode, { type: "message_start", message: user("check", 0) });
+		await respond(mode, assistant([fauxToolCall("bash", { command: "ls" }, { id: "t1" })], 1_000, 1_000));
+		await runTool(mode, "t1", "ls", 2_500);
+		await respond(mode, assistant("All good.", 3_000, 2_000, "stop"));
+		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 0:05", "All good."]);
 		await emit(mode, { type: "agent_end", messages: [], willRetry: false });
-		expect(visibleLines(mode)).toEqual(["check", "✓ bash ls", "All good."]);
 
-		const plain = user("hi", 10_000);
-		const answer = assistant("Hello.", 11_000, 1_000, "stop");
 		await emit(mode, { type: "agent_start" });
-		await emit(mode, { type: "message_start", message: plain });
-		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 0:05", "All good.", "hi"]);
-		await emit(mode, { type: "message_start", message: answer });
-		await emit(mode, { type: "message_end", message: answer });
+		await emit(mode, { type: "message_start", message: user("hi", 10_000) });
+		await respond(mode, assistant("Hello.", 11_000, 1_000, "stop"));
 		await emit(mode, { type: "agent_end", messages: [], willRetry: false });
-		await emit(mode, { type: "message_start", message: user("bye", 20_000) });
-		expect(visibleLines(mode).slice(-3)).toEqual(["hi", "Hello.", "bye"]);
+		expect(visibleLines(mode).slice(-2)).toEqual(["hi", "Hello."]);
 	});
 
-	test("a run that ends for an automatic retry and its retry form one turn", async () => {
+	test("a failed reply folds its turn; the automatic retry is a turn of its own", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
 		const mode = createMode();
-		const prompt = user("check", 0);
-		const call = assistant([fauxToolCall("bash", { command: "ls" }, { id: "t1" })], 1_000, 1_000);
-		const failed = assistant("", 2_000, 1_000, "error", "overloaded");
-		const reply = assistant("All good.", 4_000, 1_000, "stop");
 
-		await emit(mode, { type: "message_start", message: prompt });
-		await emit(mode, { type: "message_start", message: call });
-		await emit(mode, { type: "message_end", message: call });
-		await emit(mode, { type: "tool_execution_start", toolCallId: "t1", toolName: "bash", args: { command: "ls" } });
-		await emit(mode, {
-			type: "tool_execution_end",
-			toolCallId: "t1",
-			toolName: "bash",
-			result: { content: [{ type: "text", text: "a.ts" }], details: undefined },
-			isError: true,
-		});
-		await emit(mode, { type: "message_start", message: failed });
-		await emit(mode, { type: "message_end", message: failed });
+		await emit(mode, { type: "agent_start" });
+		await emit(mode, { type: "message_start", message: user("check", 0) });
+		await respond(mode, assistant([fauxToolCall("bash", { command: "ls" }, { id: "t1" })], 1_000, 1_000));
+		await runTool(mode, "t1", "ls", 2_000, true);
+		await respond(mode, assistant("", 2_000, 1_000, "error", "overloaded"));
 		await emit(mode, { type: "agent_end", messages: [], willRetry: true });
-		expect(visibleLines(mode)).toEqual(["check", "✗ bash ls", "Error: overloaded"]);
+		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 0:03 · 1 error", "Error: overloaded"]);
 
-		await emit(mode, { type: "message_start", message: reply });
-		await emit(mode, { type: "message_end", message: reply });
+		await emit(mode, { type: "agent_start" });
+		await respond(
+			mode,
+			assistant([fauxThinking("try again"), fauxToolCall("bash", { command: "pwd" }, { id: "t2" })], 10_000, 1_000),
+		);
+		await runTool(mode, "t2", "pwd", 12_000);
+		await respond(mode, assistant("All good.", 12_000, 1_000, "stop"));
 		await emit(mode, { type: "agent_end", messages: [], willRetry: false });
-		await emit(mode, { type: "message_start", message: user("next", 10_000) });
-		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 0:05 · 1 error", "All good.", "next"]);
+		expect(visibleLines(mode)).toEqual([
+			"check",
+			"▸ 1 tool · 0:03 · 1 error",
+			"Error: overloaded",
+			"▸ 1 tool · 1 thinking · 0:03",
+			"All good.",
+		]);
 	});
 	afterEach(() => {
 		vi.useRealTimers();
@@ -420,7 +396,7 @@ describe("TurnFolds", () => {
 		expect(visibleLines(mode)).toEqual(["fetch it", "▸ 2 tools · 0:07", "[web]", "Content fetched", "Done.", "next"]);
 	});
 
-	test("an extension message after the reply leaves the turn open; its run is a turn of its own", async () => {
+	test("an extension message after the reply starts a turn of its own, which folds at its reply", async () => {
 		vi.useFakeTimers({ toFake: ["Date"] });
 		const mode = createMode();
 		const notice: AgentMessage = {
@@ -438,23 +414,11 @@ describe("TurnFolds", () => {
 		await respond(mode, assistant("Checked.", 2_000, 1_000, "stop"));
 		await emit(mode, { type: "agent_end", messages: [], willRetry: false });
 		await emit(mode, { type: "message_start", message: notice });
-		expect(visibleLines(mode)).toEqual(["check", "✓ bash ls", "Checked.", "[web]", "Content fetched"]);
+		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 0:03", "Checked.", "[web]", "Content fetched"]);
 
-		// The extension message starts a run; both turns stay in full until the owner's next message.
 		await emit(mode, { type: "agent_start" });
 		await respond(mode, assistant([fauxThinking("read it"), fauxText("It says hi.")], 6_000, 1_000, "stop"));
 		await emit(mode, { type: "agent_end", messages: [], willRetry: false });
-		expect(visibleLines(mode)).toEqual([
-			"check",
-			"✓ bash ls",
-			"Checked.",
-			"[web]",
-			"Content fetched",
-			"read it",
-			"It says hi.",
-		]);
-
-		await emit(mode, { type: "message_start", message: user("next", 10_000) });
 		expect(visibleLines(mode)).toEqual([
 			"check",
 			"▸ 1 tool · 0:03",
@@ -463,11 +427,10 @@ describe("TurnFolds", () => {
 			"Content fetched",
 			"▸ 1 thinking · 0:02",
 			"It says hi.",
-			"next",
 		]);
 	});
 
-	test("a ! command folds the turn before it", async () => {
+	test("a ! command shows below the folded turn", async () => {
 		vi.useFakeTimers({ toFake: ["Date"] });
 		const mode = createMode();
 
@@ -477,7 +440,6 @@ describe("TurnFolds", () => {
 		await runTool(mode, "t1", "ls", 2_000);
 		await respond(mode, assistant("Checked.", 2_000, 1_000, "stop"));
 		await emit(mode, { type: "agent_end", messages: [], willRetry: false });
-		expect(visibleLines(mode)).toContain("✓ bash ls");
 
 		await (mode.handleBashCommand as (this: ModeThis, command: string) => Promise<void>).call(mode, "git status");
 		const lines = visibleLines(mode);
@@ -485,15 +447,15 @@ describe("TurnFolds", () => {
 		expect(lines.join("\n")).toContain("$ git status");
 	});
 
-	test("a restored session folds every turn but the last, which a restored ! command folds", () => {
+	test("a restored session folds every turn, the last one too", () => {
 		const mode = createMode();
-		const lastTurn: AgentMessage[] = [
+		renderBranch(mode, [
+			...RECORDED_BRANCH,
 			user("run it", 300_000),
 			assistant([fauxToolCall("bash", { command: "npm run build" }, { id: "t3" })], 301_000, 1_000),
 			toolResult("t3", "built", false),
 			assistant("Built.", 303_000, 1_000, "stop"),
-		];
-		renderBranch(mode, [...RECORDED_BRANCH, ...lastTurn]);
+		]);
 
 		expect(visibleLines(mode)).toEqual([
 			"fix the bug",
@@ -502,25 +464,9 @@ describe("TurnFolds", () => {
 			"thanks",
 			"You are welcome.",
 			"run it",
-			"✓ bash npm run build",
+			"▸ 1 tool · 0:04",
 			"Built.",
 		]);
-
-		const withCommand = createMode();
-		renderBranch(withCommand, [
-			...RECORDED_BRANCH,
-			...lastTurn,
-			{
-				role: "bashExecution",
-				command: "git status",
-				output: "clean",
-				exitCode: 0,
-				cancelled: false,
-				truncated: false,
-				timestamp: START + 400_000,
-			},
-		]);
-		expect(visibleLines(withCommand).slice(5, 8)).toEqual(["run it", "▸ 1 tool · 0:04", "Built."]);
 	});
 
 	test("a steering message splits the run; the split part's duration runs to its last tool result", async () => {
@@ -579,27 +525,6 @@ describe("TurnFolds", () => {
 		expect(lines.slice(0, 3)).toEqual(["long task", "▸ 1 tool · 0:02", "[compaction]"]);
 		expect(lines.slice(-4)).toEqual(["Compaction: 1.2k tokens billed", "▸ 1 tool · 0:04", "Done.", "next"]);
 	});
-
-	test("a cancelled automatic retry leaves its turn open", async () => {
-		vi.useFakeTimers({ toFake: ["Date"] });
-		const mode = createMode();
-
-		await emit(mode, { type: "agent_start" });
-		await emit(mode, { type: "message_start", message: user("check", 0) });
-		await respond(mode, assistant([fauxToolCall("bash", { command: "ls" }, { id: "t1" })], 0, 1_000));
-		await runTool(mode, "t1", "ls", 2_000);
-		await respond(mode, assistant("", 2_000, 1_000, "error", "overloaded"));
-		await emit(mode, { type: "agent_end", messages: [], willRetry: true });
-		expect(visibleLines(mode)).toContain("✓ bash ls");
-
-		await emit(mode, { type: "auto_retry_end", success: false, attempt: 1, finalError: "Retry cancelled" });
-		expect(visibleLines(mode)).toEqual([
-			"check",
-			"✓ bash ls",
-			"Error: overloaded",
-			"Error: Retry failed after 1 attempts: Retry cancelled",
-		]);
-	});
 });
 
 describe("TurnFolds in a read-only view", () => {
@@ -610,25 +535,17 @@ describe("TurnFolds in a read-only view", () => {
 	/** A finished worker session: one task, its activity and the final reply. */
 	const WORKER_SESSION = RECORDED_BRANCH.slice(0, 6);
 
-	test("a finished one-turn worker session reads as task, one row and reply; a normal session keeps it open", () => {
+	test("a finished one-turn worker session reads as task, one row and reply, as in a normal session", () => {
 		const view = createMode({ view: true });
 		renderBranch(view, WORKER_SESSION);
 		expect(visibleLines(view)).toEqual(["fix the bug", "▸ 2 tools · 2 thinking · 1:40 · 1 error", "Fixed it."]);
 
-		expect(view.turnFolds.toggleLast()).toBe(true);
-		expect(visibleLines(view)).toContain("✗ bash npm test");
-
 		const normal = createMode();
 		renderBranch(normal, WORKER_SESSION);
-		expect(visibleLines(normal)).toEqual([
-			"fix the bug",
-			"look at the file",
-			"✓ read src/a.ts",
-			"running the tests",
-			"✗ bash npm test",
-			"the test needs a fix",
-			"Fixed it.",
-		]);
+		expect(visibleLines(normal)).toEqual(visibleLines(view));
+
+		expect(view.turnFolds.toggleLast()).toBe(true);
+		expect(visibleLines(view)).toContain("✗ bash npm test");
 	});
 
 	/** Rows after loading a file at once, and after following it while the writer adds one entry at a time. */
