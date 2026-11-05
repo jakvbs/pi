@@ -365,6 +365,8 @@ describe("InteractiveMode copy confirmation", () => {
 
 type RenderSessionEntriesContext = {
 	renderer: ReturnType<typeof createInteractiveTui>;
+	pendingTools: Map<string, unknown>;
+	turnFolds: { reset: () => void };
 	renderSessionItems: (items: unknown[]) => void;
 };
 
@@ -380,7 +382,12 @@ describe("InteractiveMode transcript rebuild", () => {
 			fullscreenCopyOnSelect: false,
 		});
 		ui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
-		const context: RenderSessionEntriesContext = { renderer: ui, renderSessionItems: vi.fn() };
+		const context: RenderSessionEntriesContext = {
+			renderer: ui,
+			pendingTools: new Map(),
+			turnFolds: { reset: vi.fn() },
+			renderSessionItems: vi.fn(),
+		};
 		const { renderSessionEntries } = InteractiveMode.prototype as unknown as {
 			renderSessionEntries(this: RenderSessionEntriesContext, entries: unknown[]): void;
 		};

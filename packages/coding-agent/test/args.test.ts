@@ -120,6 +120,11 @@ describe("parseArgs", () => {
 			expect(result.session).toBe("/path/to/session.jsonl");
 		});
 
+		test("parses --view", () => {
+			const result = parseArgs(["--view", "/path/to/sessions"]);
+			expect(result.view).toBe("/path/to/sessions");
+		});
+
 		test("parses --session-id", () => {
 			const result = parseArgs(["--session-id", "orchestrated-session"]);
 			expect(result.sessionId).toBe("orchestrated-session");

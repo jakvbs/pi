@@ -1,4 +1,11 @@
-import { Editor, type EditorOptions, type EditorTheme, type TUI, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	Editor,
+	type EditorOptions,
+	type EditorTheme,
+	type TUI,
+	truncateToWidth,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
 import type { StatusIndicator } from "./status-indicator.ts";
 
@@ -22,6 +29,11 @@ export class CustomEditor extends Editor {
 	public onPasteImage?: () => void;
 	/** Handler for extension-registered shortcuts. Returns true if handled. */
 	public onExtensionShortcut?: (data: string) => boolean;
+	/**
+	 * When set, the editor takes no text: it shows this line between its borders, and keys only run app
+	 * actions. A read-only session view uses it in place of the prompt.
+	 */
+	public readOnlyLine?: () => string;
 
 	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options?: CustomEditorOptions) {
 		super(tui, theme, options);
@@ -85,9 +97,23 @@ export class CustomEditor extends Editor {
 		this.actionHandlers.set(action, handler);
 	}
 
+	override render(width: number): string[] {
+		if (!this.readOnlyLine) return super.render(width);
+		return [
+			this.renderTopBorder(width, 0),
+			truncateToWidth(` ${this.readOnlyLine()}`, width),
+			this.renderBottomBorder(width, 0),
+		];
+	}
+
 	handleInput(data: string): void {
 		// Check extension-registered shortcuts first
 		if (this.onExtensionShortcut?.(data)) {
+			return;
+		}
+
+		if (this.readOnlyLine) {
+			this.handleReadOnlyInput(data);
 			return;
 		}
 
@@ -154,5 +180,23 @@ export class CustomEditor extends Editor {
 
 		// Pass to parent for editor handling
 		super.handleInput(data);
+	}
+
+	/** Run the app action bound to `data`, if any; text, Enter and editing keys do nothing. */
+	private handleReadOnlyInput(data: string): void {
+		if (this.keybindings.matches(data, "app.interrupt")) {
+			(this.onEscape ?? this.actionHandlers.get("app.interrupt"))?.();
+			return;
+		}
+		if (this.keybindings.matches(data, "app.exit")) {
+			(this.onCtrlD ?? this.actionHandlers.get("app.exit"))?.();
+			return;
+		}
+		for (const [action, handler] of this.actionHandlers) {
+			if (this.keybindings.matches(data, action)) {
+				handler();
+				return;
+			}
+		}
 	}
 }

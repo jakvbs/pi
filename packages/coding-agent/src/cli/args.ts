@@ -25,6 +25,8 @@ export interface Args {
 	name?: string;
 	noSession?: boolean;
 	session?: string;
+	/** Session file or directory to show read-only (`--view`). */
+	view?: string;
 	sessionId?: string;
 	fork?: string;
 	sessionDir?: string;
@@ -133,6 +135,8 @@ export function parseArgs(args: string[]): Args {
 			result.noSession = true;
 		} else if (arg === "--session" && i + 1 < args.length) {
 			result.session = args[++i];
+		} else if (arg === "--view" && i + 1 < args.length) {
+			result.view = args[++i];
 		} else if (arg === "--session-id" && i + 1 < args.length) {
 			result.sessionId = args[++i];
 		} else if (arg === "--fork" && i + 1 < args.length) {
@@ -308,6 +312,8 @@ ${chalk.bold("Options:")}
   --continue, -c                 Continue the most recent session for the current directory
   --resume, -r                   Pick a session to resume
   --session <path|id>            Open a session by file path or full/partial ID
+  --view <file|dir>              Show a session file read-only and follow it as it grows (a directory
+                                 means its newest .jsonl); loads no extensions and calls no model
   --session-id <id>              Use the current directory's existing session with the ID, creating it otherwise
   --fork <path|id>               Fork a session by file path or full/partial ID into the current directory
   --session-dir <dir>            Directory for session storage and lookup

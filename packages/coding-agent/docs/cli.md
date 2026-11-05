@@ -91,6 +91,8 @@ See [Sessions and Context](sessions.md) for resuming, forking, naming, and stori
   Opens the session selector and resumes the chosen session in its working directory. Press Tab to include sessions from other directories.
 - `--session <path|id>`<br>
   Opens a session by file path or full/partial ID, and resumes it in its working directory. If the ID only matches sessions stored for another directory, Pi offers to fork it into the current directory instead.
+- `--view <file|dir>`<br>
+  Shows a session read-only in the normal interface and follows the file as another Pi process appends to it. A directory means its newest `.jsonl` file; a missing file is waited for. The view takes no prompts and never writes the file; the editor line says so, and only exit, scrolling, turn folds, `Ctrl+O`, `Ctrl+T`, `Alt+H`, `Alt+O` and copy work. It loads no extensions, MCP servers, skills, prompt templates, context files or project-local files, does no startup network work, and needs no provider login. It cannot be combined with other session flags, `--name` or a prompt.
 - `--session-id <id>`<br>
   Opens the current directory's existing session with the ID, or creates it otherwise. IDs accept letters, numbers, `.`, `_`, and `-`.
 - `--fork <path|id>`<br>
