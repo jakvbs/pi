@@ -517,7 +517,6 @@ export class InteractiveMode {
 
 	// Streaming message tracking
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
-	private readonly entriesRenderedByBoundaryCompaction = new Set<string>();
 	private streamingMessage: AssistantMessage | undefined = undefined;
 
 	// Tool execution tracking: toolCallId -> component
@@ -3572,7 +3571,6 @@ export class InteractiveMode {
 				break;
 
 			case "entry_appended":
-				if (this.entriesRenderedByBoundaryCompaction.delete(event.entry.id)) break;
 				if (event.entry.type === "custom") {
 					this.addCustomEntryToChat(event.entry);
 					this.ui.requestRender();
@@ -3591,26 +3589,7 @@ export class InteractiveMode {
 					);
 					this.ui.requestRender();
 				} else if (event.entry.type === "compaction") {
-					const entries = this.sessionManager.buildContextEntries();
-					if (entries[0]?.id !== event.entry.id) break;
-					this.chatContainer.clear();
-					const branch = this.sessionManager.getBranch();
-					const compactionIndex = branch.findIndex((entry) => entry.id === event.entry.id);
-					const entriesAfterCompaction = new Set(branch.slice(compactionIndex + 1).map((entry) => entry.id));
-					const retainedEntries = entries.slice(1);
-					this.renderSessionEntries(retainedEntries.filter((entry) => !entriesAfterCompaction.has(entry.id)));
-					this.addMessageToChat(
-						createCompactionSummaryMessage(event.entry.summary, event.entry.tokensBefore, event.entry.timestamp),
-					);
-					if (event.entry.usage) {
-						this.addCompactionCostNotice({
-							type: "compaction_cost",
-							kind: "compaction",
-							usage: event.entry.usage,
-						});
-					}
-					this.renderSessionEntries(retainedEntries.filter((entry) => entriesAfterCompaction.has(entry.id)));
-					for (const entryId of entriesAfterCompaction) this.entriesRenderedByBoundaryCompaction.add(entryId);
+					this.addCompactionMarker(event.entry, event.entry.timestamp);
 					this.footer.invalidate();
 					this.ui.requestRender();
 				}
@@ -3843,27 +3822,7 @@ export class InteractiveMode {
 						this.showStatus("Auto-compaction cancelled");
 					}
 				} else if (event.result) {
-					const entries = this.sessionManager.buildContextEntries();
-					if (entries[0]?.type !== "compaction") {
-						throw new Error("Completed compaction is missing from the session context");
-					}
-					this.chatContainer.clear();
-					// The latest compaction is prepended for model context; append it below at its chronological position.
-					this.renderSessionEntries(entries.slice(1));
-					this.addMessageToChat(
-						createCompactionSummaryMessage(
-							event.result.summary,
-							event.result.tokensBefore,
-							new Date().toISOString(),
-						),
-					);
-					if (event.result.usage) {
-						this.addCompactionCostNotice({
-							type: "compaction_cost",
-							kind: "compaction",
-							usage: event.result.usage,
-						});
-					}
+					this.addCompactionMarker(event.result, new Date().toISOString());
 					this.footer.invalidate();
 				} else if (event.errorMessage) {
 					if (event.reason === "manual") {
@@ -4265,8 +4224,8 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Render session entries to chat. Used for initial load and rebuild after compaction.
-	 * @param entries Compaction-aware session entries to render
+	 * Render session entries to chat in their order. Used for initial load and rebuilds.
+	 * @param entries Session entries to render; compactions render as markers in place
 	 * @param options.updateFooter Update footer state
 	 * @param options.populateHistory Add user messages to editor history
 	 */
@@ -4307,6 +4266,20 @@ export class InteractiveMode {
 		this.cacheWarmingNotice = { component, total, note: entry.note };
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(component);
+	}
+
+	/**
+	 * Append a compaction marker and its billed usage below the transcript. The
+	 * transcript above it stays: compaction changes the model context, not the history shown.
+	 */
+	private addCompactionMarker(
+		compaction: { summary: string; tokensBefore: number; usage?: Usage },
+		timestamp: string,
+	): void {
+		this.addMessageToChat(createCompactionSummaryMessage(compaction.summary, compaction.tokensBefore, timestamp));
+		if (compaction.usage) {
+			this.addCompactionCostNotice({ type: "compaction_cost", kind: "compaction", usage: compaction.usage });
+		}
 	}
 
 	/**
@@ -4401,8 +4374,7 @@ export class InteractiveMode {
 	}
 
 	renderInitialMessages(): void {
-		const entries = this.sessionManager.buildContextEntries();
-		this.renderSessionEntries(entries, {
+		this.renderSessionEntries(this.sessionManager.getBranch(), {
 			updateFooter: true,
 			populateHistory: true,
 		});
@@ -4454,7 +4426,7 @@ export class InteractiveMode {
 
 	private rebuildChatFromMessages(): void {
 		this.chatContainer.clear();
-		this.renderSessionEntries(this.sessionManager.buildContextEntries());
+		this.renderSessionEntries(this.sessionManager.getBranch());
 	}
 
 	// =========================================================================

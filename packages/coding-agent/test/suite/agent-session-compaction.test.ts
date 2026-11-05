@@ -13,7 +13,7 @@ import {
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { estimateTokens } from "../../src/core/compaction/index.ts";
-import { createHarness, getUserTexts, type Harness } from "./harness.ts";
+import { createHarness, getMessageText, getUserTexts, type Harness } from "./harness.ts";
 
 type SessionWithCompactionInternals = {
 	_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<boolean>;
@@ -184,6 +184,43 @@ describe("AgentSession compaction characterization", () => {
 		expect(statsAfter.cost).toBe(statsBefore.cost + summaryUsage.cost.total);
 		expect(harness.session.messages[0]?.role).toBe("system");
 		expect(harness.session.messages[1]?.role).toBe("compactionSummary");
+	});
+
+	// The interactive transcript shows the whole branch after compaction; the request must still carry only the compacted context.
+	it("sends the summary and the kept messages, not the summarized history, after compaction", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "summary of one and two",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		const requests: string[][] = [];
+		const reply = (text: string) => (context: TranscriptContext) => {
+			requests.push(context.messages.map((message) => `${message.role}: ${getMessageText(message)}`));
+			return fauxAssistantMessage(text);
+		};
+		harness.setResponses([reply("reply one"), reply("reply two"), reply("reply three")]);
+
+		await harness.session.prompt("one");
+		await harness.session.prompt("two");
+		await harness.session.compact();
+		await harness.session.prompt("three");
+
+		expect(requests[2]).toEqual([
+			"system: ",
+			"user: The conversation history before this point was compacted into the following summary:\n\n<summary>\nsummary of one and two\n</summary>",
+			"assistant: reply two",
+			"user: three",
+		]);
 	});
 
 	it("checkpoints the replayed system state and folds summarized and retained system patches into it", async () => {
