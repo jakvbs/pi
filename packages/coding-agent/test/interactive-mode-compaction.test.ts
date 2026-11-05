@@ -1,7 +1,9 @@
-import type { Usage } from "@earendil-works/pi-ai";
-import { Container } from "@earendil-works/pi-tui";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { fauxAssistantMessage, type Usage } from "@earendil-works/pi-ai";
+import { Container, Text } from "@earendil-works/pi-tui";
 import { describe, expect, test, vi } from "vitest";
-import type { SessionEntry } from "../src/core/session-manager.ts";
+import type { AgentSessionEvent } from "../src/core/agent-session.ts";
+import { type SessionEntry, SessionManager } from "../src/core/session-manager.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
@@ -113,7 +115,79 @@ describe("InteractiveMode compaction events", () => {
 		expect(messageMeta.get(items[2])).toEqual({ id: "previous", timestamp: "2025-01-01T00:00:00Z" });
 	});
 
-	test("renders retained entries and appends the latest summary cost at the bottom", async () => {
+	test("renders the whole branch with each compaction as a marker in place", () => {
+		const usage: Usage = {
+			input: 1,
+			output: 2,
+			cacheRead: 3,
+			cacheWrite: 4,
+			totalTokens: 10,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		};
+		const sessionManager = SessionManager.inMemory();
+		const user = (text: string) => sessionManager.appendMessage({ role: "user", content: text, timestamp: 0 });
+		const reply = (text: string) =>
+			sessionManager.appendMessage({ ...fauxAssistantMessage(text), usage, timestamp: 0 });
+		user("one");
+		reply("reply one");
+		const keptByFirst = user("two");
+		reply("reply two");
+		sessionManager.appendCompaction("first summary", keptByFirst, 100, undefined, undefined, usage);
+		const keptBySecond = user("three");
+		reply("reply three");
+		sessionManager.appendCompaction("second summary", keptBySecond, 200);
+		user("four");
+		reply("reply four");
+
+		const rendered: string[] = [];
+		const text = (message: AgentMessage) =>
+			message.role === "user" || message.role === "assistant"
+				? typeof message.content === "string"
+					? message.content
+					: message.content.map((part) => (part.type === "text" ? part.text : "")).join("")
+				: "";
+		const fakeThis = {
+			sessionManager,
+			pendingTools: new Map(),
+			footer: { invalidate: vi.fn() },
+			settingsManager: { getShowCacheMissNotices: () => false },
+			ui: { requestRender: vi.fn() },
+			updateEditorBorderColor: vi.fn(),
+			renderProjectTrustWarningIfNeeded: vi.fn(),
+			showStatus: vi.fn(),
+			addMessageToChat: (message: AgentMessage) =>
+				rendered.push(
+					message.role === "compactionSummary"
+						? `marker: ${message.summary}`
+						: `${message.role}: ${text(message)}`,
+				),
+			addCompactionCostNotice: () => rendered.push("compaction cost"),
+			renderSessionEntries: Reflect.get(InteractiveMode.prototype, "renderSessionEntries"),
+			renderSessionItems: Reflect.get(InteractiveMode.prototype, "renderSessionItems"),
+		};
+		const renderInitialMessages = Reflect.get(InteractiveMode.prototype, "renderInitialMessages") as (
+			this: typeof fakeThis,
+		) => void;
+
+		renderInitialMessages.call(fakeThis);
+
+		expect(rendered).toEqual([
+			"user: one",
+			"assistant: reply one",
+			"user: two",
+			"assistant: reply two",
+			"marker: first summary",
+			"compaction cost",
+			"user: three",
+			"assistant: reply three",
+			"marker: second summary",
+			"user: four",
+			"assistant: reply four",
+		]);
+		expect(fakeThis.showStatus).toHaveBeenCalledWith("Session compacted 2 times");
+	});
+
+	test("appends the marker below the kept transcript when a compaction ends or is appended", async () => {
 		const usage: Usage = {
 			input: 10,
 			output: 20,
@@ -122,86 +196,63 @@ describe("InteractiveMode compaction events", () => {
 			totalTokens: 100,
 			cost: { input: 0.01, output: 0.02, cacheRead: 0.03, cacheWrite: 0.065, total: 0.125 },
 		};
-		const latestCompaction: SessionEntry = {
-			type: "compaction",
-			id: "latest",
-			parentId: "previous",
-			timestamp: "2025-01-02T00:00:00Z",
-			summary: "summary",
-			firstKeptEntryId: "kept",
-			tokensBefore: 123,
-			usage,
-		};
-		const previousCompaction: SessionEntry = {
-			type: "compaction",
-			id: "previous",
-			parentId: null,
-			timestamp: "2025-01-01T00:00:00Z",
-			summary: "previous summary",
-			firstKeptEntryId: "kept",
-			tokensBefore: 100,
-			usage,
-		};
+		initTheme("dark");
+		const chatContainer = new Container();
+		chatContainer.addChild(new Text("earlier message", 0, 0));
 		const fakeThis = {
 			isInitialized: true,
 			footer: { invalidate: vi.fn() },
 			programStatus: { handleEvent: vi.fn() },
 			autoCompactionEscapeHandler: undefined as (() => void) | undefined,
-			autoCompactionLoader: undefined,
 			defaultEditor: {},
-			statusContainer: { clear: vi.fn() },
-			chatContainer: { clear: vi.fn() },
-			sessionManager: { buildContextEntries: vi.fn().mockReturnValue([latestCompaction, previousCompaction]) },
-			renderSessionEntries: vi.fn(),
-			addMessageToChat: vi.fn(),
-			addCompactionCostNotice: vi.fn(),
-			showError: vi.fn(),
-			showStatus: vi.fn(),
+			chatContainer,
+			addMessageToChat: (message: AgentMessage) =>
+				chatContainer.addChild(
+					new Text(message.role === "compactionSummary" ? `marker: ${message.summary}` : message.role, 0, 0),
+				),
+			addCompactionMarker: Reflect.get(InteractiveMode.prototype, "addCompactionMarker"),
+			addCompactionCostNotice: Reflect.get(InteractiveMode.prototype, "addCompactionCostNotice"),
 			clearStatusIndicator: vi.fn(),
 			flushCompactionQueue: vi.fn().mockResolvedValue(undefined),
-			settingsManager: { getShowTerminalProgress: () => false },
+			settingsManager: { getShowTerminalProgress: () => false, getShowCacheMissNotices: () => true },
 			ui: { requestRender: vi.fn(), terminal: { setProgress: vi.fn() } },
 		};
-
 		const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (
 			this: typeof fakeThis,
-			event: {
-				type: "compaction_end";
-				reason: "manual" | "threshold" | "overflow";
-				result: { tokensBefore: number; summary: string; usage?: Usage } | undefined;
-				aborted: boolean;
-				willRetry: boolean;
-				errorMessage?: string;
-			},
+			event: AgentSessionEvent,
 		) => Promise<void>;
 
 		await handleEvent.call(fakeThis, {
 			type: "compaction_end",
 			reason: "manual",
-			result: {
-				tokensBefore: 123,
-				summary: "summary",
-				usage,
-			},
+			result: { summary: "manual summary", firstKeptEntryId: "kept", tokensBefore: 123, usage },
 			aborted: false,
 			willRetry: false,
 		});
-
-		expect(fakeThis.chatContainer.clear).toHaveBeenCalledTimes(1);
-		expect(fakeThis.renderSessionEntries).toHaveBeenCalledWith([previousCompaction]);
-		expect(fakeThis.addMessageToChat).toHaveBeenCalledTimes(1);
-		expect(fakeThis.addMessageToChat).toHaveBeenCalledWith(
-			expect.objectContaining({
-				role: "compactionSummary",
-				tokensBefore: 123,
-				summary: "summary",
-			}),
-		);
-		expect(fakeThis.addCompactionCostNotice).toHaveBeenCalledWith({
-			type: "compaction_cost",
-			kind: "compaction",
-			usage,
+		await handleEvent.call(fakeThis, {
+			type: "entry_appended",
+			entry: {
+				type: "compaction",
+				id: "boundary",
+				parentId: "kept",
+				timestamp: "2025-01-02T00:00:00Z",
+				summary: "boundary summary",
+				firstKeptEntryId: "kept",
+				tokensBefore: 456,
+			},
 		});
+
+		expect(
+			stripAnsi(chatContainer.render(120).join("\n"))
+				.split("\n")
+				.map((line) => line.trim())
+				.filter(Boolean),
+		).toEqual([
+			"earlier message",
+			"marker: manual summary",
+			"Compaction: 100 tokens billed (~$0.13)",
+			"marker: boundary summary",
+		]);
 		expect(fakeThis.flushCompactionQueue).toHaveBeenCalledWith({ willRetry: false });
 	});
 
