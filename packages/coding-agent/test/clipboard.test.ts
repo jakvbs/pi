@@ -1,3 +1,4 @@
+import type * as FsModule from "node:fs";
 import { existsSync, readFileSync } from "node:fs";
 import type * as OsModule from "node:os";
 import type { NativeClipboard } from "@earendil-works/pi-tui";
@@ -20,9 +21,19 @@ const mocks = vi.hoisted(() => ({
 			) => Promise<Buffer | undefined>
 		>(),
 	platform: vi.fn<() => NodeJS.Platform>(),
+	// The host kernel release, so WSL detection does not depend on the machine running the tests.
+	kernelRelease: "Linux version 6.8.0-generic",
 }));
 vi.mock("@earendil-works/pi-tui", () => ({ getNativeClipboard: mocks.getNativeClipboard }));
 vi.mock("../src/utils/clipboard-command.ts", () => ({ runClipboardCommand: mocks.command }));
+vi.mock("node:fs", async () => {
+	const actual = await vi.importActual<typeof FsModule>("node:fs");
+	return {
+		...actual,
+		readFileSync: (...args: Parameters<typeof actual.readFileSync>) =>
+			args[0] === "/proc/version" ? mocks.kernelRelease : actual.readFileSync(...args),
+	};
+});
 vi.mock("node:os", async () => ({
 	...(await vi.importActual<typeof OsModule>("node:os")),
 	platform: mocks.platform,
@@ -46,6 +57,7 @@ beforeEach(() => {
 	])
 		vi.stubEnv(name, "");
 	mocks.platform.mockReturnValue("darwin");
+	mocks.kernelRelease = "Linux version 6.8.0-generic";
 	mocks.getNativeClipboard.mockReturnValue(mocks.clipboard);
 	mocks.clipboard.getText.mockResolvedValue(null);
 	mocks.clipboard.setText.mockResolvedValue();
@@ -230,6 +242,16 @@ describe("copyToClipboard", () => {
 		const [, powershellArgs] = mocks.command.mock.calls[1]!;
 		expect(powershellArgs[2]).toContain("Set-Clipboard");
 		expect(powershellArgs[2]).toContain("'\\\\wsl.localhost\\Ubuntu\\tmp\\clip.txt'");
+		expect(osc52Writes).toHaveLength(0);
+	});
+	test("WSL without its environment variables is detected from the kernel release", async () => {
+		mocks.platform.mockReturnValue("linux");
+		mocks.kernelRelease = "Linux version 6.18.33.2-microsoft-standard-WSL2";
+		mocks.command.mockImplementation(async (name) =>
+			name === "wslpath" ? Buffer.from("C:\\clip.txt") : Buffer.alloc(0),
+		);
+		await copyToClipboard("hello");
+		expect(mocks.command.mock.calls.map(([name]) => name)).toEqual(["wslpath", "powershell.exe"]);
 		expect(osc52Writes).toHaveLength(0);
 	});
 	test("WSL falls back to OSC 52 when Windows interop is unavailable", async () => {
