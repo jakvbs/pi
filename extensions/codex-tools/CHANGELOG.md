@@ -6,6 +6,10 @@ This project follows the spirit of [Keep a Changelog](https://keepachangelog.com
 
 ## [Unreleased]
 
+### Fixed
+
+- Re-check `apply_patch` after `/tree` navigation and similar branch switches. Restoring a branch's tool loadout re-activated `apply_patch` for models without grammar-tool support, so they called it and got an error.
+
 ## [0.4.1] - 2026-10-30
 
 ### Changed

@@ -412,6 +412,28 @@ test("legacy model switches hide reactivated file tools and retain them for rest
   for (const name of ["edit", "write"]) assert.ok(!pi.tools.has(name));
 });
 
+test("tree navigation activates apply_patch only for a supported model", async (t) => {
+  const harness = await codexHarness([piCodexTools]);
+  try {
+    const { session, sessionManager } = harness;
+    const declaresPatch = async () => (await getDeclaredTools(t, harness)).some((tool) => tool.name === "apply_patch");
+    await session.setModel(unsupportedModel(harness.model));
+    assert.equal(await declaresPatch(), false);
+    const unsupportedPrompt = sessionManager.getBranch().findLast((entry) => entry.type === "message" && entry.message.role === "user");
+    await session.navigateTree(unsupportedPrompt.id, { summarize: false });
+    assert.ok(!session.getActiveToolNames().includes("apply_patch"));
+    assert.equal(await declaresPatch(), false);
+
+    // The target branch recorded no apply_patch, but the current model supports it.
+    await session.setModel(harness.model);
+    assert.equal(await declaresPatch(), true);
+    await session.navigateTree(unsupportedPrompt.id, { summarize: false });
+    assert.ok(session.getActiveToolNames().includes("apply_patch"));
+  } finally {
+    await harness.close();
+  }
+});
+
 test("explicit deactivation survives reload and model switches", async (t) => {
   const harness = await codexHarness([piCodexTools]);
   try {
