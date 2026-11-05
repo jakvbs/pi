@@ -564,6 +564,10 @@ function buildSessionOptions(
 	const diagnostics: AgentSessionRuntimeDiagnostic[] = [];
 	let cliThinkingFromModel = false;
 
+	if (parsed.view !== undefined) {
+		return { options, cliThinkingFromModel, diagnostics };
+	}
+
 	// Model from CLI
 	// - supports --provider <name> --model <pattern>
 	// - supports --model <provider>/<pattern>
@@ -929,7 +933,7 @@ export async function main(args: string[], options?: MainOptions) {
 			})),
 		];
 
-		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
+		const modelPatterns = sessionView ? undefined : (parsed.models ?? settingsManager.getEnabledModels());
 		const scopedModels =
 			modelPatterns && modelPatterns.length > 0
 				? await resolveModelScope(modelPatterns, modelRuntime, { signal: AbortSignal.timeout(15_000) })
@@ -947,7 +951,7 @@ export async function main(args: string[], options?: MainOptions) {
 		);
 		diagnostics.push(...sessionOptionDiagnostics);
 
-		if (parsed.apiKey) {
+		if (parsed.apiKey && !sessionView) {
 			if (!sessionOptions.model) {
 				diagnostics.push({
 					type: "error",
