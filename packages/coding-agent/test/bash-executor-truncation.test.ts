@@ -10,7 +10,7 @@ describe("user bash output truncation (#10164)", () => {
 		await Promise.all(tempFiles.splice(0).map((path) => rm(path, { force: true })));
 	});
 
-	// #10164: the retained tail can fit even though earlier output was discarded.
+	// #10164: output that was cut is reported as truncated, with the file that holds all of it.
 	it.each([false, true])("reports discarded chunks when cancelled=%s", async (cancelled) => {
 		const first = "error: missing build dependency\n".padEnd(64 * 1024, "x");
 		const last = "remaining build output\n".padEnd(44 * 1024, "y");
@@ -38,8 +38,8 @@ describe("user bash output truncation (#10164)", () => {
 		});
 
 		expect(result.cancelled).toBe(cancelled);
-		// The kept tail starts at a line boundary of the whole stream, and `first` has no trailing newline.
-		expect(result.output).toBe(last.slice(last.indexOf("\n") + 1));
+		// The start of the output in whole lines: the line of x's after the first one passes the limit.
+		expect(result.output).toBe("error: missing build dependency");
 		expect(result.truncated).toBe(true);
 		expect(
 			bashExecutionToText({ role: "bashExecution", command: "cat build.log", timestamp: 0, ...result }),

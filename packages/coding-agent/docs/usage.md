@@ -73,7 +73,7 @@ Prefix a command with `!` to run it and include its output in the conversation:
 !git status
 ```
 
-Use `!!` when you want to run a command without sending its output to the model.
+Use `!!` when you want to run a command without sending its output to the model. The model gets the start of a long `!` output within the [`toolOutputMaxTokens`](settings.md#tools) setting, as for a tool result, and the path of a file with all of it.
 
 ## Copy, export, or share results
 

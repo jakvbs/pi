@@ -22,6 +22,7 @@
 
 ### Changed
 
+- The `toolOutputMaxTokens` limit now covers all text that enters the model's context without a person writing it, not only tool results: `!` command output, and extension messages from `pi.sendMessage()`, `before_agent_start` and boundary entries. A `!` command now keeps the start of its output within that limit instead of the last 2000 lines or 50KB, with the whole output saved to a file as before. `executeBashWithOperations()` takes a `maxBytes` option. Prompts, `pi.sendUserMessage()`, included skills, templates and files, context files, and compaction summaries are not limited.
 - The default model for the `anthropic` provider is now Claude Opus 5.5 (`claude-opus-5-5`) instead of Claude Opus 4.8
 - Default models moved to newer models at the same or a lower price: `amazon-bedrock` Claude Opus 5.5, `azure` GPT-6.1 Sol, `google` and `google-vertex` Gemini 4 Argon, `vercel-ai-gateway` GLM 5.3, `baseten` GLM 5.3, `minimax` and `minimax-cn` MiniMax-M3, `qwen-token-plan` and `qwen-token-plan-cn` Qwen3.8 Max, `opencode-go` Kimi K3.1 Pro, and Kimi K2.7 Code instead of Kimi K2.6 for `moonshotai`, `moonshotai-cn`, `huggingface`, `opencode`, `openrouter`, `cloudflare-workers-ai` and `cloudflare-ai-gateway`
 - Consecutive cache warms now show as one `Cache warmed: $<total>` line with the cumulative cost instead of one line per warm

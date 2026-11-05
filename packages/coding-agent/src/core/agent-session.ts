@@ -63,7 +63,7 @@ import { processImage } from "../utils/image-process.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
-import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
+import { type BashResult, executeBashWithOperations, limitBashResult } from "./bash-executor.ts";
 import { generateBugReportSummary } from "./bug-report.ts";
 import type { CacheWarmer, CacheWarmingStatus } from "./cache-warmer.ts";
 import {
@@ -149,7 +149,7 @@ import {
 } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
-import { limitToolResultText, toolOutputMaxBytes } from "./tools/output-limit.ts";
+import { limitContextText, toolOutputBudgetBytes, toolOutputMaxBytes } from "./tools/output-limit.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, combineUsage, createUsageTotals } from "./usage-totals.ts";
 import {
@@ -752,10 +752,7 @@ export class AgentSession {
 		// Results of nested calls go to the calling tool, not the model; the calling tool's result is limited.
 		const normalizedContent =
 			parentToolCallId === undefined
-				? await limitToolResultText(
-						imagesNormalized,
-						toolOutputMaxBytes(this.settingsManager.getToolOutputMaxTokens()),
-					)
+				? limitContextText(imagesNormalized, this._contextTextMaxBytes())
 				: imagesNormalized;
 
 		if (!hookResult && normalizedContent === content) {
@@ -1071,7 +1068,10 @@ export class AgentSession {
 	}
 
 	private _commitBoundaryDrafts(drafts: SessionBoundaryDraft[]): void {
-		const appended = this._applyBoundaryDrafts(this.sessionManager, drafts);
+		const limited = drafts.map((draft) =>
+			draft.type === "custom_message" ? { ...draft, content: this._limitExtensionContent(draft.content) } : draft,
+		);
+		const appended = this._applyBoundaryDrafts(this.sessionManager, limited);
 		this._refreshFinalizedContext();
 		for (const entry of appended) this._emit({ type: "entry_appended", entry });
 	}
@@ -2022,7 +2022,7 @@ export class AgentSession {
 				role: "custom",
 				customType: msg.customType,
 				// Untyped extensions can pass null/missing content; normalize at ingestion.
-				content: msg.content ?? [],
+				content: this._limitExtensionContent(msg.content ?? []),
 				display: msg.display,
 				details: msg.details,
 				timestamp: Date.now(),
@@ -2453,7 +2453,7 @@ export class AgentSession {
 			role: "custom" as const,
 			customType: message.customType,
 			// Untyped extensions can pass null/missing content; normalize at ingestion.
-			content: message.content ?? [],
+			content: this._limitExtensionContent(message.content ?? []),
 			display: message.display,
 			details: message.details,
 			timestamp: Date.now(),
@@ -2481,6 +2481,23 @@ export class AgentSession {
 		} else {
 			this._appendCustomMessage(appMessage);
 		}
+	}
+
+	/**
+	 * The byte limit on text that enters the context without a person writing it: tool results, `!`
+	 * command output, and extension messages. What a person writes (prompts, `pi.sendUserMessage()`,
+	 * the skills, templates and files they include, context files) is theirs to size, and compaction
+	 * summaries are bounded by the compaction settings.
+	 */
+	private _contextTextMaxBytes(): number {
+		return toolOutputMaxBytes(this.settingsManager.getToolOutputMaxTokens());
+	}
+
+	/** An extension message's content within {@link _contextTextMaxBytes}, as a tool result's text. */
+	private _limitExtensionContent(content: CustomMessage["content"]): CustomMessage["content"] {
+		const blocks = typeof content === "string" ? [{ type: "text" as const, text: content }] : content;
+		const limited = limitContextText(blocks, this._contextTextMaxBytes());
+		return limited === blocks ? content : limited;
 	}
 
 	private _appendCustomMessage(appMessage: CustomMessage): void {
@@ -4012,6 +4029,7 @@ export class AgentSession {
 				this.sessionManager.getCwd(),
 				options?.operations ?? createLocalBashOperations({ shellPath }),
 				{
+					maxBytes: this._bashOutputMaxBytes(),
 					onChunk: (delta) => {
 						onChunk?.(delta);
 						this._emit({ type: "bash_execution_update", id: options?.id, delta });
@@ -4032,14 +4050,16 @@ export class AgentSession {
 	 * Used by executeBash and by extensions that handle bash execution themselves.
 	 */
 	recordBashResult(command: string, result: BashResult, options?: { excludeFromContext?: boolean }): void {
+		// Output kept out of the context (`!!`) is only shown, so it stays as it was given.
+		const kept = options?.excludeFromContext ? result : limitBashResult(result, this._bashOutputMaxBytes());
 		const bashMessage: BashExecutionMessage = {
 			role: "bashExecution",
 			command,
-			output: result.output,
-			exitCode: result.exitCode,
-			cancelled: result.cancelled,
-			truncated: result.truncated,
-			fullOutputPath: result.fullOutputPath,
+			output: kept.output,
+			exitCode: kept.exitCode,
+			cancelled: kept.cancelled,
+			truncated: kept.truncated,
+			fullOutputPath: kept.fullOutputPath,
 			timestamp: Date.now(),
 			excludeFromContext: options?.excludeFromContext,
 		};
@@ -4052,6 +4072,11 @@ export class AgentSession {
 			this.sessionManager.appendMessage(bashMessage);
 			this._refreshFinalizedContext();
 		}
+	}
+
+	/** The output a `!` command keeps, within {@link _contextTextMaxBytes} with its command line and notice. */
+	private _bashOutputMaxBytes(): number {
+		return toolOutputBudgetBytes(this.settingsManager.getToolOutputMaxTokens());
 	}
 
 	/**
