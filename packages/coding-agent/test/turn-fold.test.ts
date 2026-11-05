@@ -11,6 +11,7 @@ import type { TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
 import type { SessionEntry } from "../src/core/session-manager.ts";
+import { TURN_HANDOFF_ENTRY_TYPE } from "../src/core/turn-handoff.ts";
 import type { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { TranscriptContainer } from "../src/modes/interactive/components/tool-execution.ts";
 import { TurnFolds } from "../src/modes/interactive/components/turn-fold.ts";
@@ -86,13 +87,14 @@ function createMode(
 		"showError",
 		"handleBashCommand",
 		"addBashComponentToChat",
+		"addCustomEntryToChat",
 	]) {
 		mode[name] = prototype[name];
 	}
 	return mode;
 }
 
-function renderBranch(mode: ModeThis, messages: AgentMessage[]): void {
+function renderBranch(mode: ModeThis, messages: BranchItem[]): void {
 	(mode.renderSessionEntries as (this: ModeThis, entries: SessionEntry[]) => void).call(mode, toEntries(messages));
 }
 
@@ -102,20 +104,37 @@ function appendBranch(mode: ModeThis, messages: AgentMessage[], firstIndex: numb
 	(mode.appendSessionEntries as (this: ModeThis, entries: SessionEntry[]) => void).call(mode, entries);
 }
 
-function toEntries(messages: AgentMessage[], firstIndex = 0): SessionEntry[] {
+/** A message, or the data of a turn handoff entry an extension appended. */
+type BranchItem = AgentMessage | { handoff: unknown };
+
+function toEntries(items: BranchItem[], firstIndex = 0): SessionEntry[] {
 	let parentId: string | null = firstIndex > 0 ? `entry-${firstIndex - 1}` : null;
-	return messages.map((message, offset): SessionEntry => {
-		const entry: SessionEntry = {
-			type: "message",
-			id: `entry-${firstIndex + offset}`,
-			parentId,
-			timestamp: new Date(START).toISOString(),
-			message,
-		};
+	return items.map((item, offset): SessionEntry => {
+		const base = { id: `entry-${firstIndex + offset}`, parentId, timestamp: new Date(START).toISOString() };
+		const entry: SessionEntry =
+			"handoff" in item
+				? { ...base, type: "custom", customType: TURN_HANDOFF_ENTRY_TYPE, data: item.handoff }
+				: { ...base, type: "message", message: item };
 		parentId = entry.id;
 		return entry;
 	});
 }
+
+/** Append a turn handoff entry while the session runs, as `pi.appendEntry` does. */
+async function appendHandoff(mode: ModeThis, handoff: unknown): Promise<void> {
+	const entry: SessionEntry = {
+		type: "custom",
+		customType: TURN_HANDOFF_ENTRY_TYPE,
+		data: handoff,
+		id: "handoff",
+		parentId: null,
+		timestamp: new Date(START).toISOString(),
+	};
+	await emit(mode, { type: "entry_appended", entry });
+}
+
+const RUNNING = { kind: "running", goal: "Fix the login bug.", done: "Read src/auth.ts.", next: "Run the tests." };
+const FINISHED = { kind: "finished", summary: "Fixed the token check in src/auth.ts; the tests pass." };
 
 async function emit(mode: ModeThis, event: AgentSessionEvent): Promise<void> {
 	await (mode.handleEvent as (this: ModeThis, event: AgentSessionEvent) => Promise<void>).call(mode, event);
@@ -582,6 +601,94 @@ describe("TurnFolds", () => {
 		const lines = visibleLines(mode);
 		expect(lines.slice(0, 3)).toEqual(["long task", "▸ 1 tool · 0:02", "[compaction]"]);
 		expect(lines.slice(-4)).toEqual(["Compaction: 1.2k tokens billed", "▸ 1 tool · 0:04", "Done.", "next"]);
+	});
+});
+
+describe("Turn handoffs", () => {
+	beforeAll(() => {
+		initTheme("dark");
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	test("a running handoff shows in three lines below the running turn's row; the reply removes it", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		const mode = createMode();
+
+		await emit(mode, { type: "agent_start" });
+		await emit(mode, { type: "message_start", message: user("fix the login", 0) });
+		await respond(mode, assistant([fauxToolCall("bash", { command: "cat src/auth.ts" }, { id: "t1" })], 0, 1_000));
+		await runTool(mode, "t1", "cat src/auth.ts", 2_000);
+		await appendHandoff(mode, RUNNING);
+		expect(visibleLines(mode)).toEqual([
+			"fix the login",
+			"▸ 1 tool · 0:02",
+			"◇ Fix the login bug.",
+			"✓ Read src/auth.ts.",
+			"→ Run the tests.",
+		]);
+
+		await respond(mode, assistant("Fixed.", 3_000, 1_000, "stop"));
+		expect(visibleLines(mode)).toEqual(["fix the login", "▸ 1 tool · 0:04", "Fixed."]);
+	});
+
+	test("a finished handoff follows the counts in the last folded row, also after the next message; open, it shows in full", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		const mode = createMode();
+
+		await emit(mode, { type: "agent_start" });
+		await emit(mode, { type: "message_start", message: user("fix the login", 0) });
+		await respond(mode, assistant([fauxToolCall("bash", { command: "cat src/auth.ts" }, { id: "t1" })], 0, 1_000));
+		await runTool(mode, "t1", "cat src/auth.ts", 2_000);
+		await respond(mode, assistant("Fixed.", 3_000, 1_000, "stop"));
+		await emit(mode, { type: "agent_end", messages: [], willRetry: false });
+		await emit(mode, { type: "message_start", message: user("thanks", 10_000) });
+		await appendHandoff(mode, FINISHED);
+		expect(visibleLines(mode)).toEqual([
+			"fix the login",
+			"▸ 1 tool · 0:04 · Fixed the token check in src/auth.ts; the tests pass.",
+			"Fixed.",
+			"thanks",
+		]);
+
+		const narrow = mode.chatContainer.render(40).map((line) => stripAnsi(line).trim());
+		expect(narrow).toContain("▸ 1 tool · 0:04 · Fixed the token ch...");
+		expect(mode.turnFolds.toggleLast()).toBe(true);
+		expect(visibleLines(mode).slice(0, 4)).toEqual([
+			"fix the login",
+			"▾ 1 tool · 0:04",
+			"Fixed the token check in src/auth.ts; the tests pass.",
+			"✓ bash cat src/auth.ts",
+		]);
+	});
+
+	test("a loaded branch shows its handoffs as the live session did; data that is not a handoff shows nothing", () => {
+		const mode = createMode();
+		renderBranch(mode, [
+			user("fix the login", 0),
+			assistant([fauxToolCall("bash", { command: "cat src/auth.ts" }, { id: "t1" })], 0, 1_000),
+			toolResult("t1", "ok", false),
+			{ handoff: RUNNING },
+			assistant("Fixed.", 3_000, 1_000, "stop"),
+			{ handoff: FINISHED },
+			user("go on", 10_000),
+			assistant([fauxToolCall("bash", { command: "npm test" }, { id: "t2" })], 10_000, 1_000),
+			toolResult("t2", "ok", false),
+			{ handoff: { ...RUNNING, done: "Ran npm test." } },
+			{ handoff: { kind: "running", goal: "No other fields." } },
+		]);
+
+		expect(visibleLines(mode)).toEqual([
+			"fix the login",
+			"▸ 1 tool · 0:04 · Fixed the token check in src/auth.ts; the tests pass.",
+			"Fixed.",
+			"go on",
+			"▸ 1 tool · 0:01",
+			"◇ Fix the login bug.",
+			"✓ Ran npm test.",
+			"→ Run the tests.",
+		]);
 	});
 });
 

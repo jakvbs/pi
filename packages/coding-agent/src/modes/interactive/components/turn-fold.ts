@@ -1,6 +1,13 @@
 // Folds the activity of each turn (thinking, tool calls, commentary) into one row between the user message and the
 // reply, also while the turn runs.
-import { type Component, Container, type TuiMouseEvent, truncateToWidth } from "@earendil-works/pi-tui";
+import {
+	type Component,
+	Container,
+	type TuiMouseEvent,
+	truncateToWidth,
+	wrapTextWithAnsi,
+} from "@earendil-works/pi-tui";
+import type { RunningTurnHandoff, TurnHandoff } from "../../../core/turn-handoff.ts";
 import { theme } from "../theme/theme.ts";
 import { AssistantMessageComponent } from "./assistant-message.ts";
 import { CustomMessageComponent } from "./custom-message.ts";
@@ -27,6 +34,8 @@ interface Turn {
 	startedAt: number;
 	/** The row the turn folds into while it runs, from its first finished tool call or thinking on. */
 	fold: TurnFoldComponent | undefined;
+	/** The latest handoff of the running turn, kept for its row until the row exists. */
+	handoff: RunningTurnHandoff | undefined;
 }
 
 /**
@@ -40,12 +49,16 @@ interface Turn {
  * While the turn runs, its finished rows fold into the same row as they finish ({@link TurnFolds.foldFinished}), so
  * only what still runs shows below it: the response being written, with its thinking as one label line, and the tool
  * calls that have no result yet.
+ *
+ * A handoff ({@link TurnFolds.setHandoff}) adds what a model wrote about the turn to its row.
  */
 export class TurnFolds {
 	private readonly transcript: Container;
 	private folding: boolean;
 	private outputPad: number;
 	private openTurn: Turn | undefined;
+	/** The row of the turn that folded last, which a finished handoff describes. */
+	private lastFold: TurnFoldComponent | undefined;
 
 	constructor(transcript: Container, folding: boolean, outputPad: number) {
 		this.transcript = transcript;
@@ -55,7 +68,7 @@ export class TurnFolds {
 
 	/** Open a turn after the transcript's current last row. */
 	start(startedAt: number): void {
-		this.openTurn = { after: this.lastRow(), startedAt, fold: undefined };
+		this.openTurn = { after: this.lastRow(), startedAt, fold: undefined, handoff: undefined };
 	}
 
 	/**
@@ -80,6 +93,7 @@ export class TurnFolds {
 	/** Forget the open turn without folding it, for a transcript that is about to be rebuilt. */
 	reset(): void {
 		this.openTurn = undefined;
+		this.lastFold = undefined;
 	}
 
 	/**
@@ -89,7 +103,20 @@ export class TurnFolds {
 	end(): void {
 		const open = this.openTurn;
 		this.openTurn = undefined;
-		if (open) this.fold(open);
+		if (open) this.lastFold = this.fold(open);
+	}
+
+	/**
+	 * Show a handoff in the row of the turn it describes: a running one in the open turn's row until its reply, a
+	 * finished one in the row of the turn that folded last.
+	 */
+	setHandoff(handoff: TurnHandoff): void {
+		if (handoff.kind === "finished") {
+			this.lastFold?.setHandoff(handoff);
+		} else if (this.openTurn) {
+			this.openTurn.handoff = handoff;
+			this.openTurn.fold?.setHandoff(handoff);
+		}
 	}
 
 	/**
@@ -116,15 +143,16 @@ export class TurnFolds {
 			this.transcript.children.splice(this.firstRowIndex(turn), rows.length, ...shown);
 			for (const row of finished) if (row instanceof AssistantMessageComponent) row.setThinkingCollapsed(false);
 			fold.absorb(finished);
+			if (!turn.fold && turn.handoff) fold.setHandoff(turn.handoff);
 			turn.fold = fold;
 		}
 		this.collapseRunningThinking();
 	}
 
-	/** Replace the rows of one turn with its fold row and visible rows. */
-	private fold(turn: Turn): void {
+	/** Replace the rows of one turn with its fold row and visible rows; returns the row, or undefined without one. */
+	private fold(turn: Turn): TurnFoldComponent | undefined {
 		const rows = this.rowsOf(turn);
-		if (!rows) return;
+		if (!rows) return undefined;
 
 		const reply = rows.findLast(isReply);
 		const replyIndex = reply ? rows.lastIndexOf(reply) : -1;
@@ -136,7 +164,7 @@ export class TurnFolds {
 		const activity = rows.filter(folds);
 		for (const row of rows) if (row instanceof AssistantMessageComponent) row.setThinkingCollapsed(false);
 		const summary = summarizeTurn(activity, reply, turn.startedAt);
-		if (!turn.fold && summary.tools === 0 && summary.thinking === 0) return;
+		if (!turn.fold && summary.tools === 0 && summary.thinking === 0) return undefined;
 
 		// A new row takes the place of the first row it folds, or of the reply if that comes first; the rest keep order.
 		const fold = turn.fold ?? new TurnFoldComponent(turn.startedAt, this.folding, this.outputPad);
@@ -153,6 +181,7 @@ export class TurnFolds {
 		this.transcript.children.splice(this.firstRowIndex(turn), rows.length, ...shown);
 		fold.absorb(activity);
 		fold.finish(reply);
+		return fold;
 	}
 
 	/** Show the thinking of the open turn's running response as its label line while the turn folds. */
@@ -292,6 +321,7 @@ export class TurnFoldComponent extends Container {
 	private readonly activity = new TranscriptContainer();
 	private readonly startedAt: number;
 	private reply: AssistantMessageComponent | undefined;
+	private handoff: TurnHandoff | undefined;
 	private readonly header: Component;
 	private folding: boolean;
 	private open = false;
@@ -303,7 +333,7 @@ export class TurnFoldComponent extends Container {
 		this.folding = folding;
 		this.outputPad = outputPad;
 		this.header = {
-			render: (width) => ["", this.renderRow(width)],
+			render: (width) => ["", this.renderRow(width), ...this.renderHandoff(width)],
 			handleMouse: (event: TuiMouseEvent) => {
 				if (event.y !== 1 || event.type !== "click" || event.button !== "left") return undefined;
 				this.toggle();
@@ -324,10 +354,19 @@ export class TurnFoldComponent extends Container {
 		for (const row of rows) this.activity.addChild(row);
 	}
 
-	/** Mark the turn finished with its reply, whose thinking folds with the turn; undefined for a turn cut short. */
+	/**
+	 * Mark the turn finished with its reply, whose thinking folds with the turn; undefined for a turn cut short. A
+	 * running handoff goes, because the reply says what the turn did.
+	 */
 	finish(reply: AssistantMessageComponent | undefined): void {
 		this.reply = reply;
+		if (this.handoff?.kind === "running") this.handoff = undefined;
 		this.update();
+	}
+
+	/** Show what a model wrote about the turn. */
+	setHandoff(handoff: TurnHandoff): void {
+		this.handoff = handoff;
 	}
 
 	/** Open or fold this turn. Does nothing while folding is off. */
@@ -360,9 +399,31 @@ export class TurnFoldComponent extends Container {
 		const text = formatTurnSummary({ ...summary, errors: 0 });
 		const errors = formatTurnSummary({ tools: 0, thinking: 0, durationMs: undefined, errors: summary.errors });
 		const errorPart = errors ? theme.fg("error", ` · ${errors}`) : "";
+		const summaryPart =
+			this.handoff?.kind === "finished" && !this.open ? theme.fg("dim", ` · ${this.handoff.summary}`) : "";
 		return truncateToWidth(
-			`${" ".repeat(this.outputPad)}${theme.fg("muted", `${glyph} ${text}`)}${errorPart}`,
+			`${" ".repeat(this.outputPad)}${theme.fg("muted", `${glyph} ${text}`)}${errorPart}${summaryPart}`,
 			width,
 		);
+	}
+
+	/**
+	 * The lines below the row: a running handoff in three lines cut to the width, so the row keeps its height while
+	 * the handoff changes; a finished one in full while the turn is open, since the row cuts it.
+	 */
+	private renderHandoff(width: number): string[] {
+		const indent = " ".repeat(this.outputPad + 2);
+		if (this.handoff?.kind === "running") {
+			const { goal, done, next } = this.handoff;
+			return [`◇ ${goal}`, `✓ ${done}`, `→ ${next}`].map((line) =>
+				truncateToWidth(indent + theme.fg("dim", line), width),
+			);
+		}
+		if (this.handoff?.kind === "finished" && this.open) {
+			return wrapTextWithAnsi(this.handoff.summary, Math.max(1, width - indent.length)).map(
+				(line) => indent + theme.fg("dim", line),
+			);
+		}
+		return [];
 	}
 }
