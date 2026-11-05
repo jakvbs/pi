@@ -3728,6 +3728,7 @@ export class InteractiveMode {
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
+					this.turnFolds.resume(event.message.timestamp);
 					this.streamingComponent = new AssistantMessageComponent(
 						undefined,
 						this.hideThinkingBlock,
@@ -3817,6 +3818,7 @@ export class InteractiveMode {
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 					this.footer.invalidate();
+					if (event.message.stopReason !== "toolUse") this.turnFolds.end();
 				}
 				this.ui.requestRender();
 				break;
@@ -3888,7 +3890,6 @@ export class InteractiveMode {
 					this.streamingMessage = undefined;
 				}
 				this.pendingTools.clear();
-				// The finished turn stays open until the owner sends the next message or `!` command.
 				this.ui.requestRender();
 				break;
 
@@ -4091,18 +4092,17 @@ export class InteractiveMode {
 		message: AgentMessage,
 		options?: { populateHistory?: boolean; messageId?: string; timestamp?: string },
 	): void {
-		// The owner's own messages and `!` commands fold the turns before them and start the next one. A summary marker
-		// in a run that waits for its reply folds the part before it too; after a reply it starts the next turn and leaves
-		// the finished one open. A displayed extension message does the same only when no run waits for its reply;
-		// inside a run it is a notice that stays visible.
-		const awaitsReply = this.turnFolds.awaitsReply();
-		const isMarker = message.role === "compactionSummary" || message.role === "branchSummary";
-		const foldsTurns = message.role === "user" || message.role === "bashExecution" || (isMarker && awaitsReply);
-		const startsTurn = foldsTurns || isMarker || (message.role === "custom" && message.display && !awaitsReply);
-		if (foldsTurns) this.turnFolds.end();
-		else if (startsTurn) this.turnFolds.finish();
-		// A view folds a turn at its reply, so a retry after a failed reply needs a turn of its own.
-		else if (this.options.viewTail && message.role === "assistant") this.turnFolds.resume(message.timestamp);
+		// The owner's own messages, `!` commands and summary markers fold the open turn and start the next one. A displayed
+		// extension message does the same only when no run waits for its reply; inside a run it is a notice that stays
+		// visible.
+		const startsTurn =
+			message.role === "user" ||
+			message.role === "bashExecution" ||
+			message.role === "compactionSummary" ||
+			message.role === "branchSummary" ||
+			(message.role === "custom" && message.display && !this.turnFolds.awaitsReply());
+		if (startsTurn) this.turnFolds.end();
+		else if (message.role === "assistant") this.turnFolds.resume(message.timestamp);
 		this.renderMessage(message, options);
 		if (startsTurn) this.turnFolds.start(message.timestamp);
 	}
@@ -4329,10 +4329,9 @@ export class InteractiveMode {
 					const miss = cacheMisses.get(message);
 					if (miss) this.addCacheMissNotice(miss);
 				}
-				// The last turn stays open until the owner's next message, like a live one. A view never gets that
-				// message, so it folds a turn at its reply. Folding at each reply, not once per read, makes a file that
-				// is loaded at once show the same turns as one followed while the writer adds to it.
-				if (this.options.viewTail && message.stopReason !== "toolUse") this.turnFolds.endAnswered();
+				// Folding at each reply, as a live run does, not once per load, makes a branch loaded at once show the same
+				// turns as one followed while it is written.
+				if (message.stopReason !== "toolUse") this.turnFolds.end();
 			} else if (message.role === "toolResult") {
 				// Match tool results to pending tool components
 				const component = this.pendingTools.get(message.toolCallId);
@@ -7303,7 +7302,7 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	/** Show a `!` command in the transcript; like a user message, it folds the turns before it and opens the next. */
+	/** Show a `!` command in the transcript; like a user message, it folds the open turn and opens the next. */
 	private addBashComponentToChat(component: BashExecutionComponent): void {
 		this.turnFolds.end();
 		this.chatContainer.addChild(component);
