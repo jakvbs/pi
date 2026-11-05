@@ -404,6 +404,13 @@ export {
 	type ProjectTrustUpdate,
 } from "./core/trust-manager.ts";
 export {
+	type FinishedTurnHandoff,
+	parseTurnHandoff,
+	type RunningTurnHandoff,
+	TURN_HANDOFF_ENTRY_TYPE,
+	type TurnHandoff,
+} from "./core/turn-handoff.ts";
+export {
 	type ModelRoute,
 	type ModelRouteReason,
 	type ModelRouteRequest,

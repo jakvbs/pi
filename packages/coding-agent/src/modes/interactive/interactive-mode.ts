@@ -123,6 +123,7 @@ import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
+import { parseTurnHandoff, TURN_HANDOFF_ENTRY_TYPE } from "../../core/turn-handoff.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { addMcpServerConfig } from "../../extensions/mcp/config.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
@@ -4070,6 +4071,11 @@ export class InteractiveMode {
 	}
 
 	private addCustomEntryToChat(entry: Extract<SessionEntry, { type: "custom" }>): void {
+		if (entry.customType === TURN_HANDOFF_ENTRY_TYPE) {
+			const handoff = parseTurnHandoff(entry.data);
+			if (handoff) this.turnFolds.setHandoff(handoff);
+			return;
+		}
 		const renderer = this.session.extensionRunner.getEntryRenderer(entry.customType);
 		if (!renderer) {
 			return;

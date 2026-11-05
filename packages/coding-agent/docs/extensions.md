@@ -1698,6 +1698,14 @@ pi.on("session_start", async (_event, ctx) => {
 });
 ```
 
+An entry of type `TURN_HANDOFF_ENTRY_TYPE` (`"turn-handoff"`) holds a `TurnHandoff`, which pi itself shows in a turn's fold row, also on reload and in `pi --view`, which loads no extensions. Its place in the session says which turn it describes. A running handoff (`{ kind: "running", goal, done, next }`) shows in three lines below the row of the turn that is open when it is appended, until that turn's reply arrives. A finished one (`{ kind: "finished", summary }`) shows after the counts in the row of the turn that folded last before it. An extension that writes a handoff after the turn it describes has ended, or after a later turn has folded, attaches it to the wrong turn, so it drops such a handoff instead. `extensions/turn-handoff` in the fork writes them with a small model.
+
+```typescript
+import { TURN_HANDOFF_ENTRY_TYPE, type TurnHandoff } from "@earendil-works/pi-coding-agent";
+
+pi.appendEntry<TurnHandoff>(TURN_HANDOFF_ENTRY_TYPE, { kind: "finished", summary: "Fixed the token check." });
+```
+
 ### pi.setSessionName(name)
 
 Set the session display name (shown in session selector instead of first message).
