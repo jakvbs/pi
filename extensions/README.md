@@ -4,7 +4,7 @@ pi extensions maintained in this fork. Each directory is a standalone package ou
 
 ## Own and imported extensions
 
-An extension whose `UPSTREAM` file has an `[upstream]` section is a copy of a separate upstream repository without its history; `auto-effort`, `composer-predictions`, `timing` and `usage` were written here. `UPSTREAM` uses git config format:
+An extension whose `UPSTREAM` file has an `[upstream]` section is a copy of a separate upstream repository without its history; `auto-effort`, `composer-predictions`, `timing`, `turn-handoff` and `usage` were written here. `UPSTREAM` uses git config format:
 
 ```ini
 [upstream]

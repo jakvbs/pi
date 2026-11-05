@@ -1,0 +1,32 @@
+{
+  "name": "pi-turn-handoff",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A small model writes what a running turn is for, what it has done and what it does next; pi shows it in the turn's fold row.",
+  "license": "MIT",
+  "main": "index.ts",
+  "pi": {
+    "extensions": [
+      "index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --import ../../packages/coding-agent/src/experimental/source-resolver.ts --test tracker.test.ts writer.test.ts",
+    "typecheck": "tsc --noEmit",
+    "replay": "node --experimental-strip-types --import ../../packages/coding-agent/src/experimental/source-resolver.ts replay.ts"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension"
+  ]
+}
