@@ -15,8 +15,8 @@
  * - Any other tool resolves to its text content as one string.
  * - A failed, blocked, or invalid call rejects with an Error carrying the tool's error text.
  *
- * A script that fails returns a normal error result that keeps its partial output, followed by
- * "Script error:" and the error. `store(key, value)` and `load(key)` keep JSON values across
+ * A script that fails returns a normal error result that reports "Script error:" and the error
+ * before its partial output. `store(key, value)` and `load(key)` keep JSON values across
  * calls; successful scripts append their writes to the session as `codemode-store` custom entries,
  * so each branch sees the values written on its own path.
  */
@@ -106,8 +106,6 @@ export interface CodemodeNestedCall {
 
 export interface CodemodeToolDetails {
 	calls: CodemodeNestedCall[];
-	/** Temp file with the full text output, when the output was truncated. */
-	fullOutputPath?: string;
 }
 
 export const codemodeToolSystemPromptContribution = {
@@ -122,7 +120,7 @@ export const CODEMODE_DOCS_PATH = join(getDocsPath(), "codemode.md");
 
 const DESCRIPTION_INTRO = `Run JavaScript that calls other tools. The input is raw JavaScript (not JSON, no code fence), run as an async function body in a QuickJS sandbox: top-level \`await\` and \`return\` work. No Node, file system, network, or timers.
 - \`await tools.<name>({ ...args })\` resolves to a string, or an object if the tool's declaration says so, and rejects with an Error on failure. A tool whose declaration returns an object resolves on failure too when it returned that object; check its fields. Calls still running when the script ends are cancelled.
-- Optional first line: \`// @options: {"max_output_tokens": 10000, "timeout_ms": 60000}\``;
+- Optional first line: \`// @options: {"max_output_tokens": 2000, "timeout_ms": 60000}\` (\`max_output_tokens\` lowers the output limit)`;
 
 /** One line per global. The details live in {@link CODEMODE_DOCS_PATH}. */
 function describeGlobals(models: boolean): string {

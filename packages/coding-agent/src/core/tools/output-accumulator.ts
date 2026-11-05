@@ -47,7 +47,6 @@ export class OutputAccumulator {
 	private totalDecodedBytes = 0;
 	private completedLines = 0;
 	private totalLines = 0;
-	private currentLineBytes = 0;
 	private hasOpenLine = false;
 	private finished = false;
 
@@ -186,10 +185,6 @@ export class OutputAccumulator {
 		}
 	}
 
-	getLastLineBytes(): number {
-		return this.currentLineBytes;
-	}
-
 	private appendDecodedText(text: string): void {
 		if (text.length === 0) {
 			return;
@@ -210,13 +205,10 @@ export class OutputAccumulator {
 			lastNewline = i;
 		}
 		if (newlines === 0) {
-			this.currentLineBytes += bytes;
 			this.hasOpenLine = true;
 		} else {
 			this.completedLines += newlines;
-			const tail = text.slice(lastNewline + 1);
-			this.currentLineBytes = byteLength(tail);
-			this.hasOpenLine = tail.length > 0;
+			this.hasOpenLine = lastNewline < text.length - 1;
 		}
 		this.totalLines = this.completedLines + (this.hasOpenLine ? 1 : 0);
 	}

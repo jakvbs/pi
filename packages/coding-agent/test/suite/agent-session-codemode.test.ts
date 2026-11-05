@@ -92,9 +92,17 @@ function resultText(message: ToolResultMessage): string {
 	const [header, ...items] = message.content;
 	expect(header).toEqual({
 		type: "text",
-		text: expect.stringMatching(/^Script (completed|failed)\nWall time \d+\.\d seconds\nOutput:\n$/),
+		text: expect.stringMatching(
+			/^Script (completed|failed)\nWall time \d+\.\d seconds\n(Script error:\n[\s\S]*\n)?Output:\n$/,
+		),
 	});
 	return items.map((block) => (block.type === "text" ? block.text : `<${block.type}>`)).join("\n");
+}
+
+/** The error a failed script's header reports. */
+function scriptError(message: ToolResultMessage): string {
+	const header = message.content[0];
+	return header?.type === "text" ? (header.text.match(/\nScript error:\n([\s\S]*)\nOutput:\n$/)?.[1] ?? "") : "";
 }
 
 const TINY_PNG_LABEL = /^\[Image saved to (\S+\.png) \(image\/png, \d+B\)\]$/;
@@ -526,10 +534,11 @@ describe("AgentSession codemode tool", () => {
 		const result = codemodeResult(harness);
 		expect(result.isError).toBe(true);
 		expect((result.content[0] as { text: string }).text).toMatch(/^Script failed\n/);
-		const text = resultText(result);
-		expect(text).toMatch(/^partial\n<console_output>\nlog\n<\/console_output>\nScript error:\nError: boom\n/);
-		expect(text).toContain("codemode.js:4");
-		expect(text).toContain("Tool calls made before the failure (they are not undone): echo (ok)");
+		expect(resultText(result)).toBe("partial\n<console_output>\nlog\n</console_output>");
+		const error = scriptError(result);
+		expect(error).toMatch(/^Error: boom\n/);
+		expect(error).toContain("codemode.js:4");
+		expect(error).toContain("Tool calls made before the failure (they are not undone): echo (ok)");
 		expect((result.details as unknown as CodemodeToolDetails).calls.map((call) => call.name)).toEqual(["echo"]);
 	});
 });
@@ -575,7 +584,7 @@ describe("codemode options and store", () => {
 		const harness = await setup();
 		const timedOut = await run(harness, '// @options: {"timeout_ms": 200}\nwhile (true) {}');
 		expect(timedOut.isError).toBe(true);
-		expect(resultText(timedOut)).toContain("Script error:\nScript timed out");
+		expect(scriptError(timedOut)).toMatch(/^Script timed out/);
 
 		const invalid = await run(harness, '// @options: {"yield": 1}\ntext(1)');
 		expect(invalid.isError).toBe(true);
@@ -610,35 +619,30 @@ describe("codemode options and store", () => {
 		expect(n).toBeLessThan(512);
 	});
 
-	it("truncates output to the token budget and spills the full text", async () => {
+	it("limits output to the max_output_tokens option and saves the whole of it", async () => {
 		const harness = await setup();
 		const result = await run(
 			harness,
-			`// @options: {"max_output_tokens": 30}\nfor (let i = 0; i < 100; i++) text("row " + i);\nimage("data:image/png;base64,${TINY_PNG_BASE64}");`,
+			`// @options: {"max_output_tokens": 100}\nfor (let i = 0; i < 100; i++) text("row " + i);\nimage("data:image/png;base64,${TINY_PNG_BASE64}");`,
 		);
-		const details = result.details as unknown as CodemodeToolDetails;
-		const path = details.fullOutputPath;
-		if (!path) throw new Error("No spill file");
+		const text = resultText(result);
+		const path = text.match(
+			/\[Showing lines 1-\d+ of \d+ \(400B output limit\)\. Full output: (\S+)\. Use read/,
+		)?.[1];
+		if (!path) throw new Error(`No notice in ${text}`);
 		try {
-			const text = resultText(result);
-			expect(text).toMatch(/^Warning: truncated output/);
-			expect(text).toContain("row 0\n");
-			expect(text).toContain("tokens truncated");
-			expect(text).toContain("row 99\n");
-			expect(text).not.toContain("row 50\n");
-			expect(text).toContain(`[Full output: ${path} (read with offset/limit)]`);
-			// Images follow the truncated text, each after the path it was saved to.
+			expect(text.startsWith("==> text 1/100 <==\nrow 0\n")).toBe(true);
+			expect(text).not.toContain("row 99");
 			expect(result.content.at(-1)).toEqual({ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" });
-			expect(checkSavedImages(text.split("\n").at(-2) ?? "")).toBe("<saved>");
-			expect(readFileSync(path, "utf8")).toBe(
-				Array.from({ length: 100 }, (_, i) => `==> text ${i + 1}/100 <==\nrow ${i}`).join("\n"),
-			);
+			const saved = readFileSync(path, "utf8");
+			expect(saved).toMatch(/^Script completed\n/);
+			expect(saved).toContain("==> text 100/100 <==\nrow 99\n[Image saved to ");
 		} finally {
 			rmSync(path, { force: true });
 		}
 
 		const small = await run(harness, "return { ok: true };");
-		expect((small.details as unknown as CodemodeToolDetails).fullOutputPath).toBeUndefined();
+		expect(resultText(small)).toBe('{"ok":true}');
 	});
 
 	// #10678: joining the text items was quadratic, about 10 s here for the item limit.
@@ -647,9 +651,11 @@ describe("codemode options and store", () => {
 		const startedAt = performance.now();
 		const result = await run(harness, 'for (let i = 0; i < 100000; i++) text("");');
 		const elapsed = performance.now() - startedAt;
-		rmSync((result.details as unknown as CodemodeToolDetails).fullOutputPath ?? "", { force: true });
+		const path = resultText(result).match(/Full output: (\S+)\. Use read/)?.[1] ?? "";
+		const saved = readFileSync(path, "utf8");
+		rmSync(path, { force: true });
 		expect(result.isError).toBe(false);
-		expect(resultText(result)).toContain("==> text 100000/100000 <==");
+		expect(saved).toContain("==> text 100000/100000 <==");
 		expect(elapsed).toBeLessThan(5000);
 	});
 

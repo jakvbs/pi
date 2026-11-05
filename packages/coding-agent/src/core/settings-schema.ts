@@ -354,6 +354,15 @@ export const SettingsSchema = Type.Object(
 					"Initial tool selection. Plain names replace the inherited selection; +name and -name entries add or remove tools.",
 			}),
 		),
+		toolOutputMaxTokens: Type.Optional(
+			Type.Integer({
+				minimum: 1,
+				maximum: Number.MAX_SAFE_INTEGER,
+				description:
+					"Estimated tokens of a tool result the model sees, at 4 bytes per token. Longer output keeps its start and names a file with the rest.",
+				default: SETTINGS_DEFAULTS.toolOutputMaxTokens,
+			}),
+		),
 		doubleEscapeAction: Type.Optional(
 			Type.Union([Type.Literal("fork"), Type.Literal("tree"), Type.Literal("none")], {
 				description: "Action for double-escape with an empty editor.",

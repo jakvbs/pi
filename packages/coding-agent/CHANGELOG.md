@@ -48,6 +48,7 @@
 
 ### Changed
 
+- Every tool result the model sees now has one limit, the new `toolOutputMaxTokens` setting (default 5000 estimated tokens, 20000 bytes), for built-in, extension, MCP, and `codemode` tools alike. Longer text keeps its start and ends with a notice naming a file with the whole output and the line to continue from, for `read` or `grep`. This replaces the separate limits: 2000 lines or 50KB in `read`, `bash`, `grep`, `find`, and `ls`, 20KB with the middle cut out for MCP, and 10000 tokens with the middle cut out for `codemode`. `bash` now shows the start of its output instead of the end. `read` names the file it read. `codemode`'s `max_output_tokens` only lowers the limit, and a failed script reports its error before its output. `read`, `bash`, `powershell`, `grep`, `find`, and `ls` take a `maxOutputTokens` option; MCP and codemode results no longer carry `details.fullOutputPath`.
 - Tool output starts in compact mode (one line per call) in every interactive session; `Ctrl+O` cycles to collapsed and expanded as before.
 - The interactive transcript keeps the whole session branch across compaction: a compaction no longer clears the chat and the terminal scrollback but adds its summary marker below, and opening a compacted session shows the earlier messages above each compaction marker. The model context is unchanged.
 - The footer shows the session ID after the working directory, branch, and session name. Sessions started with `--no-session` show none, since nothing can resume them.

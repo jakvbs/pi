@@ -1364,6 +1364,14 @@ export class SettingsManager {
 	}
 
 	/** The resolved `defaultTools` selection, or undefined when no settings layer sets it. */
+	getToolOutputMaxTokens(): number {
+		const value = this.settings.toolOutputMaxTokens;
+		// settings.json is not validated on load.
+		return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+			? value
+			: SETTINGS_DEFAULTS.toolOutputMaxTokens;
+	}
+
 	getDefaultTools(): string[] | undefined {
 		const tools = this.settings.defaultTools;
 		if (tools === undefined) return undefined;

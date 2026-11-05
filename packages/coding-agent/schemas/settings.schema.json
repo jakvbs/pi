@@ -503,6 +503,13 @@
       },
       "description": "Initial tool selection. Plain names replace the inherited selection; +name and -name entries add or remove tools."
     },
+    "toolOutputMaxTokens": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "description": "Estimated tokens of a tool result the model sees, at 4 bytes per token. Longer output keeps its start and names a file with the rest.",
+      "default": 5000
+    },
     "doubleEscapeAction": {
       "anyOf": [
         {

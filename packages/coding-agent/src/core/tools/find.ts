@@ -4,10 +4,11 @@ import path from "path";
 import { type Static, Type } from "typebox";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { DEFAULT_TOOL_OUTPUT_MAX_TOKENS, OUTPUT_NOTICE_RESERVE_BYTES, toolOutputMaxBytes } from "./output-limit.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { findRenderers } from "./renderers/find.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
-import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
+import { formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
 
 /** Relativize a find result against the search root and normalize it to posix separators. */
 export function relativizeFindResultPath(
@@ -64,6 +65,8 @@ const defaultFindOperations: FindOperations = {
 export interface FindToolOptions {
 	/** Custom operations for find. Default: local filesystem plus fd */
 	operations?: FindOperations;
+	/** Estimated tokens of output one call returns. Default: the `toolOutputMaxTokens` default. */
+	maxOutputTokens?: number;
 }
 
 export function createFindToolDefinition(
@@ -71,10 +74,12 @@ export function createFindToolDefinition(
 	options?: FindToolOptions,
 ): ToolDefinition<typeof findSchema, FindToolDetails | undefined> {
 	const customOps = options?.operations;
+	const maxBytes =
+		toolOutputMaxBytes(options?.maxOutputTokens ?? DEFAULT_TOOL_OUTPUT_MAX_TOKENS) - OUTPUT_NOTICE_RESERVE_BYTES;
 	return {
 		name: "find",
 		label: "find",
-		description: `Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
+		description: `Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} results or ${Math.floor(maxBytes / 1024)}KB (whichever is hit first).`,
 		promptSnippet: findToolSystemPromptContribution.snippet,
 		parameters: findSchema,
 		async execute(
@@ -147,7 +152,7 @@ export function createFindToolDefinition(
 								.slice(0, effectiveLimit)
 								.map((p) => relativizeFindResultPath(p, searchPath));
 							const rawOutput = relativized.join("\n");
-							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
+							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER, maxBytes });
 							let resultOutput = truncation.content;
 							const details: FindToolDetails = {};
 							const notices: string[] = [];
@@ -156,7 +161,7 @@ export function createFindToolDefinition(
 								details.resultLimitReached = effectiveLimit;
 							}
 							if (truncation.truncated) {
-								notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
+								notices.push(`${formatSize(maxBytes)} limit reached`);
 								details.truncation = truncation;
 							}
 							if (notices.length > 0) {
@@ -251,7 +256,7 @@ export function createFindToolDefinition(
 							}
 							const result = relativizeFindResultPath(line, searchPath);
 							resultCount++;
-							if (outputBytes - 1 <= DEFAULT_MAX_BYTES) storedResults.push(result);
+							if (outputBytes - 1 <= maxBytes) storedResults.push(result);
 							outputBytes += Buffer.byteLength(result, "utf-8") + 1;
 						});
 
@@ -284,7 +289,7 @@ export function createFindToolDefinition(
 							// Stored results extend past the byte cap when more exist, so truncateHead decides
 							// truncation as for the full output; only the totals need the unstored rest.
 							const truncation = {
-								...truncateHead(storedResults.join("\n"), { maxLines: Number.MAX_SAFE_INTEGER }),
+								...truncateHead(storedResults.join("\n"), { maxLines: Number.MAX_SAFE_INTEGER, maxBytes }),
 								totalLines: resultCount,
 								totalBytes: outputBytes - 1,
 							};
@@ -298,7 +303,7 @@ export function createFindToolDefinition(
 								details.resultLimitReached = effectiveLimit;
 							}
 							if (truncation.truncated) {
-								notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
+								notices.push(`${formatSize(maxBytes)} limit reached`);
 								details.truncation = truncation;
 							}
 							if (notices.length > 0) {

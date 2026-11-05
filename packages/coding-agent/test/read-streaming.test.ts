@@ -5,8 +5,9 @@ import { join, resolve } from "path";
 import { pathToFileURL } from "url";
 import type * as util from "util";
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { DEFAULT_TOOL_OUTPUT_MAX_TOKENS, limitOutput, toolOutputMaxBytes } from "../src/core/tools/output-limit.ts";
 import { createReadToolDefinition, type ReadOperations } from "../src/core/tools/read.ts";
-import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "../src/core/tools/truncate.ts";
+import { formatSize, type TruncationResult } from "../src/core/tools/truncate.ts";
 
 // Runs when the read tool decodes a chunk: the file is open and partly read, so a test can change it mid-read.
 const decodeHook = vi.hoisted(() => ({ run: undefined as (() => void) | undefined }));
@@ -20,6 +21,9 @@ vi.mock("util", async (importOriginal) => {
 	}
 	return { ...actual, TextDecoder: HookedTextDecoder };
 });
+
+// The byte budget of a read with the default `toolOutputMaxTokens`.
+const MAX_BYTES = toolOutputMaxBytes(DEFAULT_TOOL_OUTPUT_MAX_TOKENS);
 
 // The read tool's text path before it streamed (#9654), kept as the reference the new path must match.
 function referenceRead(
@@ -44,31 +48,19 @@ function referenceRead(
 	} else {
 		selectedContent = allLines.slice(startLine).join("\n");
 	}
-	const truncation = truncateHead(selectedContent);
-	let outputText: string;
-	let details: { truncation: TruncationResult } | undefined;
-	if (truncation.firstLineExceedsLimit) {
-		const firstLineSize = formatSize(Buffer.byteLength(allLines[startLine], "utf-8"));
-		outputText = `[Line ${startLineDisplay} is ${firstLineSize}, exceeds ${formatSize(DEFAULT_MAX_BYTES)} limit. Use bash: sed -n '${startLineDisplay}p' ${path} | head -c ${DEFAULT_MAX_BYTES}]`;
-		details = { truncation };
-	} else if (truncation.truncated) {
-		const endLineDisplay = startLineDisplay + truncation.outputLines - 1;
-		const nextOffset = endLineDisplay + 1;
-		outputText = truncation.content;
-		if (truncation.truncatedBy === "lines") {
-			outputText += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${totalFileLines}. Use offset=${nextOffset} to continue.]`;
-		} else {
-			outputText += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${totalFileLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Use offset=${nextOffset} to continue.]`;
-		}
-		details = { truncation };
-	} else if (userLimitedLines !== undefined && startLine + userLimitedLines < allLines.length) {
-		const remaining = allLines.length - (startLine + userLimitedLines);
-		const nextOffset = startLine + userLimitedLines + 1;
-		outputText = `${truncation.content}\n\n[${remaining} more lines in file. Use offset=${nextOffset} to continue.]`;
-	} else {
-		outputText = truncation.content;
-	}
-	return { text: outputText, details };
+	const nextOffset = startLine + (userLimitedLines ?? 0) + 1;
+	const moreLines =
+		userLimitedLines !== undefined && nextOffset <= allLines.length
+			? `\n\n[${allLines.length - nextOffset + 1} more lines in file. Use offset=${nextOffset} to continue.]`
+			: "";
+	const limited = limitOutput(selectedContent, MAX_BYTES - Buffer.byteLength(moreLines, "utf-8"), {
+		path,
+		firstLine: startLineDisplay,
+		totalLines: totalFileLines,
+	});
+	return limited.truncation.truncated
+		? { text: limited.text, details: { truncation: limited.truncation } }
+		: { text: limited.text + moreLines, details: undefined };
 }
 
 type ReadOutcome = { text: string; details: unknown } | { error: string };
@@ -122,7 +114,8 @@ function lines(count: number, make: (i: number) => string): string {
 	return Array.from({ length: count }, (_, i) => make(i)).join("\n");
 }
 
-const FIFTY_KB_OF_LINES = `${lines(512, () => "y".repeat(99))}y`;
+// Lines of 100 bytes with their newline, exactly MAX_BYTES long.
+const BUDGET_OF_LINES = `${lines(MAX_BYTES / 100, () => "y".repeat(99))}y`;
 
 // Inputs around the boundaries the notices and truncation depend on.
 const TEXT_CASES: Record<string, string> = {
@@ -131,15 +124,15 @@ const TEXT_CASES: Record<string, string> = {
 	"trailing newline": "alpha\nbeta\n",
 	CRLF: "alpha\r\nbeta\r\n\r\ngamma\r\n",
 	"multi-byte characters and UTF-8 byte order mark": "\uFEFFé€😀\nñ\u{10348}字\n😀😀😀",
-	"2001 lines": lines(2001, (i) => `line ${i}`),
-	// truncateHead drops a trailing empty line: the empty line at the line cap must not end the stored lines.
-	"2001 lines, an empty line and more": `${lines(2001, (i) => `line ${i}`)}\n\nmore`,
-	"first line over 50KB": `${"é".repeat(DEFAULT_MAX_BYTES / 2 + 1)}\nsecond`,
-	"line over 50KB after short lines": `a\nb\n${"z".repeat(60 * 1024)}\nc`,
-	// 50KB + 1 byte: truncated, yet every line fits, so truncateHead reports truncatedBy "lines".
-	"exactly 50KB and a trailing newline": `${FIFTY_KB_OF_LINES}\n`,
-	"exactly 50KB, an empty line and more": `${FIFTY_KB_OF_LINES}\n\nmore`,
-	"multi-byte characters over 50KB": lines(700, (i) => `${i} ${"€😀".repeat(13)}`),
+	"3000 short lines": lines(3000, (i) => `line ${i}`),
+	"first line over the budget": `${"é".repeat(MAX_BYTES / 2 + 1)}\nsecond`,
+	"line over the budget after short lines": `a\nb\n${"z".repeat(3 * MAX_BYTES)}\nc`,
+	"exactly the budget": BUDGET_OF_LINES,
+	// The budget + 1 byte: truncated, yet every line fits, so truncateHead reports truncatedBy "lines".
+	"exactly the budget and a trailing newline": `${BUDGET_OF_LINES}\n`,
+	// truncateHead drops a trailing empty line, so the empty line right after the budget is a boundary.
+	"exactly the budget, an empty line and more": `${BUDGET_OF_LINES}\n\nmore`,
+	"multi-byte characters over the budget": lines(700, (i) => `${i} ${"€😀".repeat(13)}`),
 };
 
 describe("read tool streaming", () => {
@@ -163,7 +156,7 @@ describe("read tool streaming", () => {
 	});
 
 	it("keeps details key order, which session files serialize", async () => {
-		const text = TEXT_CASES["2001 lines"];
+		const text = TEXT_CASES["3000 short lines"];
 		const streamed = (await readWith(streamingOps(Buffer.from(text), 4096), 1, undefined)) as { details: unknown };
 		const expected = referenceOutcome(text, 1, undefined) as { details: unknown };
 		expect(JSON.stringify(streamed.details)).toBe(JSON.stringify(expected.details));
@@ -256,9 +249,10 @@ describe("read tool streaming", () => {
 			["--max-old-space-size=64", "--import", sourceResolverUrl, "--input-type=module", "--eval", script],
 			{ encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] },
 		);
-		expect(output).toBe(
-			`[Line 1 is 200.0MB, exceeds 50.0KB limit. Use bash: sed -n '1p' big.log | head -c ${DEFAULT_MAX_BYTES}]`,
-		);
+		const notice = `[Line 1 alone exceeds the ${formatSize(MAX_BYTES)} output limit; showing its start. Full output: ${resolve("big.log")}. Search it with grep, or cut the line with bash.]`;
+		expect(output.endsWith(`\n\n${notice}`)).toBe(true);
+		expect(output.slice(0, -notice.length - 2)).toMatch(/^x+$/);
+		expect(Buffer.byteLength(output, "utf-8")).toBeLessThanOrEqual(MAX_BYTES);
 	});
 
 	it("stops consuming the stream when aborted", async () => {

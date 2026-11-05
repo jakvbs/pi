@@ -27,7 +27,8 @@ import {
 import { getCodemodeWorkerSpecifier, getQuickJSWasmPath } from "../../config.ts";
 import type { ExtensionToolContext, ToolNamespace } from "../../core/extensions/types.ts";
 import type { SessionEntry } from "../../core/session-manager.ts";
-import { formatSize, sliceHead, sliceTail } from "../../core/tools/truncate.ts";
+import { limitToolResultText, toolOutputMaxBytes } from "../../core/tools/output-limit.ts";
+import { formatSize, sliceHead } from "../../core/tools/truncate.ts";
 import { combineUsage } from "../../core/usage-totals.ts";
 import { writeOutputFile } from "../../utils/output-files.ts";
 import { Bm25Ranker, createToolSearchDocument, DEFAULT_TOOL_SEARCH_LIMIT } from "../tool-search/tool.ts";
@@ -302,11 +303,6 @@ export function readCodemodeStore(branch: readonly SessionEntry[]): Record<strin
 	return Object.fromEntries(store);
 }
 
-/** Default token budget for script output. */
-const DEFAULT_MAX_OUTPUT_TOKENS = 10_000;
-/** Characters per token when estimating. */
-const CHARS_PER_TOKEN = 4;
-
 /** Like the script's `text()`: strings as is, other values as compact JSON. */
 function valueText(value: unknown): string {
 	if (typeof value === "string") return value;
@@ -389,15 +385,6 @@ function formatError(result: Extract<CodemodeResult, { ok: false }>, calls: read
 	return `${head}\n\n${formatCallSummary(calls)}`;
 }
 
-/** Write the full text output to a temp file, like bash does for truncated output. */
-async function spillOutput(text: string): Promise<{ path: string } | { error: string }> {
-	try {
-		return { path: await writeOutputFile("pi-codemode", ".txt", text) };
-	} catch (error) {
-		return { error: error instanceof Error ? error.message : String(error) };
-	}
-}
-
 /** File extensions of the image types `image()` accepts. Must list every type the sandbox's `image()` detects. */
 const IMAGE_EXTENSIONS: Record<string, string> = {
 	"image/png": ".png",
@@ -439,36 +426,6 @@ async function saveImages(items: (TextContent | ImageContent)[]): Promise<(TextC
 		}),
 	);
 	return result.flat();
-}
-
-/**
- * Apply the token budget: when the combined text exceeds it, the text items become one
- * item that keeps the start and end of the text, and images follow it. The full text is written to
- * a temp file.
- */
-async function truncateOutput(
-	items: (TextContent | ImageContent)[],
-	maxTokens: number,
-): Promise<{ items: (TextContent | ImageContent)[]; fullOutputPath?: string }> {
-	const texts = items.filter((item): item is TextContent => item.type === "text").map((item) => item.text);
-	const combined = texts.join("\n");
-	const budget = maxTokens * CHARS_PER_TOKEN;
-	if (texts.length === 0 || combined.length <= budget) return { items };
-	const headChars = Math.floor(budget / 2);
-	const tailChars = budget - headChars;
-	const removed = combined.length - headChars - tailChars;
-	const head = sliceHead(combined, headChars);
-	const tail = sliceTail(combined, tailChars);
-	let text = `Warning: truncated output (original token count: ${Math.ceil(combined.length / CHARS_PER_TOKEN)})\nTotal output lines: ${combined.split("\n").length}\n\n${head}…${Math.ceil(removed / CHARS_PER_TOKEN)} tokens truncated…${tail}`;
-	const spilled = await spillOutput(combined);
-	text +=
-		"path" in spilled
-			? `\n\n[Full output: ${spilled.path} (read with offset/limit)]`
-			: `\n\n[Could not save the full output: ${spilled.error}]`;
-	return {
-		items: [{ type: "text", text }, ...items.filter((item) => item.type === "image")],
-		...("path" in spilled ? { fullOutputPath: spilled.path } : {}),
-	};
 }
 
 /**
@@ -624,7 +581,6 @@ export async function executeCodemode(
 		if (result.value !== undefined) scriptOutput.push({ type: "text", text: valueText(result.value) });
 	}
 	const items = formatOutput(scriptOutput);
-	if (!result.ok) items.push({ type: "text", text: `Script error:\n${formatError(result, calls)}` });
 	if (generatedImages > 0 && !items.some((item) => item.type === "image")) {
 		items.push({
 			type: "text",
@@ -632,19 +588,20 @@ export async function executeCodemode(
 		});
 	}
 
-	const truncated = await truncateOutput(
-		joinAdjacentText(items),
-		sourceOptions.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-	);
-	// After truncation, which joins the text items and moves images after them, so each path stays
-	// next to its image and is never cut.
-	const output = joinAdjacentText(await saveImages(truncated.items));
+	const output = joinAdjacentText(await saveImages(joinAdjacentText(items)));
 	const wallTime = ((performance.now() - startedAt) / 1000).toFixed(1);
-	const header = `${result.ok ? "Script completed" : "Script failed"}\nWall time ${wallTime} seconds\nOutput:\n`;
+	// The error goes before the output so that limiting a long output never cuts it.
+	const status = result.ok ? "Script completed" : "Script failed";
+	const error = result.ok ? "" : `Script error:\n${formatError(result, calls)}\n`;
+	const header = `${status}\nWall time ${wallTime} seconds\n${error}Output:\n`;
+	const content: (TextContent | ImageContent)[] = [{ type: "text", text: header }, ...output];
 	const details = snapshot();
-	if (truncated.fullOutputPath) details.fullOutputPath = truncated.fullOutputPath;
 	return {
-		content: [{ type: "text", text: header }, ...output],
+		// The session limits every result to the `toolOutputMaxTokens` setting; a script may ask for less.
+		content:
+			sourceOptions.maxOutputTokens === undefined
+				? content
+				: await limitToolResultText(content, toolOutputMaxBytes(sourceOptions.maxOutputTokens)),
 		details,
 		...(modelUsage ? { usage: modelUsage } : {}),
 		...(result.ok ? {} : { isError: true }),

@@ -5,17 +5,11 @@ import path from "path";
 import { type Static, Type } from "typebox";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { DEFAULT_TOOL_OUTPUT_MAX_TOKENS, OUTPUT_NOTICE_RESERVE_BYTES, toolOutputMaxBytes } from "./output-limit.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { grepRenderers } from "./renderers/grep.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
-import {
-	DEFAULT_MAX_BYTES,
-	formatSize,
-	GREP_MAX_LINE_LENGTH,
-	type TruncationResult,
-	truncateHead,
-	truncateLine,
-} from "./truncate.ts";
+import { formatSize, GREP_MAX_LINE_LENGTH, type TruncationResult, truncateHead, truncateLine } from "./truncate.ts";
 
 const grepSchema = Type.Object({
 	pattern: Type.String({ description: "Search pattern (regex or literal string)" }),
@@ -68,6 +62,8 @@ function decodeRgText(data: { text?: string; bytes?: string } | undefined): stri
 export interface GrepToolOptions {
 	/** Custom operations for grep. Default: local filesystem plus ripgrep */
 	operations?: GrepOperations;
+	/** Estimated tokens of output one call returns. Default: the `toolOutputMaxTokens` default. */
+	maxOutputTokens?: number;
 }
 
 export function createGrepToolDefinition(
@@ -75,10 +71,12 @@ export function createGrepToolDefinition(
 	options?: GrepToolOptions,
 ): ToolDefinition<typeof grepSchema, GrepToolDetails | undefined> {
 	const customOps = options?.operations;
+	const maxBytes =
+		toolOutputMaxBytes(options?.maxOutputTokens ?? DEFAULT_TOOL_OUTPUT_MAX_TOKENS) - OUTPUT_NOTICE_RESERVE_BYTES;
 	return {
 		name: "grep",
 		label: "grep",
-		description: `Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} matches or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Long lines are truncated to ${GREP_MAX_LINE_LENGTH} chars.`,
+		description: `Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} matches or ${Math.floor(maxBytes / 1024)}KB (whichever is hit first). Long lines are truncated to ${GREP_MAX_LINE_LENGTH} chars.`,
 		promptSnippet: grepToolSystemPromptContribution.snippet,
 		parameters: grepSchema,
 		async execute(
@@ -214,7 +212,7 @@ export function createGrepToolDefinition(
 								: `${relativePath}-${lineNumber}- ${truncatedText}`;
 							// Byte truncation below drops everything past the cap, so keep counting but stop storing (#9276).
 							// outputBytes counts a newline after every line; the joined output has one fewer.
-							if (outputBytes - 1 <= DEFAULT_MAX_BYTES) outputLines.push(line);
+							if (outputBytes - 1 <= maxBytes) outputLines.push(line);
 							outputBytes += Buffer.byteLength(line, "utf-8") + 1;
 							outputLineCount++;
 						};
@@ -275,7 +273,7 @@ export function createGrepToolDefinition(
 
 							const rawOutput = outputLines.join("\n");
 							// Apply byte truncation. There is no line limit here because the match limit already capped rows.
-							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
+							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER, maxBytes });
 							truncation.totalLines = outputLineCount;
 							truncation.totalBytes = outputBytes - 1;
 							let output = truncation.content;
@@ -289,7 +287,7 @@ export function createGrepToolDefinition(
 								details.matchLimitReached = effectiveLimit;
 							}
 							if (truncation.truncated) {
-								notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
+								notices.push(`${formatSize(maxBytes)} limit reached`);
 								details.truncation = truncation;
 							}
 							if (linesTruncated) {
