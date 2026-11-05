@@ -406,8 +406,8 @@ nothing user-visible, so no entry unless behavior changed).
 
 - `createMcpToolName(server, tool, isTaken)` and `mcpNamespace(server)` (today in coding-agent `extensions/mcp/tools.ts`
   and `core/mcp-servers.ts`), and the input-schema normalization (object type, `properties` present) without pi-tui
-  rendering. The result size limit stays with the application: pi limits every tool result, p2 through the Durable
-  harness's `outputLimits`.
+  rendering. The result size limit stays with the application: pi and the Durable harness limit every tool result to
+  their `toolOutputMaxTokens` setting, which p2 passes on from its `settings.json`.
 - Parsing and validation of the standard `mcpServers` shape: stdio (`command`, `args`, `env`, `cwd`), HTTP (`url`,
   `headers`), `oauth`, `enabled`. pi-only fields (`exposure`, `toolExposure`, `auth.provider`, `autoEnableCodemode`) stay
   in coding-agent, which extends the shared parser.

@@ -106,9 +106,9 @@ export function formatSize(bytes: number): string {
 	return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
-/** Durable's DEFAULT_MAX_BYTES / DEFAULT_MAX_LINES. */
-export const DEFAULT_MAX_BYTES = 50 * 1024;
-export const DEFAULT_MAX_LINES = 2000;
+/** Durable's default tool output limits: `toolOutputMaxTokens` 5000 at 4 bytes per token, no line limit. */
+export const DEFAULT_MAX_BYTES = 20_000;
+export const DEFAULT_MAX_LINES = Number.MAX_SAFE_INTEGER;
 
 export function trimTrailingEmptyLines(lines: string[]): string[] {
 	let end = lines.length;

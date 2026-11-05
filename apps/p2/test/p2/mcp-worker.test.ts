@@ -106,9 +106,9 @@ test(
 			return scriptOutput(result);
 		};
 		assert.equal(await echo("hello"), "echo: hello");
-		// A longer result keeps its start, 20000 bytes as pi's default tool output limit; the rest is dropped.
-		const long = await call('codemode return await tools.mcp__files__echo({ text: "x".repeat(30000) });');
-		assert.equal(scriptOutput(long), `echo: ${"x".repeat(20_000 - "echo: ".length)}`);
+		// A longer result keeps its start within the default toolOutputMaxTokens, 5000 tokens of 4 bytes, as in pi.
+		const long = await call('codemode return (await tools.mcp__files__echo({ text: "x".repeat(30000) })).length;');
+		assert.equal(scriptOutput(long), "20000");
 		assert.equal(
 			sections(await until(chat.view, Boolean)).mcp_servers,
 			"<mcp_servers>\nMCP servers whose tools are not declared to you. Call the tools of `codemode` servers from codemode scripts.\n- mcp__files (codemode)\n- mcp__lint (codemode)\n</mcp_servers>",
@@ -156,5 +156,17 @@ test(
 		assert.equal(echoed.isError, false, text(echoed));
 		assert.equal(text(echoed), "echo: hello");
 		assert.deepEqual(echoed.details, { server: "files", tool: "echo" });
+		// The owner's toolOutputMaxTokens reaches the harness: 10 tokens keep the first 40 bytes.
+		writeFileSync(
+			join(fixture.dataDir, "settings.json"),
+			JSON.stringify({ codemode: false, toolOutputMaxTokens: 10 }),
+		);
+		const cut = `echo: ${"x".repeat(34)}<harness>\n[warn] Output truncated to its beginning: 0 lines, 66 bytes dropped\n</harness>`;
+		let limited: ToolResultMessage | undefined;
+		for (let attempt = 0; attempt < 20 && text(limited) !== cut; attempt++) {
+			if (attempt > 0) await sleep(200);
+			limited = await call(`mcp__files__echo ${JSON.stringify({ text: "x".repeat(100) })}`);
+		}
+		assert.equal(text(limited), cut);
 	},
 );

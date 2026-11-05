@@ -123,6 +123,9 @@ export class Resources {
 			get toolExecution() {
 				return resources.settings.toolExecution;
 			},
+			get toolOutputMaxTokens() {
+				return resources.settings.toolOutputMaxTokens;
+			},
 			get steeringMode() {
 				return resources.settings.steeringMode;
 			},
