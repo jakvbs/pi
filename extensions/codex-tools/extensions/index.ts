@@ -153,4 +153,8 @@ export default function piCodexTools(pi: ExtensionAPI): void {
   pi.on("model_select", (_event, ctx) => {
     synchronizeTools(ctx);
   });
+
+  pi.on("session_tree", (_event, ctx) => {
+    synchronizeTools(ctx);
+  });
 }
