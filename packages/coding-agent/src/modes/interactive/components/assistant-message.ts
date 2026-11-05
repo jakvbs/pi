@@ -94,6 +94,11 @@ export class AssistantMessageComponent extends Container {
 		return this.lastMessage;
 	}
 
+	/** Whether the message shown is a finished response that ends its run, not a tool call step or a stream. */
+	isReply(): boolean {
+		return !this.isStreaming && this.lastMessage !== undefined && this.lastMessage.stopReason !== "toolUse";
+	}
+
 	/**
 	 * Fold or show this reply's thinking with its turn. While folded, an abort or error notice shows here even when the
 	 * message has tool calls, because their rows, which show it otherwise, are folded too.
