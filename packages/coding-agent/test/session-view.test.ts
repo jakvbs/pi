@@ -256,7 +256,7 @@ async function openView(file: string, agentDir: string) {
 }
 
 describe("InteractiveMode session view", () => {
-	it("follows the writer: the turn stays open while it runs and folds when its reply arrives; typed prompts are ignored", async () => {
+	it("follows the writer: a running turn folds what it finished, its reply folds the rest; typed prompts are ignored", async () => {
 		const dir = tempDir();
 		const agentDir = join(dir, "agent");
 		mkdirSync(agentDir);
@@ -283,11 +283,12 @@ describe("InteractiveMode session view", () => {
 			expect(before.join("\n")).toContain("Listing them now.");
 			expect(before.join("\n")).toContain("bash ls");
 
-			// The result arrives in a later write; it completes the call rendered earlier and the turn stays open.
+			// The result arrives in a later write; it completes the call rendered earlier, which folds with the running turn.
 			appendFileSync(file, `${toolResultEntry("t1", "a1", "call-1", "alpha.txt")}\n`);
-			await vi.waitFor(() => expect(screen().find((row) => row.includes("bash ls"))).toContain("✓"), {
+			await vi.waitFor(() => expect(screen().map((row) => row.trim())).toContain("▸ 1 tool · 0:00"), {
 				timeout: 2000,
 			});
+			expect(screen().join("\n")).not.toContain("Listing them now.");
 
 			appendFileSync(file, `${assistantEntry("a2", "t1", [{ type: "text", text: "There is one file." }])}\n`);
 			await vi.waitFor(() => expect(screen().join("\n")).toContain("There is one file."), { timeout: 2000 });

@@ -44,6 +44,8 @@ export class AssistantMessageComponent extends Container {
 	private markdownSlots: MarkdownSlot[] = [];
 	/** Set while this message is the reply of a folded turn: thinking folds with the turn, the stop notice stays. */
 	private activityFolded = false;
+	/** Set while this message runs in a folded turn: each thinking run shows as its label line. */
+	private thinkingCollapsed = false;
 
 	constructor(
 		message?: AssistantMessage,
@@ -96,7 +98,21 @@ export class AssistantMessageComponent extends Container {
 
 	/** Whether the message shown is a finished response that ends its run, not a tool call step or a stream. */
 	isReply(): boolean {
-		return !this.isStreaming && this.lastMessage !== undefined && this.lastMessage.stopReason !== "toolUse";
+		return this.isFinished() && this.lastMessage?.stopReason !== "toolUse";
+	}
+
+	/** Whether the message shown has finished streaming. */
+	isFinished(): boolean {
+		return !this.isStreaming && this.lastMessage !== undefined;
+	}
+
+	/** Show each thinking run as its label line, so a response written in a folded turn keeps a steady height. */
+	setThinkingCollapsed(collapsed: boolean): void {
+		if (collapsed === this.thinkingCollapsed) return;
+		this.thinkingCollapsed = collapsed;
+		if (this.lastMessage) {
+			this.updateContent(this.lastMessage);
+		}
 	}
 
 	/**
@@ -212,7 +228,8 @@ export class AssistantMessageComponent extends Container {
 				if (this.activityFolded) {
 					continue;
 				}
-				const hidden = this.thinkingVisibilityOverrides.get(runIndex) ?? this.hideThinkingBlock;
+				const hidden =
+					this.thinkingCollapsed || (this.thinkingVisibilityOverrides.get(runIndex) ?? this.hideThinkingBlock);
 				// A hidden run with an empty label renders nothing, including no spacing.
 				if (hidden && !this.hiddenThinkingLabel.trim()) {
 					continue;

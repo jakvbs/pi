@@ -162,7 +162,7 @@ describe("InteractiveMode compaction events", () => {
 			renderProjectTrustWarningIfNeeded: vi.fn(),
 			showStatus: vi.fn(),
 			session: { isStreaming: false },
-			turnFolds: { reset: vi.fn(), end: vi.fn() },
+			turnFolds: { reset: vi.fn(), end: vi.fn(), foldFinished: vi.fn() },
 			options: {},
 			addMessageToChat: (message: AgentMessage) =>
 				rendered.push(

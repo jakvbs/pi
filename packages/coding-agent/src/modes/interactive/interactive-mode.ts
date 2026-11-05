@@ -560,7 +560,7 @@ export class InteractiveMode {
 
 	// Thinking block visibility state
 	private hideThinkingBlock = false;
-	/** Folds each finished turn of the transcript into one row between the user message and the reply. */
+	/** Folds each turn of the transcript into one row between the user message and the reply. */
 	private turnFolds: TurnFolds;
 	private outputPad = 1;
 	private readonly mermaidMarkdownTransformer: MarkdownTransformer = createMermaidMarkdownTransformer({
@@ -1101,7 +1101,7 @@ export class InteractiveMode {
 					hint("app.suspend", "to suspend"),
 					hint("app.tools.expand", "to expand tools"),
 					hint("app.thinking.toggle", "to expand thinking"),
-					hint("app.tools.toggle", "to fold finished turns"),
+					hint("app.tools.toggle", "to fold turns"),
 					hint("app.turn.toggle", "to open the last turn"),
 					hint("app.message.copy", "to copy the last message"),
 				].join("\n");
@@ -3739,6 +3739,7 @@ export class InteractiveMode {
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
 					this.streamingComponent.updateContent(this.streamingMessage, true);
+					this.turnFolds.foldFinished();
 					this.ui.requestRender();
 				}
 				break;
@@ -3818,6 +3819,7 @@ export class InteractiveMode {
 					this.streamingMessage = undefined;
 					this.footer.invalidate();
 					if (event.message.stopReason !== "toolUse") this.turnFolds.end();
+					else this.turnFolds.foldFinished();
 				}
 				this.ui.requestRender();
 				break;
@@ -3873,6 +3875,7 @@ export class InteractiveMode {
 						timestamp: Date.now(),
 					});
 					this.pendingTools.delete(event.toolCallId);
+					this.turnFolds.foldFinished();
 					this.ui.requestRender();
 				}
 				break;
@@ -4345,6 +4348,8 @@ export class InteractiveMode {
 				});
 			}
 		}
+		// A branch that ends in a running turn, such as a session another process still writes, folds what it finished.
+		this.turnFolds.foldFinished();
 
 		this.ui.requestRender();
 	}
@@ -7196,8 +7201,8 @@ export class InteractiveMode {
 | \`${selectModel}\` | Open model selector |
 | \`${expandTools}\` | Toggle tool output expansion |
 | \`${toggleThinking}\` | Toggle thinking block visibility |
-| \`${toggleFolding}\` | Fold finished turns, or show them in full |
-| \`${toggleTurn}\` | Open or fold the last finished turn |
+| \`${toggleFolding}\` | Fold turns, or show them in full |
+| \`${toggleTurn}\` | Open or fold the last turn |
 | \`${externalEditor}\` | Edit message in external editor |
 | \`${copyMessage}\` | Copy selection or last assistant message |
 | \`${followUp}\` | Queue follow-up message |

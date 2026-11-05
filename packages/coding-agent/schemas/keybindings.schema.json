@@ -241,11 +241,11 @@
     },
     "app.tools.toggle": {
       "$ref": "#/$defs/KeybindingValue",
-      "description": "Turn folding of finished turns on or off"
+      "description": "Turn folding of turns on or off"
     },
     "app.turn.toggle": {
       "$ref": "#/$defs/KeybindingValue",
-      "description": "Open or fold the last finished turn"
+      "description": "Open or fold the last turn"
     },
     "app.session.toggleNamedFilter": {
       "$ref": "#/$defs/KeybindingValue",
