@@ -631,27 +631,64 @@ describe("TurnFolds in a read-only view", () => {
 		]);
 	});
 
-	test("a retry the writer appends after a failed reply folds into a row of its own", () => {
-		const mode = createMode({ view: true });
-		const failedRun: AgentMessage[] = [
+	/** Rows after loading a file at once, and after following it while the writer adds one entry at a time. */
+	function loadedAndFollowed(messages: AgentMessage[]): { loaded: string[]; followed: string[] } {
+		const loaded = createMode({ view: true });
+		renderBranch(loaded, messages);
+		const followed = createMode({ view: true });
+		renderBranch(followed, messages.slice(0, 1));
+		for (let i = 1; i < messages.length; i++) appendBranch(followed, [messages[i]], i);
+		return { loaded: visibleLines(loaded), followed: visibleLines(followed) };
+	}
+
+	test("a retry after a failed reply is a turn of its own, on load as when followed", () => {
+		const { loaded, followed } = loadedAndFollowed([
 			user("check", 0),
 			assistant([fauxToolCall("bash", { command: "ls" }, { id: "t1" })], 0, 1_000),
 			toolResult("t1", "ok", false),
-			assistant("", 2_000, 1_000, "error", "overloaded"),
-		];
-		renderBranch(mode, failedRun);
-		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 0:03", "Error: overloaded"]);
-
-		appendBranch(mode, [assistant([fauxToolCall("bash", { command: "pwd" }, { id: "t2" })], 10_000, 1_000)], 4);
-		expect(visibleLines(mode).slice(-1)).toEqual(["○ bash pwd"]);
-		appendBranch(mode, [toolResult("t2", "ok", false), assistant("Checked.", 12_000, 1_000, "stop")], 5);
-
-		expect(visibleLines(mode)).toEqual([
+			assistant("Listed.", 2_000, 1_000, "stop"),
+			assistant([fauxThinking("look again")], 10_000, 1_000, "error", "overloaded"),
+			assistant([fauxToolCall("bash", { command: "pwd" }, { id: "t2" })], 20_000, 1_000),
+			toolResult("t2", "ok", false),
+			assistant("Checked.", 22_000, 1_000, "stop"),
+		]);
+		expect(loaded).toEqual([
 			"check",
 			"▸ 1 tool · 0:03",
+			"Listed.",
+			"▸ 1 thinking · 0:01",
 			"Error: overloaded",
 			"▸ 1 tool · 0:03",
 			"Checked.",
 		]);
+		expect(followed).toEqual(loaded);
+	});
+
+	test("a run a hidden extension message restarts after the reply is a turn of its own, on load as when followed", () => {
+		const noteCheck: AgentMessage = {
+			role: "custom",
+			customType: "limen-note-check",
+			content: "Check the note.",
+			display: false,
+			timestamp: START + 5_000,
+		};
+		const { loaded, followed } = loadedAndFollowed([
+			user("fix the bug", 0),
+			assistant([fauxToolCall("bash", { command: "npm test" }, { id: "t1" })], 0, 1_000),
+			toolResult("t1", "1 failed", true),
+			assistant("Fixed it.", 2_000, 1_000, "stop"),
+			noteCheck,
+			assistant([fauxToolCall("bash", { command: "cat note.md" }, { id: "t2" })], 10_000, 1_000),
+			toolResult("t2", "ok", false),
+			assistant("Note updated.", 12_000, 1_000, "stop"),
+		]);
+		expect(loaded).toEqual([
+			"fix the bug",
+			"▸ 1 tool · 0:03 · 1 error",
+			"Fixed it.",
+			"▸ 1 tool · 0:03",
+			"Note updated.",
+		]);
+		expect(followed).toEqual(loaded);
 	});
 });

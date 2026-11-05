@@ -4329,6 +4329,10 @@ export class InteractiveMode {
 					const miss = cacheMisses.get(message);
 					if (miss) this.addCacheMissNotice(miss);
 				}
+				// The last turn stays open until the owner's next message, like a live one. A view never gets that
+				// message, so it folds a turn at its reply. Folding at each reply, not once per read, makes a file that
+				// is loaded at once show the same turns as one followed while the writer adds to it.
+				if (this.options.viewTail && message.stopReason !== "toolUse") this.turnFolds.endAnswered();
 			} else if (message.role === "toolResult") {
 				// Match tool results to pending tool components
 				const component = this.pendingTools.get(message.toolCallId);
@@ -4347,9 +4351,6 @@ export class InteractiveMode {
 			}
 		}
 
-		// The last turn stays open until the owner's next message, like a live one. A view never gets that message, so
-		// it folds a turn once its reply is in the file.
-		if (this.options.viewTail) this.turnFolds.endAnswered();
 		this.ui.requestRender();
 	}
 

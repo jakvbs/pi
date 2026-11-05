@@ -69,18 +69,12 @@ export class TurnFolds {
 	}
 
 	/**
-	 * Fold every finished turn, and the open turn once its reply has arrived. A view calls this after each read of the
-	 * file, because it never gets the owner's next message that {@link end} waits for.
+	 * Fold every finished turn, and the open turn once its reply has arrived. A view calls this at each reply, because
+	 * it never gets the owner's next message that {@link end} waits for.
 	 */
 	endAnswered(): void {
-		const rows = this.openTurn ? this.rowsOf(this.openTurn, undefined) : undefined;
-		if (rows?.some(isReply)) {
-			this.end();
-			return;
-		}
-		const finished = this.finished;
-		this.finished = [];
-		for (const turn of finished.reverse()) this.fold(turn, turn.last);
+		if (this.awaitsReply()) this.foldFinished();
+		else this.end();
 	}
 
 	/** Count the rows added since the open turn started as part of the row that opened it, such as its cost notice. */
@@ -115,11 +109,16 @@ export class TurnFolds {
 	 */
 	end(): void {
 		const open = this.openTurn;
-		const finished = this.finished;
 		this.openTurn = undefined;
-		this.finished = [];
 		// The latest first, so the rows of an earlier turn keep their place while a later one is spliced.
 		if (open) this.fold(open, undefined);
+		this.foldFinished();
+	}
+
+	/** Fold every turn finished since the last call, the latest first. */
+	private foldFinished(): void {
+		const finished = this.finished;
+		this.finished = [];
 		for (const turn of finished.reverse()) this.fold(turn, turn.last);
 	}
 
