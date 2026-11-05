@@ -183,6 +183,7 @@ import { ThinkingSelectorComponent } from "./components/thinking-selector.ts";
 import { type ToolDisplayMode, ToolExecutionComponent, TranscriptContainer } from "./components/tool-execution.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
+import { TurnFolds, transcriptRows } from "./components/turn-fold.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { editInExternalEditor } from "./external-editor.ts";
@@ -530,9 +531,8 @@ export class InteractiveMode {
 
 	// Thinking block visibility state
 	private hideThinkingBlock = false;
-	private hideToolCalls = false;
-	/** Latest top-level tool call of the current agent run; the working line names it while tool calls are hidden. */
-	private lastToolActivity: ToolExecutionComponent | undefined = undefined;
+	/** Folds each finished turn of the transcript into one row between the user message and the reply. */
+	private turnFolds: TurnFolds;
 	private outputPad = 1;
 	private readonly mermaidMarkdownTransformer: MarkdownTransformer = createMermaidMarkdownTransformer({
 		getMode: () => this.settingsManager.getMermaidRenderingMode(),
@@ -688,8 +688,8 @@ export class InteractiveMode {
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
-		this.hideToolCalls = this.settingsManager.getHideToolCalls();
 		this.outputPad = this.settingsManager.getOutputPad();
+		this.turnFolds = new TurnFolds(this.chatContainer, this.settingsManager.getFoldTurns(), this.outputPad);
 
 		// Register themes from resource loader and initialize
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
@@ -2197,8 +2197,9 @@ export class InteractiveMode {
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
-		this.hideToolCalls = this.settingsManager.getHideToolCalls();
 		this.outputPad = this.settingsManager.getOutputPad();
+		this.turnFolds.setOutputPad(this.outputPad);
+		this.turnFolds.setFolding(this.settingsManager.getFoldTurns());
 		this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
 		const clearOnShrink = this.settingsManager.getClearOnShrink();
 		this.ui.setClearOnShrink(clearOnShrink);
@@ -2490,20 +2491,13 @@ export class InteractiveMode {
 					(this.editor.borderColor ?? theme.getThinkingBorderColor(this.session.thinkingLevel || "off"))(text)
 			: undefined;
 		this.showStatusIndicator(
-			new WorkingStatusIndicator(this.ui, this.getWorkingMessage(), this.workingIndicatorOptions, colorFn),
+			new WorkingStatusIndicator(
+				this.ui,
+				this.workingMessage ?? this.defaultWorkingMessage,
+				this.workingIndicatorOptions,
+				colorFn,
+			),
 		);
-	}
-
-	private getWorkingMessage(): string {
-		const message = this.workingMessage ?? this.defaultWorkingMessage;
-		const tool = this.hideToolCalls ? this.lastToolActivity : undefined;
-		return tool ? `${message} · ${tool.getActivityLine()}` : message;
-	}
-
-	private refreshWorkingMessage(): void {
-		if (this.activeStatusIndicator?.kind === "working") {
-			this.activeStatusIndicator.setMessage(this.getWorkingMessage());
-		}
 	}
 
 	private setWorkingVisible(visible: boolean): void {
@@ -2529,7 +2523,7 @@ export class InteractiveMode {
 
 	private setHiddenThinkingLabel(label?: string): void {
 		this.hiddenThinkingLabel = label ?? this.defaultHiddenThinkingLabel;
-		for (const child of this.chatContainer.children) {
+		for (const child of transcriptRows(this.chatContainer)) {
 			if (child instanceof AssistantMessageComponent) {
 				child.setHiddenThinkingLabel(this.hiddenThinkingLabel);
 			}
@@ -2788,7 +2782,9 @@ export class InteractiveMode {
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;
-				this.refreshWorkingMessage();
+				if (this.activeStatusIndicator?.kind === "working") {
+					this.activeStatusIndicator.setMessage(message ?? this.defaultWorkingMessage);
+				}
 			},
 			setWorkingVisible: (visible) => this.setWorkingVisible(visible),
 			setWorkingIndicator: (options) => this.setWorkingIndicator(options),
@@ -3236,7 +3232,8 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.model.select", () => this.showModelSelector());
 		this.defaultEditor.onAction("app.tools.expand", () => this.toggleToolOutputExpansion());
 		this.defaultEditor.onAction("app.thinking.toggle", () => this.toggleThinkingBlockVisibility());
-		this.defaultEditor.onAction("app.tools.toggle", () => this.toggleToolCallVisibility());
+		this.defaultEditor.onAction("app.tools.toggle", () => this.toggleTurnFolding());
+		this.defaultEditor.onAction("app.turn.toggle", () => this.toggleLastTurn());
 		this.defaultEditor.onAction("app.editor.external", () => void this.handleOpenExternalEditor());
 		this.defaultEditor.onAction(
 			"app.message.copy",
@@ -3543,7 +3540,6 @@ export class InteractiveMode {
 		switch (event.type) {
 			case "agent_start":
 				this.pendingTools.clear();
-				this.lastToolActivity = undefined;
 				// Restore main escape handler if retry handler is still active
 				// (retry success event fires later, but we need main handler now)
 				if (this.retryEscapeHandler) {
@@ -3647,7 +3643,6 @@ export class InteractiveMode {
 										showImages: this.settingsManager.getShowImages(),
 										imageWidthCells: this.settingsManager.getImageWidthCells(),
 										outputPad: this.outputPad,
-										hidden: this.hideToolCalls,
 									},
 									this.getRegisteredToolDefinition(content.name),
 									this.ui,
@@ -3656,7 +3651,6 @@ export class InteractiveMode {
 								component.setDisplayMode(this.toolDisplayMode);
 								this.chatContainer.addChild(component);
 								this.pendingTools.set(content.id, component);
-								this.lastToolActivity = component;
 							} else {
 								const component = this.pendingTools.get(content.id);
 								if (component) {
@@ -3665,7 +3659,6 @@ export class InteractiveMode {
 							}
 						}
 					}
-					this.refreshWorkingMessage();
 					this.ui.requestRender();
 				}
 				break;
@@ -3696,7 +3689,6 @@ export class InteractiveMode {
 							});
 						}
 						this.pendingTools.clear();
-						this.refreshWorkingMessage();
 						this.maybeSuggestBugReport(this.streamingMessage);
 					} else {
 						// Args are now complete - trigger diff computation for edit tools
@@ -3730,7 +3722,6 @@ export class InteractiveMode {
 							showImages: this.settingsManager.getShowImages(),
 							imageWidthCells: this.settingsManager.getImageWidthCells(),
 							outputPad: this.outputPad,
-							hidden: this.hideToolCalls,
 						},
 						this.getRegisteredToolDefinition(event.toolName),
 						this.ui,
@@ -3741,8 +3732,6 @@ export class InteractiveMode {
 					this.pendingTools.set(event.toolCallId, component);
 				}
 				component.markExecutionStarted();
-				this.lastToolActivity = component;
-				this.refreshWorkingMessage();
 				this.ui.requestRender();
 				break;
 			}
@@ -3762,7 +3751,6 @@ export class InteractiveMode {
 				if (component) {
 					component.updateResult({ ...event.result, isError: event.isError, durationMs: event.durationMs });
 					this.pendingTools.delete(event.toolCallId);
-					this.refreshWorkingMessage();
 					this.ui.requestRender();
 				}
 				break;
@@ -3779,6 +3767,8 @@ export class InteractiveMode {
 					this.streamingMessage = undefined;
 				}
 				this.pendingTools.clear();
+				// An automatic retry continues the same turn in a new run.
+				if (!event.willRetry) this.turnFolds.end();
 
 				this.ui.requestRender();
 				break;
@@ -3982,6 +3972,22 @@ export class InteractiveMode {
 		message: AgentMessage,
 		options?: { populateHistory?: boolean; messageId?: string; timestamp?: string },
 	): void {
+		// A visible message that is not part of the agent's own activity ends the open turn and starts the next one.
+		const startsTurn =
+			message.role === "user" ||
+			message.role === "compactionSummary" ||
+			message.role === "branchSummary" ||
+			message.role === "bashExecution" ||
+			(message.role === "custom" && message.display);
+		if (startsTurn) this.turnFolds.end();
+		this.renderMessage(message, options);
+		if (startsTurn) this.turnFolds.start(message.timestamp);
+	}
+
+	private renderMessage(
+		message: AgentMessage,
+		options?: { populateHistory?: boolean; messageId?: string; timestamp?: string },
+	): void {
 		switch (message.role) {
 			case "bashExecution": {
 				const component = new BashExecutionComponent(
@@ -4128,6 +4134,7 @@ export class InteractiveMode {
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
 		this.pendingTools.clear();
+		this.turnFolds.reset();
 		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
 		// Cache misses are not persisted, unlike successful cache-warming usage.
 		// Re-derive them and inject them after the assistant messages that paid for them.
@@ -4173,7 +4180,6 @@ export class InteractiveMode {
 								showImages: this.settingsManager.getShowImages(),
 								imageWidthCells: this.settingsManager.getImageWidthCells(),
 								outputPad: this.outputPad,
-								hidden: this.hideToolCalls,
 							},
 							this.getRegisteredToolDefinition(content.name),
 							this.ui,
@@ -4224,6 +4230,8 @@ export class InteractiveMode {
 		for (const [toolCallId, component] of renderedPendingTools) {
 			this.pendingTools.set(toolCallId, component);
 		}
+		// A running turn folds at agent_end, like a live one.
+		if (!this.session.isStreaming) this.turnFolds.end();
 		this.ui.requestRender();
 	}
 
@@ -4747,8 +4755,8 @@ export class InteractiveMode {
 		if (isExpandable(activeHeader)) {
 			activeHeader.setExpanded(expanded);
 		}
-		for (const container of [this.loadedResourcesContainer, this.chatContainer, this.pendingMessagesContainer]) {
-			for (const child of container.children) {
+		for (const rows of [this.loadedResourcesContainer.children, transcriptRows(this.chatContainer), this.pendingMessagesContainer.children]) {
+			for (const child of rows) {
 				if (child instanceof ToolExecutionComponent) {
 					child.setDisplayMode(mode);
 				} else if (isExpandable(child)) {
@@ -4761,7 +4769,7 @@ export class InteractiveMode {
 
 	/** Update rendered assistant messages without rebuilding live tool components. */
 	private updateThinkingBlockVisibility(): void {
-		for (const child of this.chatContainer.children) {
+		for (const child of transcriptRows(this.chatContainer)) {
 			if (child instanceof AssistantMessageComponent) {
 				child.setHideThinkingBlock(this.hideThinkingBlock);
 			}
@@ -4776,17 +4784,20 @@ export class InteractiveMode {
 		this.showStatus(`Thinking blocks: ${this.hideThinkingBlock ? "hidden" : "visible"}`);
 	}
 
-	private toggleToolCallVisibility(): void {
-		this.hideToolCalls = !this.hideToolCalls;
-		this.settingsManager.setHideToolCalls(this.hideToolCalls);
-		for (const child of this.chatContainer.children) {
-			if (child instanceof ToolExecutionComponent) {
-				child.setHidden(this.hideToolCalls);
-			}
-		}
-		this.refreshWorkingMessage();
+	private toggleTurnFolding(): void {
+		const folding = !this.turnFolds.isFolding();
+		this.turnFolds.setFolding(folding);
+		this.settingsManager.setFoldTurns(folding);
 		this.ui.requestRender();
-		this.showStatus(`Tool calls: ${this.hideToolCalls ? "hidden" : "visible"}`);
+		this.showStatus(`Finished turns: ${folding ? "folded" : "shown in full"}`);
+	}
+
+	private toggleLastTurn(): void {
+		if (this.turnFolds.toggleLast()) {
+			this.ui.requestRender();
+		} else {
+			this.showStatus(this.turnFolds.isFolding() ? "No folded turn yet" : "Turn folding is off");
+		}
 	}
 
 	private async handleOpenExternalEditor(): Promise<void> {
@@ -5164,7 +5175,7 @@ export class InteractiveMode {
 					},
 					onShowImagesChange: (enabled) => {
 						this.settingsManager.setShowImages(enabled);
-						for (const child of this.chatContainer.children) {
+						for (const child of transcriptRows(this.chatContainer)) {
 							if (child instanceof ToolExecutionComponent) {
 								child.setShowImages(enabled);
 							}
@@ -5172,7 +5183,7 @@ export class InteractiveMode {
 					},
 					onImageWidthCellsChange: (width) => {
 						this.settingsManager.setImageWidthCells(width);
-						for (const child of this.chatContainer.children) {
+						for (const child of transcriptRows(this.chatContainer)) {
 							if (child instanceof ToolExecutionComponent) {
 								child.setImageWidthCells(width);
 							}
@@ -5282,8 +5293,9 @@ export class InteractiveMode {
 					onOutputPadChange: (padding) => {
 						this.settingsManager.setOutputPad(padding);
 						this.outputPad = padding;
-						for (const container of [this.chatContainer, this.pendingMessagesContainer]) {
-							for (const child of container.children) {
+						this.turnFolds.setOutputPad(padding);
+						for (const rows of [transcriptRows(this.chatContainer), this.pendingMessagesContainer.children]) {
+							for (const child of rows) {
 								if ("setOutputPad" in child && typeof child.setOutputPad === "function") {
 									child.setOutputPad(padding);
 								}
@@ -6648,8 +6660,9 @@ export class InteractiveMode {
 				return;
 			}
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
-			this.hideToolCalls = this.settingsManager.getHideToolCalls();
 			this.outputPad = this.settingsManager.getOutputPad();
+			this.turnFolds.setOutputPad(this.outputPad);
+			this.turnFolds.setFolding(this.settingsManager.getFoldTurns());
 			this.rebuildChatFromMessages();
 			chatRestoredBeforeSessionStart = true;
 		};
@@ -7018,7 +7031,8 @@ export class InteractiveMode {
 		const selectModel = this.getAppKeyDisplay("app.model.select");
 		const expandTools = this.getAppKeyDisplay("app.tools.expand");
 		const toggleThinking = this.getAppKeyDisplay("app.thinking.toggle");
-		const toggleTools = this.getAppKeyDisplay("app.tools.toggle");
+		const toggleFolding = this.getAppKeyDisplay("app.tools.toggle");
+		const toggleTurn = this.getAppKeyDisplay("app.turn.toggle");
 		const externalEditor = this.getAppKeyDisplay("app.editor.external");
 		const cycleModelBackward = this.getAppKeyDisplay("app.model.cycleBackward");
 		const copyMessage = this.getAppKeyDisplay("app.message.copy");
@@ -7064,7 +7078,8 @@ export class InteractiveMode {
 | \`${selectModel}\` | Open model selector |
 | \`${expandTools}\` | Toggle tool output expansion |
 | \`${toggleThinking}\` | Toggle thinking block visibility |
-| \`${toggleTools}\` | Toggle tool call visibility |
+| \`${toggleFolding}\` | Fold finished turns, or show them in full |
+| \`${toggleTurn}\` | Open or fold the last finished turn |
 | \`${externalEditor}\` | Edit message in external editor |
 | \`${copyMessage}\` | Copy selection or last assistant message |
 | \`${followUp}\` | Queue follow-up message |

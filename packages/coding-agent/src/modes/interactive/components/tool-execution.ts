@@ -24,8 +24,6 @@ import { theme } from "../theme/theme.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
 
 const FALLBACK_PREVIEW_LINES = 10;
-/** Widest main argument in an activity line, so the working line above the editor stays one row. */
-const ACTIVITY_ARGS_WIDTH = 60;
 
 export type ToolDisplayMode = "collapsed" | "expanded" | "compact";
 
@@ -42,8 +40,6 @@ export interface ToolExecutionOptions {
 	showImages?: boolean;
 	imageWidthCells?: number;
 	outputPad?: number;
-	/** Hide the whole row (call and result) while keeping its state, so it can be shown again. */
-	hidden?: boolean;
 }
 
 export class ToolExecutionComponent extends Container {
@@ -84,7 +80,6 @@ export class ToolExecutionComponent extends Container {
 		durationMs?: number;
 	};
 	private hideComponent = false;
-	private hidden: boolean;
 	/** Set by {@link TranscriptContainer}: a compact row that starts a group gets a blank line above it. */
 	private compactGroupStart = true;
 
@@ -105,7 +100,6 @@ export class ToolExecutionComponent extends Container {
 		this.showImages = options.showImages ?? true;
 		this.imageWidthCells = options.imageWidthCells ?? 60;
 		this.outputPad = options.outputPad ?? 1;
-		this.hidden = options.hidden ?? false;
 		this.ui = ui;
 		this.cwd = cwd;
 
@@ -257,19 +251,13 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
-	setHidden(hidden: boolean): void {
-		this.hidden = hidden;
-		this.invalidate();
-	}
-
 	isCompactRow(): boolean {
-		return this.displayMode === "compact" && !this.hidden;
+		return this.displayMode === "compact";
 	}
 
-	/** Plain one-line summary (status glyph, tool name, main argument) for showing activity outside the transcript. */
-	getActivityLine(): string {
-		const { status, name, args } = this.getRowSummary();
-		return `${STATUS_GLYPHS[status]} ${name} ${stripAnsi(truncateToWidth(args, ACTIVITY_ARGS_WIDTH))}`.trimEnd();
+	/** Whether the call finished with an error result. */
+	isError(): boolean {
+		return !this.isPartial && this.result?.isError === true;
 	}
 
 	private getRowSummary(): ToolRowSummary {
@@ -300,7 +288,7 @@ export class ToolExecutionComponent extends Container {
 
 	override render(width: number): string[] {
 		if (this.argsPending) this.updateDisplay();
-		if (this.hidden || this.hideComponent) {
+		if (this.hideComponent) {
 			return [];
 		}
 
@@ -341,7 +329,6 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override handleMouse(event: TuiMouseEvent): ReturnType<Container["handleMouse"]> {
-		if (this.hidden) return undefined;
 		if (this.displayMode === "compact") {
 			const rowY = this.compactGroupStart ? 1 : 0;
 			if (event.y !== rowY || event.type !== "click" || event.button !== "left") return undefined;

@@ -212,9 +212,10 @@
       "type": "boolean",
       "default": false
     },
-    "hideToolCalls": {
+    "foldTurns": {
       "type": "boolean",
-      "default": false
+      "description": "Fold each finished turn into one row between the user message and the reply.",
+      "default": true
     },
     "showCacheMissNotices": {
       "type": "boolean",

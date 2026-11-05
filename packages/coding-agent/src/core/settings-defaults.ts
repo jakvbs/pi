@@ -25,7 +25,7 @@ export const SETTINGS_DEFAULTS = {
 		},
 	},
 	hideThinkingBlock: false,
-	hideToolCalls: false,
+	foldTurns: true,
 	showCacheMissNotices: false,
 	quietStartup: false,
 	defaultProjectTrust: "ask",

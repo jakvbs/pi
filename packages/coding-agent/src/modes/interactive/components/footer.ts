@@ -6,7 +6,6 @@ import type { ContextUsage } from "../../../core/extensions/types.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import { addUsageToTotals, createUsageTotals, type UsageTotals } from "../../../core/usage-totals.ts";
 import { theme } from "../theme/theme.ts";
-import { keyText } from "./keybinding-hints.ts";
 
 /**
  * Sanitize text for display in a single-line status.
@@ -213,10 +212,6 @@ export class FooterComponent implements Component {
 			: false;
 		if (usageTotals.cost && !usingSubscription) {
 			statsParts.push(theme.fg("dim", `$${usageTotals.cost.toFixed(3)}`));
-		}
-		if (this.session.settingsManager.getHideToolCalls()) {
-			const toggleKey = keyText("app.tools.toggle");
-			statsParts.push(theme.fg("warning", toggleKey ? `tools hidden (${toggleKey})` : "tools hidden"));
 		}
 		if (areExperimentalFeaturesEnabled()) {
 			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
