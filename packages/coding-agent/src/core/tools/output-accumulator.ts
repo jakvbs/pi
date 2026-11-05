@@ -1,6 +1,7 @@
 import type { WriteStream } from "node:fs";
 import { open } from "node:fs/promises";
 import { createOutputFileStream } from "../../utils/output-files.ts";
+import { type OutputHead, OutputHeadCollector } from "./output-head.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult, truncateTail } from "./truncate.ts";
 
 export interface OutputAccumulatorOptions {
@@ -29,8 +30,8 @@ function byteLength(text: string): number {
  * Incrementally tracks streaming output with bounded memory.
  *
  * Appends decode chunks with a streaming UTF-8 decoder, keeps only a decoded
- * tail for display snapshots, and opens a temp file when the full output needs
- * to be preserved.
+ * tail for display snapshots and the start the byte limit can show, and opens a
+ * temp file when the full output needs to be preserved.
  */
 export class OutputAccumulator {
 	private readonly maxLines: number;
@@ -38,16 +39,14 @@ export class OutputAccumulator {
 	private readonly maxRollingBytes: number;
 	private readonly tempFilePrefix: string;
 	private readonly decoder = new TextDecoder();
+	/** The start of the decoded output, and its line and byte counts. */
+	private readonly start: OutputHeadCollector;
 
 	private rawChunks: Buffer[] = [];
 	private tailText = "";
 	private tailBytes = 0;
 	private tailStartsAtLineBoundary = true;
 	private totalRawBytes = 0;
-	private totalDecodedBytes = 0;
-	private completedLines = 0;
-	private totalLines = 0;
-	private hasOpenLine = false;
 	private finished = false;
 
 	private tempFilePath: string | undefined;
@@ -58,6 +57,7 @@ export class OutputAccumulator {
 		this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
 		this.maxRollingBytes = Math.max(this.maxBytes * 2, 1);
 		this.tempFilePrefix = options.tempFilePrefix ?? "pi-output";
+		this.start = new OutputHeadCollector(this.maxBytes);
 	}
 
 	append(data: Buffer): void {
@@ -92,16 +92,17 @@ export class OutputAccumulator {
 			maxLines: this.maxLines,
 			maxBytes: this.maxBytes,
 		});
-		const truncated = this.totalLines > this.maxLines || this.totalDecodedBytes > this.maxBytes;
+		const { totalLines, totalBytes } = this.start;
+		const truncated = totalLines > this.maxLines || totalBytes > this.maxBytes;
 		const truncatedBy = truncated
-			? (tailTruncation.truncatedBy ?? (this.totalDecodedBytes > this.maxBytes ? "bytes" : "lines"))
+			? (tailTruncation.truncatedBy ?? (totalBytes > this.maxBytes ? "bytes" : "lines"))
 			: null;
 		const truncation: TruncationResult = {
 			...tailTruncation,
 			truncated,
 			truncatedBy,
-			totalLines: this.totalLines,
-			totalBytes: this.totalDecodedBytes,
+			totalLines,
+			totalBytes,
 			maxLines: this.maxLines,
 			maxBytes: this.maxBytes,
 		};
@@ -185,32 +186,22 @@ export class OutputAccumulator {
 		}
 	}
 
+	/** The start of the output that `maxBytes` can show, and its size. Complete after `close()`. */
+	head(): OutputHead {
+		return this.start.head();
+	}
+
 	private appendDecodedText(text: string): void {
 		if (text.length === 0) {
 			return;
 		}
 
-		const bytes = byteLength(text);
-		this.totalDecodedBytes += bytes;
+		this.start.write(text);
 		this.tailText += text;
-		this.tailBytes += bytes;
+		this.tailBytes += byteLength(text);
 		if (this.tailBytes > this.maxRollingBytes * 2) {
 			this.trimTail();
 		}
-
-		let newlines = 0;
-		let lastNewline = -1;
-		for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) {
-			newlines++;
-			lastNewline = i;
-		}
-		if (newlines === 0) {
-			this.hasOpenLine = true;
-		} else {
-			this.completedLines += newlines;
-			this.hasOpenLine = lastNewline < text.length - 1;
-		}
-		this.totalLines = this.completedLines + (this.hasOpenLine ? 1 : 0);
 	}
 
 	private trimTail(): void {
@@ -241,7 +232,9 @@ export class OutputAccumulator {
 
 	private shouldUseTempFile(): boolean {
 		return (
-			this.totalRawBytes > this.maxBytes || this.totalDecodedBytes > this.maxBytes || this.totalLines > this.maxLines
+			this.totalRawBytes > this.maxBytes ||
+			this.start.totalBytes > this.maxBytes ||
+			this.start.totalLines > this.maxLines
 		);
 	}
 

@@ -64,11 +64,13 @@
 - The footer shows the session ID after the working directory, branch, and session name. Sessions started with `--no-session` show none, since nothing can resume them.
 - The footer stats line shows the context size in short form (`ctx 161k`) and only what changes the next step: the cache hit rate when a request after the first one hits less than 90% of its prompt, and the session cost when the model is billed per token. Session token totals (`↑ ↓ R W`) and a subscription's estimated cost moved out; `/session` still shows them. `(auto)` is gone; `(auto off)` marks disabled auto-compaction. Extension statuses join the stats line when they fit next to the model name, so the footer stays two lines; otherwise they keep a line of their own.
 - Each turn folds into one row between the user message and the reply, for example `▸ 12 tools · 9 thinking · 1:40 · 2 errors`; the reply's own thinking folds with it, and an abort or error notice stays visible. A running turn folds too: each response that called tools, tool call and notice folds into the row as soon as it finishes, so only the running tool calls and the response being written show below the row, that response's thinking as one `Thinking...` line; the reply folds the rest as soon as it arrives; a compaction in a running turn folds the part before it, and an automatic retry after a failed reply is a turn of its own. A click on the row or `Alt+O` (`app.turn.toggle`, the last turn) opens and folds it. `Alt+H` (`app.tools.toggle`) now turns folding on or off and saves the choice in the new `foldTurns` setting; it replaces hiding tool calls, whose setting, footer marker and tool activity on the working line are gone.
+- `read`, `bash`, `powershell`, `grep`, `find`, and `ls` keep the start of their output with one shared collector while it is read, which holds at most about three times the output limit. The find tool's result limit notice for custom `FindOperations.glob` now suggests a higher `limit`, as it does for fd.
 
 ### Fixed
 
 - Extension model calls through `ctx.modelRegistry` (`stream`, `streamSimple`, `complete`) now use the session's request settings: timeouts, provider retries, client identity, and `before_provider_headers` handlers. Before, they reached the provider without them.
 - Fixed `!` commands and RPC `bash` returning the full-output file path before the file was written, so reading the file right away could fail or find it incomplete.
+- Fixed the bash tool's truncation details counting only the first and last 512KB of output longer than 1MB; `totalLines` and `totalBytes` now count the whole output, as its notice already did.
 
 ## [1.5.0] - 2026-11-02
 

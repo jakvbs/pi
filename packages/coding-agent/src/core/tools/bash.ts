@@ -373,18 +373,18 @@ export function createShellToolDefinition(
 				return snapshot;
 			};
 
-			const formatOutput = async (snapshot: Awaited<ReturnType<typeof finishOutput>>, emptyText = "(no output)") => {
-				// The accumulator saved the whole output to `fullOutputPath` when it is longer than `maxBytes`.
-				const fullOutput = await output.readFullOutput(STRUCTURED_OUTPUT_MAX_BYTES);
-				const limited = limitOutput(fullOutput.content, maxBytes, {
-					path: snapshot.fullOutputPath ?? "",
+			/** The output's start and a notice, within `maxBytes`. The accumulator saved longer output to `fullOutputPath`. */
+			const formatOutput = (fullOutputPath: string | undefined, emptyText = "(no output)") => {
+				const head = output.head();
+				const limited = limitOutput(head, maxBytes, {
+					path: fullOutputPath ?? "",
 					firstLine: 1,
-					totalLines: snapshot.truncation.totalLines,
+					totalLines: head.totalLines,
 				});
 				const details: BashToolDetails | undefined = limited.truncation.truncated
-					? { truncation: limited.truncation, fullOutputPath: snapshot.fullOutputPath }
+					? { truncation: limited.truncation, fullOutputPath }
 					: undefined;
-				return { text: limited.text || emptyText, details, fullOutput };
+				return { text: limited.text || emptyText, details };
 			};
 
 			const appendStatus = (text: string, status: string) => `${text ? `${text}\n\n` : ""}${status}`;
@@ -402,7 +402,7 @@ export function createShellToolDefinition(
 					exitCode = result.exitCode;
 				} catch (err) {
 					const snapshot = await finishOutput();
-					const { text } = await formatOutput(snapshot, "");
+					const { text } = formatOutput(snapshot.fullOutputPath, "");
 					if (err instanceof Error && err.message === "aborted") {
 						throw new Error(appendStatus(text, "Command aborted"));
 					}
@@ -420,7 +420,8 @@ export function createShellToolDefinition(
 				}
 
 				const snapshot = await finishOutput();
-				const { text: outputText, details, fullOutput } = await formatOutput(snapshot);
+				const { text: outputText, details } = formatOutput(snapshot.fullOutputPath);
+				const fullOutput = await output.readFullOutput(STRUCTURED_OUTPUT_MAX_BYTES);
 				if (exitCode === null) {
 					throw new Error(appendStatus(outputText, "Command terminated without an exit code"));
 				}

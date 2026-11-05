@@ -1,15 +1,23 @@
 import { describe, expect, it } from "vitest";
+import type { OutputHead } from "../src/core/tools/output-head.ts";
 import { limitOutput } from "../src/core/tools/output-limit.ts";
 
 const location = { path: "/tmp/out.txt", firstLine: 1, totalLines: 1 };
 
+/** The whole text as an output head, counted by hand rather than by the collector. */
+const whole = (text: string): OutputHead => ({
+	text,
+	totalLines: text.split("\n").length,
+	totalBytes: Buffer.byteLength(text),
+});
+
 describe("limitOutput", () => {
 	it("returns text within the budget unchanged", () => {
-		expect(limitOutput("a\nb", 3, location)).toMatchObject({ text: "a\nb", truncation: { truncated: false } });
+		expect(limitOutput(whole("a\nb"), 3, location)).toMatchObject({ text: "a\nb", truncation: { truncated: false } });
 	});
 
 	it("shows the start of a first line that alone exceeds the budget, without splitting a character", () => {
-		const { text, truncation } = limitOutput("€".repeat(200), 300, location);
+		const { text, truncation } = limitOutput(whole("€".repeat(200)), 300, location);
 
 		const notice =
 			"[Line 1 alone exceeds the 300B output limit; showing its start. Full output: /tmp/out.txt. Search it with grep, or cut the line with bash.]";
@@ -22,6 +30,8 @@ describe("limitOutput", () => {
 	});
 
 	it("returns only the notice when the budget leaves no room for output", () => {
-		expect(limitOutput("x".repeat(100), 10, location).text).toMatch(/^\[Line 1 alone exceeds the 10B output limit/);
+		expect(limitOutput(whole("x".repeat(100)), 10, location).text).toMatch(
+			/^\[Line 1 alone exceeds the 10B output limit/,
+		);
 	});
 });

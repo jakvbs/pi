@@ -8,7 +8,8 @@
 
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { writeOutputFile } from "../../utils/output-files.ts";
-import { formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
+import { cutHead, headOf, type OutputHead } from "./output-head.ts";
+import { formatSize, type TruncationResult } from "./truncate.ts";
 
 /** Default of the `toolOutputMaxTokens` setting. */
 export const DEFAULT_TOOL_OUTPUT_MAX_TOKENS = 5000;
@@ -41,39 +42,34 @@ export interface LimitedOutput {
 }
 
 /**
- * `text` when it fits in `maxBytes`. Otherwise its start and a notice saying which lines of
- * `location` it shows and where to continue, together within `maxBytes`.
+ * The output when it fits in `maxBytes`. Otherwise its start and a notice saying which lines of
+ * `location` it shows and where to continue, together within `maxBytes`. `output` must be collected
+ * for a budget of at least `maxBytes`.
  */
-export function limitOutput(text: string, maxBytes: number, location: OutputLocation): LimitedOutput {
-	const { head, notice, truncation } = splitOutput(text, maxBytes, location);
-	if (notice === undefined) return { text, truncation };
+export function limitOutput(output: OutputHead, maxBytes: number, location: OutputLocation): LimitedOutput {
+	const { head, notice, truncation } = splitOutput(output, maxBytes, location);
+	if (notice === undefined) return { text: head, truncation };
 	return { text: head ? `${head}\n\n${notice}` : notice, truncation };
 }
 
-/** Lines are not limited, only bytes. A finite number, because truncation results are saved as JSON. */
-const NO_LINE_LIMIT = Number.MAX_SAFE_INTEGER;
-
-/** The start of `text` that {@link limitOutput} keeps, a prefix of `text`, and the notice when it cuts. */
+/** The start of the output that {@link limitOutput} keeps, a prefix of the output, and the notice when it cuts. */
 function splitOutput(
-	text: string,
+	output: OutputHead,
 	maxBytes: number,
 	location: OutputLocation,
 ): { head: string; notice?: string; truncation: TruncationResult } {
-	const whole = truncateHead(text, { maxLines: NO_LINE_LIMIT, maxBytes });
-	if (!whole.truncated) return { head: text, truncation: whole };
+	const whole = cutHead(output, maxBytes);
+	if (!whole.truncated) return { head: output.text, truncation: whole };
 	const lastPossibleLine = location.firstLine + location.totalLines - 1;
 	const longestNotice = Math.max(
 		...[true, false].map((partialLine) =>
 			Buffer.byteLength(formatNotice(location, { lastLine: lastPossibleLine, partialLine }, maxBytes), "utf-8"),
 		),
 	);
-	const truncation = truncateHead(text, {
-		maxLines: NO_LINE_LIMIT,
-		maxBytes: Math.max(0, maxBytes - longestNotice - "\n\n".length),
-	});
+	const truncation = cutHead(output, Math.max(0, maxBytes - longestNotice - "\n\n".length));
 	const head = truncation.firstLineExceedsLimit
 		? // Streaming decode drops an incomplete trailing character instead of emitting a replacement.
-			new TextDecoder().decode(Buffer.from(text, "utf-8").subarray(0, truncation.maxBytes), { stream: true })
+			new TextDecoder().decode(Buffer.from(output.text, "utf-8").subarray(0, truncation.maxBytes), { stream: true })
 		: truncation.content;
 	const notice = formatNotice(
 		location,
@@ -111,8 +107,8 @@ export async function limitToolResultText(
 	const text = content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
 	if (Buffer.byteLength(text, "utf-8") <= maxBytes) return content;
 	const path = await writeOutputFile("pi-tool-output", ".txt", text);
-	const totalLines = text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
-	const { head, notice } = splitOutput(text, maxBytes, { path, firstLine: 1, totalLines });
+	const output = headOf(text, maxBytes);
+	const { head, notice } = splitOutput(output, maxBytes, { path, firstLine: 1, totalLines: output.totalLines });
 	const limited: (TextContent | ImageContent)[] = [];
 	let lastText: TextContent | undefined;
 	// Offset of the block in `text`; `head` is a prefix of `text`.

@@ -2,11 +2,12 @@ import { readdir as fsReaddir, stat as fsStat } from "node:fs/promises";
 import nodePath from "path";
 import { type Static, Type } from "typebox";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { cutHead, OutputHeadCollector } from "./output-head.ts";
 import { DEFAULT_TOOL_OUTPUT_MAX_TOKENS, OUTPUT_NOTICE_RESERVE_BYTES, toolOutputMaxBytes } from "./output-limit.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { lsRenderers } from "./renderers/ls.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
-import { formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
+import { formatSize, type TruncationResult } from "./truncate.ts";
 
 const lsSchema = Type.Object({
 	path: Type.Optional(Type.String({ description: "Directory to list (default: current directory)" })),
@@ -114,10 +115,11 @@ export function createLsToolDefinition(
 						entries.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 
 						// Format entries with directory indicators.
-						const results: string[] = [];
+						const results = new OutputHeadCollector(maxBytes);
+						let resultCount = 0;
 						let entryLimitReached = false;
 						for (const entry of entries) {
-							if (results.length >= effectiveLimit) {
+							if (resultCount >= effectiveLimit) {
 								entryLimitReached = true;
 								break;
 							}
@@ -131,19 +133,19 @@ export function createLsToolDefinition(
 								// Skip entries we cannot stat.
 								continue;
 							}
-							results.push(entry + suffix);
+							results.writeLine(entry + suffix);
+							resultCount++;
 						}
 
 						signal?.removeEventListener("abort", onAbort);
 
-						if (results.length === 0) {
+						if (resultCount === 0) {
 							resolve({ content: [{ type: "text", text: "(empty directory)" }], details: undefined });
 							return;
 						}
 
-						const rawOutput = results.join("\n");
-						// Apply byte truncation. There is no separate line limit because entry count is already capped.
-						const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER, maxBytes });
+						// There is no separate line limit because entry count is already capped.
+						const truncation = cutHead(results.head(), maxBytes);
 						let output = truncation.content;
 						const details: LsToolDetails = {};
 						// Build actionable notices for truncation and entry limits.
