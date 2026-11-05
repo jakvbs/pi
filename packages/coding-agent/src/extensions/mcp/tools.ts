@@ -15,7 +15,6 @@ import type { ImageContent, JsonValue, TextContent } from "@earendil-works/pi-ai
 import {
 	type CallToolResult,
 	type ContentBlock,
-	type McpOutputSaver,
 	type McpRequestOptions,
 	type Tool as McpTool,
 	normalizeMcpInputSchema,
@@ -55,6 +54,9 @@ export interface McpToolDetails {
 	server: string;
 	tool: string;
 }
+
+/** Saves data the model cannot get in full, such as a binary resource, and returns a path the model can read. */
+export type McpOutputSaver = (data: string | Uint8Array, extension: string) => Promise<string>;
 
 /** Saves a binary resource to a temp file and returns its path. */
 export function saveToTempFile(data: string | Uint8Array, extension: string): Promise<string> {

@@ -191,7 +191,7 @@ export class RemoteProcess {
   - The store's `withRefreshLock` throws `McpRefreshLockBusyError` when the lock stays held (start then goes to the
     browser step); other lock errors fail the sign-in. Aborting ends the wait for the lock.
 - **WP4:** from `@earendil-works/pi-mcp`: `createMcpToolName`, `mcpNamespace`, `normalizeMcpInputSchema`,
-  `limitMcpContent(content, saveOutput?)`, `MCP_OUTPUT_MAX_BYTES`, `validateMcpServerConfig(name, raw, options?)`
+  `validateMcpServerConfig(name, raw, options?)`
   returning `{ kind: "stdio" | "http", config }` (unknown fields kept as `unknown`) or `{ kind: "invalid", error }`,
   `isMcpServerOverride`. Apps validate their own fields (p2: `shared`, `runOn`, project rules) on the result.
   `"cimd"` is refused unless `checkMetadataDocumentCallback` is passed (p2 should not pass it).
@@ -405,8 +405,9 @@ nothing user-visible, so no entry unless behavior changed).
 **Build:**
 
 - `createMcpToolName(server, tool, isTaken)` and `mcpNamespace(server)` (today in coding-agent `extensions/mcp/tools.ts`
-  and `core/mcp-servers.ts`), the input-schema normalization (object type, `properties` present) and the result size
-  limit (`MCP_OUTPUT_MAX_BYTES`, `limitMcpContent`) without pi-tui rendering.
+  and `core/mcp-servers.ts`), and the input-schema normalization (object type, `properties` present) without pi-tui
+  rendering. The result size limit stays with the application: pi limits every tool result, p2 through the Durable
+  harness's `outputLimits`.
 - Parsing and validation of the standard `mcpServers` shape: stdio (`command`, `args`, `env`, `cwd`), HTTP (`url`,
   `headers`), `oauth`, `enabled`. pi-only fields (`exposure`, `toolExposure`, `auth.provider`, `autoEnableCodemode`) stay
   in coding-agent, which extends the shared parser.
