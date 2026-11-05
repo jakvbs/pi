@@ -14,12 +14,7 @@ import {
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
-import {
-	DEFAULT_TOOL_OUTPUT_MAX_TOKENS,
-	limitOutput,
-	OUTPUT_NOTICE_RESERVE_BYTES,
-	toolOutputMaxBytes,
-} from "./output-limit.ts";
+import { limitOutput, toolOutputBudgetBytes } from "./output-limit.ts";
 import { BASH_UPDATE_THROTTLE_MS, createShellRenderers } from "./renderers/bash.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import type { TruncationResult } from "./truncate.ts";
@@ -287,8 +282,7 @@ export function createShellToolDefinition(
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
 	// The status line, such as the exit code, follows the limited output.
-	const maxBytes =
-		toolOutputMaxBytes(options?.maxOutputTokens ?? DEFAULT_TOOL_OUTPUT_MAX_TOKENS) - OUTPUT_NOTICE_RESERVE_BYTES;
+	const maxBytes = toolOutputBudgetBytes(options?.maxOutputTokens);
 	return {
 		name: config.name,
 		label: config.label,
