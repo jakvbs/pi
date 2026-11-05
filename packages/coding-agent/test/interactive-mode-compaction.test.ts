@@ -19,7 +19,11 @@ describe("InteractiveMode compaction events", () => {
 			cost: { input: 0.01, output: 0.02, cacheRead: 0.03, cacheWrite: 0.065, total: 0.125 },
 		};
 		const addCompactionCostNotice = Reflect.get(InteractiveMode.prototype, "addCompactionCostNotice") as (
-			this: { chatContainer: Container; settingsManager: { getShowCacheMissNotices(): boolean } },
+			this: {
+				chatContainer: Container;
+				settingsManager: { getShowCacheMissNotices(): boolean };
+				turnFolds: { keepWithOpener(): void };
+			},
 			notice: {
 				type: "compaction_cost";
 				kind: "compaction" | "branch_summary";
@@ -31,6 +35,7 @@ describe("InteractiveMode compaction events", () => {
 		const enabled = {
 			chatContainer: new Container(),
 			settingsManager: { getShowCacheMissNotices: () => true },
+			turnFolds: { keepWithOpener: vi.fn() },
 		};
 		addCompactionCostNotice.call(enabled, { type: "compaction_cost", kind: "compaction", usage });
 		addCompactionCostNotice.call(enabled, {
@@ -45,6 +50,7 @@ describe("InteractiveMode compaction events", () => {
 		const disabled = {
 			chatContainer: new Container(),
 			settingsManager: { getShowCacheMissNotices: () => false },
+			turnFolds: { keepWithOpener: vi.fn() },
 		};
 		addCompactionCostNotice.call(disabled, { type: "compaction_cost", kind: "compaction", usage });
 		expect(disabled.chatContainer.children).toHaveLength(0);
@@ -217,6 +223,7 @@ describe("InteractiveMode compaction events", () => {
 			clearStatusIndicator: vi.fn(),
 			flushCompactionQueue: vi.fn().mockResolvedValue(undefined),
 			settingsManager: { getShowTerminalProgress: () => false, getShowCacheMissNotices: () => true },
+			turnFolds: { keepWithOpener: vi.fn() },
 			ui: { requestRender: vi.fn(), terminal: { setProgress: vi.fn() } },
 		};
 		const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (

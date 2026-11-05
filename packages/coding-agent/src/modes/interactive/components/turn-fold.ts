@@ -3,6 +3,7 @@
 import { type Component, Container, type TuiMouseEvent, truncateToWidth } from "@earendil-works/pi-tui";
 import { theme } from "../theme/theme.ts";
 import { AssistantMessageComponent } from "./assistant-message.ts";
+import { CustomMessageComponent } from "./custom-message.ts";
 import { ToolExecutionComponent, TranscriptContainer } from "./tool-execution.ts";
 
 /** What a folded turn did, as its row shows it. */
@@ -12,15 +13,20 @@ export interface TurnSummary {
 	thinking: number;
 	/** Tool calls that ended with an error. */
 	errors: number;
-	/** From the message that opened the turn to the end of its last response; undefined without a response. */
+	/**
+	 * From the message that opened the turn to the end of its last response or tool result, whichever is later;
+	 * undefined without a response.
+	 */
 	durationMs: number | undefined;
 }
 
 /**
  * Tracks the open turn of a transcript and folds it when it ends. A turn starts after a row that opens it (a user
- * message, a compaction marker) and ends at the next such row or when the agent run ends. Its reply is the last
+ * message, a compaction marker, an extension message after a finished reply) and ends at the next such row, when the
+ * agent run ends, or when an automatic retry is given up. Its reply is the last
  * assistant message whose stop reason is not `toolUse`; everything else the turn added folds into one row above the
- * reply, except rows the reply is followed by that are not tool calls (notices about the reply).
+ * reply, except extension messages (notices that stay visible in their place) and rows the reply is followed by that
+ * are not tool calls (notices about the reply).
  */
 export class TurnFolds {
 	private readonly transcript: Container;
@@ -40,6 +46,17 @@ export class TurnFolds {
 		this.openTurn = { after: children[children.length - 1], startedAt };
 	}
 
+	/** Count the rows added since the open turn started as part of the row that opened it, such as its cost notice. */
+	keepWithOpener(): void {
+		if (this.openTurn) this.openTurn.after = this.transcript.children[this.transcript.children.length - 1];
+	}
+
+	/** Whether a turn is open and still waits for its reply, so a message from an extension belongs inside it. */
+	awaitsReply(): boolean {
+		const rows = this.openRows();
+		return rows !== undefined && !rows.some(isReply);
+	}
+
 	/** Forget the open turn without folding it, for a transcript that is about to be rebuilt. */
 	reset(): void {
 		this.openTurn = undefined;
@@ -47,36 +64,45 @@ export class TurnFolds {
 
 	/** Fold the open turn, if any. A turn without tool calls and thinking keeps its rows and gets no fold row. */
 	end(): void {
+		const rows = this.openRows();
 		const turn = this.openTurn;
 		this.openTurn = undefined;
-		if (!turn) return;
-		const children = this.transcript.children;
-		const start = turn.after === undefined ? 0 : children.indexOf(turn.after) + 1;
-		// The row that opened the turn is gone: the transcript was cleared since.
-		if (start === 0 && turn.after !== undefined) return;
+		if (!rows || !turn) return;
 
-		const rows = children.slice(start);
-		let reply: AssistantMessageComponent | undefined;
-		let replyIndex = -1;
-		for (let i = rows.length - 1; i >= 0 && !reply; i--) {
-			const row = rows[i];
-			if (row instanceof AssistantMessageComponent && row.getMessage()?.stopReason !== "toolUse") {
-				reply = row;
-				replyIndex = i;
-			}
-		}
-		const activity: Component[] = [];
-		const afterReply: Component[] = [];
-		rows.forEach((row, index) => {
-			if (index === replyIndex) return;
-			const folds = replyIndex < 0 || index < replyIndex || row instanceof ToolExecutionComponent;
-			(folds ? activity : afterReply).push(row);
-		});
+		const reply = rows.findLast(isReply);
+		const replyIndex = reply ? rows.lastIndexOf(reply) : -1;
+		const folds = (row: Component, index: number): boolean =>
+			index !== replyIndex &&
+			!(row instanceof CustomMessageComponent) &&
+			(replyIndex < 0 || index < replyIndex || row instanceof ToolExecutionComponent);
+		const activity = rows.filter(folds);
 		const summary = summarizeTurn(activity, reply, turn.startedAt);
 		if (summary.tools === 0 && summary.thinking === 0) return;
 
+		// The row takes the place of the first row it folds, or of the reply if that comes first; the rest keep order.
 		const fold = new TurnFoldComponent(activity, reply, summary, this.folding, this.outputPad);
-		children.splice(start, rows.length, fold, ...(reply ? [reply] : []), ...afterReply);
+		const shown: Component[] = [];
+		let placed = false;
+		rows.forEach((row, index) => {
+			const folded = folds(row, index);
+			if (!placed && (folded || index === replyIndex)) {
+				shown.push(fold);
+				placed = true;
+			}
+			if (!folded) shown.push(row);
+		});
+		const children = this.transcript.children;
+		children.splice(children.length - rows.length, rows.length, ...shown);
+	}
+
+	/** The rows of the open turn; undefined without an open turn or when its opening row was cleared since. */
+	private openRows(): Component[] | undefined {
+		const turn = this.openTurn;
+		if (!turn) return undefined;
+		const children = this.transcript.children;
+		if (turn.after === undefined) return children.slice();
+		const index = children.indexOf(turn.after);
+		return index < 0 ? undefined : children.slice(index + 1);
 	}
 
 	/** Whether finished turns fold. */
@@ -122,6 +148,11 @@ export function* transcriptRows(transcript: Container): Generator<Component> {
 	}
 }
 
+/** Whether a row is the turn's reply. */
+function isReply(row: Component): row is AssistantMessageComponent {
+	return row instanceof AssistantMessageComponent && row.isReply();
+}
+
 /** Count what a turn did from its rows. */
 function summarizeTurn(
 	activity: readonly Component[],
@@ -136,11 +167,14 @@ function summarizeTurn(
 		if (row instanceof ToolExecutionComponent) {
 			tools++;
 			if (row.isError()) errors++;
+			const finishedAt = row.getFinishedAt();
+			if (finishedAt !== undefined) lastEnd = Math.max(lastEnd ?? finishedAt, finishedAt);
 		} else if (row instanceof AssistantMessageComponent) {
 			const message = row.getMessage();
 			if (!message) continue;
 			thinking += message.content.filter((part) => part.type === "thinking" && part.thinking.trim()).length;
-			lastEnd = message.timestamp + (message.durationMs ?? 0);
+			const end = message.timestamp + (message.durationMs ?? 0);
+			lastEnd = Math.max(lastEnd ?? end, end);
 		}
 	}
 	const durationMs = lastEnd !== undefined && lastEnd >= startedAt ? lastEnd - startedAt : undefined;

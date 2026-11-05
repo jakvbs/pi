@@ -3748,7 +3748,12 @@ export class InteractiveMode {
 				if (event.isError) this.maybeShowInstallChangeWarning();
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
-					component.updateResult({ ...event.result, isError: event.isError, durationMs: event.durationMs });
+					component.updateResult({
+						...event.result,
+						isError: event.isError,
+						durationMs: event.durationMs,
+						timestamp: Date.now(),
+					});
 					this.pendingTools.delete(event.toolCallId);
 					this.ui.requestRender();
 				}
@@ -3850,6 +3855,8 @@ export class InteractiveMode {
 				this.clearStatusIndicator("retry");
 				// Show error only on final failure (success shows normal response)
 				if (!event.success) {
+					// The run that ended for this retry kept its turn open; no run follows a failed or cancelled retry.
+					this.turnFolds.end();
 					this.showError(`Retry failed after ${event.attempt} attempts: ${event.finalError || "Unknown error"}`);
 				}
 				this.ui.requestRender();
@@ -3968,13 +3975,14 @@ export class InteractiveMode {
 		message: AgentMessage,
 		options?: { populateHistory?: boolean; messageId?: string; timestamp?: string },
 	): void {
-		// A visible message that is not part of the agent's own activity ends the open turn and starts the next one.
+		// The owner's own messages and summary markers end the open turn and start the next one. A displayed extension
+		// message starts one only when no run waits for its reply; inside a run it is a notice that stays visible.
 		const startsTurn =
 			message.role === "user" ||
 			message.role === "compactionSummary" ||
 			message.role === "branchSummary" ||
 			message.role === "bashExecution" ||
-			(message.role === "custom" && message.display);
+			(message.role === "custom" && message.display && !this.turnFolds.awaitsReply());
 		if (startsTurn) this.turnFolds.end();
 		this.renderMessage(message, options);
 		if (startsTurn) this.turnFolds.start(message.timestamp);
@@ -4305,6 +4313,8 @@ export class InteractiveMode {
 		this.chatContainer.addChild(
 			new ThemedText(() => theme.fg("warning", `${label}: ${formatTokens(tokens)} tokens billed${cost}`), 1, 0),
 		);
+		// The notice directly follows its marker, which opened a turn; it must not fold with that turn's activity.
+		this.turnFolds.keepWithOpener();
 	}
 
 	private static countDroppedThinkingBlocks(message: AssistantMessage): number {

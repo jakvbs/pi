@@ -78,6 +78,7 @@ export class ToolExecutionComponent extends Container {
 		isError: boolean;
 		details?: any;
 		durationMs?: number;
+		timestamp?: number;
 	};
 	private hideComponent = false;
 	/** Set by {@link TranscriptContainer}: a compact row that starts a group gets a blank line above it. */
@@ -219,6 +220,8 @@ export class ToolExecutionComponent extends Container {
 			isError: boolean;
 			/** Execution time of a final result. */
 			durationMs?: number;
+			/** When a final result arrived, in ms since the epoch; tool result messages carry it. */
+			timestamp?: number;
 		},
 		isPartial = false,
 	): void {
@@ -253,6 +256,11 @@ export class ToolExecutionComponent extends Container {
 
 	isCompactRow(): boolean {
 		return this.displayMode === "compact";
+	}
+
+	/** When the call's final result arrived, in ms since the epoch; undefined while it runs or when not recorded. */
+	getFinishedAt(): number | undefined {
+		return this.isPartial ? undefined : this.result?.timestamp;
 	}
 
 	/** Whether the call finished with an error result. */
