@@ -5,11 +5,12 @@ import path from "path";
 import { type Static, Type } from "typebox";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { cutHead, OutputHeadCollector } from "./output-head.ts";
 import { DEFAULT_TOOL_OUTPUT_MAX_TOKENS, OUTPUT_NOTICE_RESERVE_BYTES, toolOutputMaxBytes } from "./output-limit.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { grepRenderers } from "./renderers/grep.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
-import { formatSize, GREP_MAX_LINE_LENGTH, type TruncationResult, truncateHead, truncateLine } from "./truncate.ts";
+import { formatSize, GREP_MAX_LINE_LENGTH, type TruncationResult, truncateLine } from "./truncate.ts";
 
 const grepSchema = Type.Object({
 	pattern: Type.String({ description: "Search pattern (regex or literal string)" }),
@@ -165,7 +166,8 @@ export function createGrepToolDefinition(
 						let linesTruncated = false;
 						let aborted = false;
 						let killedDueToLimit = false;
-						const outputLines: string[] = [];
+						// Byte truncation below drops everything past the budget, so only the start is kept (#9276).
+						const output = new OutputHeadCollector(maxBytes);
 
 						const cleanup = () => {
 							rl.close();
@@ -186,9 +188,6 @@ export function createGrepToolDefinition(
 							stderr += chunk.toString();
 						});
 
-						// Size of the full output, including lines past the byte cap that are counted but not stored.
-						let outputBytes = 0;
-						let outputLineCount = 0;
 						let lastFile: string | undefined;
 						// Set at the last allowed match. rg still sends that match's trailing context, kept up to
 						// trailingContextEnd, and the limit notice waits for proof of one more match.
@@ -210,11 +209,7 @@ export function createGrepToolDefinition(
 							const line = isMatch
 								? `${relativePath}:${lineNumber}: ${truncatedText}`
 								: `${relativePath}-${lineNumber}- ${truncatedText}`;
-							// Byte truncation below drops everything past the cap, so keep counting but stop storing (#9276).
-							// outputBytes counts a newline after every line; the joined output has one fewer.
-							if (outputBytes - 1 <= maxBytes) outputLines.push(line);
-							outputBytes += Buffer.byteLength(line, "utf-8") + 1;
-							outputLineCount++;
+							output.writeLine(line);
 						};
 
 						rl.on("line", (line) => {
@@ -271,12 +266,9 @@ export function createGrepToolDefinition(
 								return;
 							}
 
-							const rawOutput = outputLines.join("\n");
-							// Apply byte truncation. There is no line limit here because the match limit already capped rows.
-							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER, maxBytes });
-							truncation.totalLines = outputLineCount;
-							truncation.totalBytes = outputBytes - 1;
-							let output = truncation.content;
+							// There is no line limit here because the match limit already capped rows.
+							const truncation = cutHead(output.head(), maxBytes);
+							let text = truncation.content;
 							const details: GrepToolDetails = {};
 							// Build actionable notices for truncation and match limits.
 							const notices: string[] = [];
@@ -296,10 +288,10 @@ export function createGrepToolDefinition(
 								);
 								details.linesTruncated = true;
 							}
-							if (notices.length > 0) output += `\n\n[${notices.join(". ")}]`;
+							if (notices.length > 0) text += `\n\n[${notices.join(". ")}]`;
 							settle(() =>
 								resolve({
-									content: [{ type: "text", text: output }],
+									content: [{ type: "text", text }],
 									details: Object.keys(details).length > 0 ? details : undefined,
 								}),
 							);

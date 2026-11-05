@@ -1227,7 +1227,9 @@ describe("Coding Agent Tools", () => {
 				undefined,
 				fakeCtx(testDir),
 			);
-			expect(getTextOutput(over)).toBe("a.txt\n\n[1 results limit reached]");
+			expect(getTextOutput(over)).toBe(
+				"a.txt\n\n[1 results limit reached. Use limit=2 for more, or refine pattern]",
+			);
 			expect(over.details).toEqual({ resultLimitReached: 1 });
 			expect(requestedLimits).toEqual([3, 2]);
 		});

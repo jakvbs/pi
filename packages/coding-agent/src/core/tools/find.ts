@@ -4,11 +4,12 @@ import path from "path";
 import { type Static, Type } from "typebox";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { cutHead, OutputHeadCollector } from "./output-head.ts";
 import { DEFAULT_TOOL_OUTPUT_MAX_TOKENS, OUTPUT_NOTICE_RESERVE_BYTES, toolOutputMaxBytes } from "./output-limit.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { findRenderers } from "./renderers/find.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
-import { formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
+import { formatSize, type TruncationResult } from "./truncate.ts";
 
 /** Relativize a find result against the search root and normalize it to posix separators. */
 export function relativizeFindResultPath(
@@ -116,27 +117,10 @@ export function createFindToolDefinition(
 						// fd treats --max-results 0 as unlimited, so a limit below 1 means 1.
 						const effectiveLimit = Math.max(1, Math.floor(limit ?? DEFAULT_LIMIT));
 						const ops = customOps ?? defaultFindOperations;
-
-						// If custom operations provide glob(), use that instead of fd.
-						if (customOps?.glob) {
-							if (!(await ops.exists(searchPath))) {
-								settle(() => reject(new Error(`Path not found: ${searchPath}`)));
-								return;
-							}
-							if (signal?.aborted) {
-								settle(() => reject(new Error("Operation aborted")));
-								return;
-							}
-							// One result past the limit tells "exactly N matches" apart from "more than N".
-							const results = await ops.glob(pattern, searchPath, {
-								ignore: ["**/node_modules/**", "**/.git/**"],
-								limit: effectiveLimit + 1,
-							});
-							if (signal?.aborted) {
-								settle(() => reject(new Error("Operation aborted")));
-								return;
-							}
-							if (results.length === 0) {
+						// Results past the byte budget are counted but not kept.
+						const results = new OutputHeadCollector(maxBytes);
+						const resolveResults = (resultCount: number, resultLimitReached: boolean) => {
+							if (resultCount === 0) {
 								settle(() =>
 									resolve({
 										content: [{ type: "text", text: "No files found matching pattern" }],
@@ -145,19 +129,14 @@ export function createFindToolDefinition(
 								);
 								return;
 							}
-
-							const resultLimitReached = results.length > effectiveLimit;
-							// Relativize paths against the search root for stable output.
-							const relativized = results
-								.slice(0, effectiveLimit)
-								.map((p) => relativizeFindResultPath(p, searchPath));
-							const rawOutput = relativized.join("\n");
-							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER, maxBytes });
+							const truncation = cutHead(results.head(), maxBytes);
 							let resultOutput = truncation.content;
 							const details: FindToolDetails = {};
 							const notices: string[] = [];
 							if (resultLimitReached) {
-								notices.push(`${effectiveLimit} results limit reached`);
+								notices.push(
+									`${effectiveLimit} results limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
+								);
 								details.resultLimitReached = effectiveLimit;
 							}
 							if (truncation.truncated) {
@@ -173,6 +152,32 @@ export function createFindToolDefinition(
 									details: Object.keys(details).length > 0 ? details : undefined,
 								}),
 							);
+						};
+
+						// If custom operations provide glob(), use that instead of fd.
+						if (customOps?.glob) {
+							if (!(await ops.exists(searchPath))) {
+								settle(() => reject(new Error(`Path not found: ${searchPath}`)));
+								return;
+							}
+							if (signal?.aborted) {
+								settle(() => reject(new Error("Operation aborted")));
+								return;
+							}
+							// One result past the limit tells "exactly N matches" apart from "more than N".
+							const found = await ops.glob(pattern, searchPath, {
+								ignore: ["**/node_modules/**", "**/.git/**"],
+								limit: effectiveLimit + 1,
+							});
+							if (signal?.aborted) {
+								settle(() => reject(new Error("Operation aborted")));
+								return;
+							}
+							// Relativize paths against the search root for stable output.
+							for (const result of found.slice(0, effectiveLimit)) {
+								results.writeLine(relativizeFindResultPath(result, searchPath));
+							}
+							resolveResults(Math.min(found.length, effectiveLimit), found.length > effectiveLimit);
 							return;
 						}
 
@@ -225,12 +230,7 @@ export function createFindToolDefinition(
 						const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "pipe"] });
 						const rl = createInterface({ input: child.stdout });
 						let stderr = "";
-						// Results within the limit, stored only up to the first one past the byte cap:
-						// truncateHead drops the rest anyway, so they are counted but not kept.
-						const storedResults: string[] = [];
 						let resultCount = 0;
-						// Byte size of all results within the limit, each counted with a trailing newline.
-						let outputBytes = 0;
 						let resultLimitReached = false;
 
 						stopChild = () => {
@@ -254,10 +254,8 @@ export function createFindToolDefinition(
 								resultLimitReached = true;
 								return;
 							}
-							const result = relativizeFindResultPath(line, searchPath);
 							resultCount++;
-							if (outputBytes - 1 <= maxBytes) storedResults.push(result);
-							outputBytes += Buffer.byteLength(result, "utf-8") + 1;
+							results.writeLine(relativizeFindResultPath(line, searchPath));
 						});
 
 						child.on("error", (error) => {
@@ -276,45 +274,7 @@ export function createFindToolDefinition(
 								settle(() => reject(new Error(errorMsg)));
 								return;
 							}
-							if (resultCount === 0) {
-								settle(() =>
-									resolve({
-										content: [{ type: "text", text: "No files found matching pattern" }],
-										details: undefined,
-									}),
-								);
-								return;
-							}
-
-							// Stored results extend past the byte cap when more exist, so truncateHead decides
-							// truncation as for the full output; only the totals need the unstored rest.
-							const truncation = {
-								...truncateHead(storedResults.join("\n"), { maxLines: Number.MAX_SAFE_INTEGER, maxBytes }),
-								totalLines: resultCount,
-								totalBytes: outputBytes - 1,
-							};
-							let resultOutput = truncation.content;
-							const details: FindToolDetails = {};
-							const notices: string[] = [];
-							if (resultLimitReached) {
-								notices.push(
-									`${effectiveLimit} results limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
-								);
-								details.resultLimitReached = effectiveLimit;
-							}
-							if (truncation.truncated) {
-								notices.push(`${formatSize(maxBytes)} limit reached`);
-								details.truncation = truncation;
-							}
-							if (notices.length > 0) {
-								resultOutput += `\n\n[${notices.join(". ")}]`;
-							}
-							settle(() =>
-								resolve({
-									content: [{ type: "text", text: resultOutput }],
-									details: Object.keys(details).length > 0 ? details : undefined,
-								}),
-							);
+							resolveResults(resultCount, resultLimitReached);
 						});
 					} catch (e) {
 						if (signal?.aborted) {

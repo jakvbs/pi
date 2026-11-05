@@ -6,6 +6,7 @@ import { TextDecoder } from "util";
 import { processImage } from "../../utils/image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { headOf, type OutputHead, OutputHeadCollector } from "./output-head.ts";
 import { DEFAULT_TOOL_OUTPUT_MAX_TOKENS, limitOutput, toolOutputMaxBytes } from "./output-limit.ts";
 import { resolveReadPathAsync } from "./path-utils.ts";
 import { readRenderers } from "./renderers/read.ts";
@@ -112,13 +113,7 @@ function getNonVisionImageNote(model: Model<Api> | undefined): string | undefine
 /** The lines a read selects, with the file's line count; line counts follow `text.split("\n")`. */
 interface SelectedLines {
 	totalFileLines: number;
-	/**
-	 * The selected lines joined. A stream keeps only their start when they exceed the byte budget, which
-	 * limitOutput cuts the same way as all of them.
-	 */
-	text: string;
-	/** truncateHead's line and byte counts for all selected lines, when `text` holds only their start. */
-	counts?: { totalLines: number; totalBytes: number };
+	selected: OutputHead;
 }
 
 /**
@@ -133,15 +128,23 @@ function isStreamableRange(offset: number | undefined, limit: number | undefined
 }
 
 /** Select lines from a whole file in memory: for operations without createReadStream and unusual ranges. */
-function selectLinesFromBuffer(buffer: Buffer, startLine: number, limit: number | undefined): SelectedLines {
+function selectLinesFromBuffer(
+	buffer: Buffer,
+	startLine: number,
+	limit: number | undefined,
+	maxBytes: number,
+): SelectedLines {
 	const allLines = buffer.toString("utf-8").split("\n");
 	const endLine = limit === undefined ? undefined : Math.min(startLine + limit, allLines.length);
-	return { totalFileLines: allLines.length, text: allLines.slice(startLine, endLine).join("\n") };
+	return {
+		totalFileLines: allLines.length,
+		selected: headOf(allLines.slice(startLine, endLine).join("\n"), maxBytes),
+	};
 }
 
 /**
- * Select lines from a file read in chunks. Only lines limitOutput can show within `maxBytes` are stored;
- * the rest are counted, so memory does not grow with the file. Stops reading when the signal aborts.
+ * Select lines from a file read in chunks, collecting what `maxBytes` can show of them, so memory does
+ * not grow with the file. Stops reading when the signal aborts.
  */
 async function selectLinesFromStream(
 	chunks: AsyncIterable<Uint8Array>,
@@ -153,63 +156,21 @@ async function selectLinesFromStream(
 	const endLine = limit === undefined ? Number.POSITIVE_INFINITY : startLine + limit;
 	// Non-fatal UTF-8 that keeps a byte order mark decodes like Buffer.toString("utf-8").
 	const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
-	const storedLines: string[] = [];
-	let storedBytes = 0;
-	let storedPastBudget = false;
+	const selected = new OutputHeadCollector(maxBytes);
 	let line = 0;
-	let selectedLines = 0;
-	let selectedBytes = 0;
-	let lastLineEmpty = true;
-	// The selected line being read: its text, while it is stored, and its size.
-	let pieces: string[] | undefined = [];
-	let lineBytes = 0;
-	let lineHasText = false;
-
-	const appendToLine = (text: string, start: number, end: number) => {
-		lineHasText = true;
-		if (!pieces) return;
-		const piece = text.slice(start, end);
-		// A line over the byte budget is never shown whole, and only the start of a first line over it is:
-		// never store all of a 1 GB line.
-		if (lineBytes <= maxBytes) pieces.push(piece);
-		lineBytes += Buffer.byteLength(piece, "utf-8");
-	};
-	const finishLine = () => {
-		if (pieces) {
-			const text = pieces.join("");
-			storedBytes += Buffer.byteLength(text, "utf-8") + (storedLines.length > 0 ? 1 : 0);
-			storedLines.push(text);
-			// Past the budget, limitOutput cuts the stored lines as it would cut all of them.
-			if (storedBytes > maxBytes) storedPastBudget = true;
-		}
-		selectedLines++;
-		lastLineEmpty = !lineHasText;
-		pieces = storedPastBudget ? undefined : [];
-		lineBytes = 0;
-		lineHasText = false;
-	};
+	// The selected lines are one span of each piece: from the start of the first, or of the piece, to the
+	// newline after the last, which is not part of them, or to the end of the piece.
 	const select = (text: string) => {
-		let position = 0;
-		// Start of the selected text in this piece, measured as a whole: the joined lines' size.
-		let selectionStart = -1;
-		while (true) {
-			const selected = line >= startLine && line < endLine;
-			if (selected && selectionStart === -1) selectionStart = position;
-			const newline = text.indexOf("\n", position);
-			const end = newline === -1 ? text.length : newline;
-			if (selected && end > position) appendToLine(text, position, end);
-			if (newline === -1) break;
-			if (selected) {
-				finishLine();
-				if (line + 1 === endLine) {
-					selectedBytes += Buffer.byteLength(text.slice(selectionStart, newline), "utf-8");
-					selectionStart = -1;
-				}
-			}
+		let selectionStart = line >= startLine && line < endLine ? 0 : -1;
+		for (let newline = text.indexOf("\n"); newline !== -1; newline = text.indexOf("\n", newline + 1)) {
 			line++;
-			position = newline + 1;
+			if (line === startLine && line < endLine) selectionStart = newline + 1;
+			else if (line === endLine && selectionStart !== -1) {
+				selected.write(text.slice(selectionStart, newline));
+				selectionStart = -1;
+			}
 		}
-		if (selectionStart !== -1) selectedBytes += Buffer.byteLength(text.slice(selectionStart), "utf-8");
+		if (selectionStart !== -1) selected.write(text.slice(selectionStart));
 	};
 
 	for await (const chunk of chunks) {
@@ -218,16 +179,7 @@ async function selectLinesFromStream(
 		select(decoder.decode(chunk, { stream: true }));
 	}
 	select(decoder.decode());
-	if (line >= startLine && line < endLine) finishLine();
-	return {
-		totalFileLines: line + 1,
-		text: storedLines.join("\n"),
-		// truncateHead's counts for the joined selected lines, which drop a trailing empty line.
-		counts: {
-			totalLines: selectedBytes === 0 ? 0 : selectedLines - (lastLineEmpty ? 1 : 0),
-			totalBytes: selectedBytes,
-		},
-	};
+	return { totalFileLines: line + 1, selected: selected.head() };
 }
 
 export function createReadToolDefinition(
@@ -302,7 +254,7 @@ export function createReadToolDefinition(
 								// Read text content. Convert offset from 1-indexed input to 0-indexed line access.
 								const startLine = offset ? Math.max(0, offset - 1) : 0;
 								const startLineDisplay = startLine + 1;
-								const { totalFileLines, text, counts } =
+								const { totalFileLines, selected } =
 									ops.createReadStream && isStreamableRange(offset, limit)
 										? await selectLinesFromStream(
 												ops.createReadStream(absolutePath, { signal }),
@@ -311,7 +263,7 @@ export function createReadToolDefinition(
 												maxBytes,
 												signal,
 											)
-										: selectLinesFromBuffer(await ops.readFile(absolutePath), startLine, limit);
+										: selectLinesFromBuffer(await ops.readFile(absolutePath), startLine, limit, maxBytes);
 								if (aborted) return;
 								// Check if offset is out of bounds.
 								if (startLine >= totalFileLines) {
@@ -326,14 +278,13 @@ export function createReadToolDefinition(
 									userLimitedLines !== undefined && nextOffset <= totalFileLines
 										? `\n\n[${totalFileLines - nextOffset + 1} more lines in file. Use offset=${nextOffset} to continue.]`
 										: "";
-								const limited = limitOutput(text, maxBytes - Buffer.byteLength(moreLines, "utf-8"), {
+								const limited = limitOutput(selected, maxBytes - Buffer.byteLength(moreLines, "utf-8"), {
 									path: absolutePath,
 									firstLine: startLineDisplay,
 									totalLines: totalFileLines,
 								});
 								const outputText = limited.truncation.truncated ? limited.text : limited.text + moreLines;
-								if (limited.truncation.truncated)
-									details = { truncation: { ...limited.truncation, ...counts } };
+								if (limited.truncation.truncated) details = { truncation: limited.truncation };
 								content = [{ type: "text", text: outputText }];
 							}
 

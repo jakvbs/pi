@@ -53,7 +53,14 @@ function referenceRead(
 		userLimitedLines !== undefined && nextOffset <= allLines.length
 			? `\n\n[${allLines.length - nextOffset + 1} more lines in file. Use offset=${nextOffset} to continue.]`
 			: "";
-	const limited = limitOutput(selectedContent, MAX_BYTES - Buffer.byteLength(moreLines, "utf-8"), {
+	// The whole selection, counted as truncateHead counts lines, without the collector under test.
+	const selection = {
+		text: selectedContent,
+		totalLines:
+			selectedContent === "" ? 0 : selectedContent.split("\n").length - (selectedContent.endsWith("\n") ? 1 : 0),
+		totalBytes: Buffer.byteLength(selectedContent, "utf-8"),
+	};
+	const limited = limitOutput(selection, MAX_BYTES - Buffer.byteLength(moreLines, "utf-8"), {
 		path,
 		firstLine: startLineDisplay,
 		totalLines: totalFileLines,
