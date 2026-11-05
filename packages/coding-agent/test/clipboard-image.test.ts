@@ -1,3 +1,4 @@
+import type * as FsModule from "node:fs";
 import type { NativeClipboard } from "@earendil-works/pi-tui";
 import { writeFileSync } from "fs";
 import { beforeEach, describe, expect, test, vi } from "vitest";
@@ -9,6 +10,15 @@ const mocks = vi.hoisted(() => ({
 	getNativeClipboard: vi.fn<() => NativeClipboard | undefined>(),
 }));
 
+// A non-WSL kernel release, so WSL detection follows only the env each test passes, on any machine.
+vi.mock("node:fs", async () => {
+	const actual = await vi.importActual<typeof FsModule>("node:fs");
+	return {
+		...actual,
+		readFileSync: (...args: Parameters<typeof actual.readFileSync>) =>
+			args[0] === "/proc/version" ? "Linux version 6.8.0-generic" : actual.readFileSync(...args),
+	};
+});
 vi.mock("../src/utils/clipboard-command.ts", () => ({ runClipboardCommand: mocks.command }));
 vi.mock("@earendil-works/pi-tui", () => ({ getNativeClipboard: mocks.getNativeClipboard }));
 
