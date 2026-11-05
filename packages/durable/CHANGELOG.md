@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Code mode scripts no longer accept `max_output_tokens` in their `// @options:` line; naming it fails the call. Script output keeps its fixed budget of 10000 estimated tokens.
+
 ### Added
 
 - `Tx.submission(id)` reads a committed submission record by ID, so a tool can find the entries of its run's inputs (`pi.live.run.inputs`) without scanning the transcript.

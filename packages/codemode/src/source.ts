@@ -2,7 +2,7 @@
  * Codemode source format: JavaScript, optionally preceded by one options line.
  *
  * ```js
- * // @options: {"max_output_tokens": 2000, "timeout_ms": 30000}
+ * // @options: {"timeout_ms": 30000}
  * const text = await tools.read({ path: "package.json" });
  * text(JSON.parse(text).name);
  * ```
@@ -10,8 +10,8 @@
 
 export const CODEMODE_OPTIONS_PREFIX = "// @options:";
 
-const SUPPORTED_FIELDS = ["max_output_tokens", "timeout_ms"] as const;
-const SUPPORTED_FIELDS_TEXT = "`max_output_tokens` and `timeout_ms`";
+const SUPPORTED_FIELDS = ["timeout_ms"] as const;
+const SUPPORTED_FIELDS_TEXT = "`timeout_ms`";
 /** Largest delay `setTimeout` supports, which bounds `timeout_ms`. */
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
@@ -30,8 +30,6 @@ SOURCE: /[\s\S]+/
 `;
 
 export interface CodemodeSourceOptions {
-	/** Token budget for the script's output. */
-	maxOutputTokens?: number;
 	/** Hard deadline for the whole script in milliseconds, including tool calls. */
 	timeoutMs?: number;
 }
@@ -75,13 +73,7 @@ function parseOptions(directive: string): CodemodeSourceOptions {
 		}
 	}
 	const options: CodemodeSourceOptions = {};
-	const { max_output_tokens, timeout_ms } = fields;
-	if (max_output_tokens !== undefined) {
-		if (!isSafeInteger(max_output_tokens)) {
-			throw new CodemodeSourceError("@options field `max_output_tokens` must be a non-negative safe integer");
-		}
-		options.maxOutputTokens = max_output_tokens;
-	}
+	const { timeout_ms } = fields;
 	if (timeout_ms !== undefined) {
 		if (!isSafeInteger(timeout_ms) || timeout_ms === 0 || timeout_ms > MAX_TIMEOUT_MS) {
 			throw new CodemodeSourceError(
@@ -101,7 +93,7 @@ function parseOptions(directive: string): CodemodeSourceOptions {
 export function parseCodemodeSource(input: string): ParsedCodemodeSource {
 	if (input.trim() === "") {
 		throw new CodemodeSourceError(
-			'Expected JavaScript source text (non-empty). Provide JS only, optionally with a first line `// @options: {"max_output_tokens": 1000}`.',
+			'Expected JavaScript source text (non-empty). Provide JS only, optionally with a first line `// @options: {"timeout_ms": 60000}`.',
 		);
 	}
 	const lines = input.split("\n");

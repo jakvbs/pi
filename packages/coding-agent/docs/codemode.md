@@ -9,11 +9,12 @@ The tool input is raw JavaScript source, not JSON and not a markdown code fence.
 A script may start with an options line. It must be the first line; an options line anywhere else fails the call before the script runs:
 
 ```js
-// @options: {"max_output_tokens": 2000, "timeout_ms": 60000}
+// @options: {"timeout_ms": 60000}
 ```
 
-- `max_output_tokens` lowers the output limit for this script. Without it, the [`toolOutputMaxTokens`](settings.md#tools) setting (default 5000) limits the output like every tool result, and a larger value cannot raise it. Longer output keeps its start, and the full text is written to a temp file whose path is included in the result. A script fails when its output passes 16777216 characters of text and base64 image data or 100000 `text()`, `image()`, and `console` calls; write large data to a file with a tool instead.
 - `timeout_ms` is a hard deadline for the whole script, including any wait for a free worker. It is unset by default. Image generation can take minutes, so do not set a short deadline for scripts that generate images.
+
+The [`toolOutputMaxTokens`](settings.md#tools) setting (default 5000) limits the output like every tool result: longer output keeps its start, and the full text is written to a temp file whose path is included in the result. A script fails when its output passes 16777216 characters of text and base64 image data or 100000 `text()`, `image()`, and `console` calls; write large data to a file with a tool instead.
 
 The result starts with `Script completed` or `Script failed`, the wall time, and the output. Text and image items appear in order, each on its own line. When the output has more than one text item (from `text()` or `return`), each starts with a `==> text N/M <==` line. `console` calls follow in one `<console_output>` block with one line per call. A failed script reports `Script error:` and the error before its partial output, so limiting a long output never cuts the error. Tool calls are real: calls made before a failure are not undone. Calls still running when the script ends are cancelled, and unawaited promises are discarded.
 

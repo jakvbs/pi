@@ -15,12 +15,7 @@ describe("parseCodemodeSource", () => {
 			code: "\nconst a = 1;\ntext(a)",
 			options: { timeoutMs: 10 },
 		});
-		expect(parseCodemodeSource('  // @options:{"max_output_tokens":0,"timeout_ms":1500}\r\ntext(1)').options).toEqual(
-			{
-				maxOutputTokens: 0,
-				timeoutMs: 1500,
-			},
-		);
+		expect(parseCodemodeSource('  // @options:{"timeout_ms":1500}\r\ntext(1)').options).toEqual({ timeoutMs: 1500 });
 		expect(parseCodemodeSource("// @options: {}\ntext(1)")).toEqual({ code: "\ntext(1)", options: {} });
 	});
 
@@ -52,13 +47,10 @@ describe("parseCodemodeSource", () => {
 			["// @options:\ntext(1)", /@options must be a JSON object with supported fields/],
 			["// @options: {timeout_ms: 1}\ntext(1)", /@options must be valid JSON with supported fields/],
 			["// @options: [1]\ntext(1)", /@options must be a JSON object with supported fields/],
+			['// @options: {"yield": 1}\ntext(1)', "@options only supports `timeout_ms`; got `yield`"],
 			[
-				'// @options: {"yield": 1}\ntext(1)',
-				"@options only supports `max_output_tokens` and `timeout_ms`; got `yield`",
-			],
-			[
-				'// @options: {"max_output_tokens": 1.5}\ntext(1)',
-				"@options field `max_output_tokens` must be a non-negative safe integer",
+				'// @options: {"max_output_tokens": 1000}\ntext(1)',
+				"@options only supports `timeout_ms`; got `max_output_tokens`",
 			],
 			['// @options: {"timeout_ms": 0}\ntext(1)', /@options field `timeout_ms` must be a positive integer/],
 			[
