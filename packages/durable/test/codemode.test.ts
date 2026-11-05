@@ -1015,32 +1015,23 @@ describe("durable code mode output and tool search", () => {
 	});
 
 	it("cuts text past the token budget to its start and end, with the full text in a file", async () => {
-		const { text, message } = await runScript(
-			`// @options: {"max_output_tokens": 20}
-			text("BEGIN" + "x".repeat(1000) + "END");`,
-		);
+		const { text, message } = await runScript(`text("BEGIN" + "x".repeat(50000) + "END");`);
 		expect(text).toContain("Warning: truncated output");
 		expect(text).toContain("BEGIN");
 		expect(text).toContain("END");
 		const path = message.details?.fullOutputPath;
 		expect(text).toContain(`[Full output: ${path}`);
-		expect(await readFile(path!, "utf8")).toBe(`BEGIN${"x".repeat(1000)}END`);
+		expect(await readFile(path!, "utf8")).toBe(`BEGIN${"x".repeat(50000)}END`);
 	});
 
-	it("keeps a result inside the tool's output limits whatever max_output_tokens says, spilling the rest", async () => {
+	it("keeps a result inside the tool's output limits, spilling the rest", async () => {
 		// 6 MiB of text: over the Harness's 4 MiB limit, which would cut it without a spill file.
-		const big = await runScript(
-			`// @options: {"max_output_tokens": 2000000}
-			return "x".repeat(6 * 1024 * 1024);`,
-		);
+		const big = await runScript(`return "x".repeat(6 * 1024 * 1024);`);
 		expect(big.text).toContain("Warning: truncated output");
 		expect(big.text.length).toBeLessThanOrEqual(1024 * 1024 + 1000);
 		expect((await readFile(big.message.details!.fullOutputPath!, "utf8")).length).toBe(6 * 1024 * 1024);
 		// 200,000 short lines: within the byte limit, over the 100,000 lines one.
-		const long = await runScript(
-			`// @options: {"max_output_tokens": 2000000}
-			return Array.from({ length: 200000 }, () => "a").join("\\n");`,
-		);
+		const long = await runScript(`return Array.from({ length: 200000 }, () => "a").join("\\n");`);
 		expect(long.text).toContain("Warning: truncated output");
 		expect(long.text.split("\n").length).toBeLessThan(100_000);
 		expect(long.message.details?.fullOutputPath).toBeDefined();
@@ -1062,7 +1053,7 @@ describe("durable code mode output and tool search", () => {
 			}
 		}
 		const storage = await sqlitePath();
-		chat.setup.faux.setResponses([script(`// @options: {"max_output_tokens": 20}\nreturn "x".repeat(1000);`), DONE]);
+		chat.setup.faux.setResponses([script(`return "x".repeat(50000);`), DONE]);
 		let opened = await openChat(await openNodeSqliteStorage(storage), chat.setup, {
 			env: new CrashAfterWrite({ cwd }),
 		});

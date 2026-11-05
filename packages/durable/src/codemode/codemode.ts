@@ -110,8 +110,6 @@ type Start = {
 	/** The namespaces of the tools, as `describeNamespace()` and `searchTools()` see them. */
 	namespaces: { name: string; description?: string; instructions?: string; tools: string[] }[];
 	globals: { name: string; spread: boolean }[];
-	/** `max_output_tokens` of the script's options line, or the default. */
-	maxOutputTokens: number;
 	store: Record<string, JsonValue>;
 };
 
@@ -423,7 +421,6 @@ class CodemodeCall {
 					tools,
 					namespaces,
 					globals,
-					maxOutputTokens: sourceOptions.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
 					store: copyJson(store.values as JsonValue) as Record<string, JsonValue>,
 				};
 			}
@@ -555,7 +552,7 @@ class CodemodeCall {
 		const formatted = await formatResult(result, {
 			generatedImages: this.generatedImages,
 			wallMs: this.api.now() - this.start.startedAt,
-			maxOutputTokens: this.start.maxOutputTokens,
+			maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
 			calls: details.calls,
 			limits: OUTPUT_LIMITS,
 			write: this.outputFiles(),

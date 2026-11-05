@@ -9,6 +9,9 @@
 ### Fixed
 
 - Fixed `schemaToType()`, `renderDeclarations()`, `renderToolSignature()`, and `renderToolSample()` throwing `URIError` for a local `$ref` with a malformed percent escape (`#/$defs/%E0`), so one such tool schema failed every caller that renders all tools. The reference now renders as `unknown`, like a reference that names nothing ([#11803](https://github.com/earendil-works/pi/issues/11803))
+### Breaking Changes
+
+- Removed the `max_output_tokens` field of the `// @options:` line and `CodemodeSourceOptions.maxOutputTokens`. `timeout_ms` is the only field; a script that still names `max_output_tokens` fails with `CodemodeSourceError`. Hosts limit script output with their tool output limit.
 
 ## [1.5.0] - 2026-11-02
 

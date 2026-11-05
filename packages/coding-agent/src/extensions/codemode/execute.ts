@@ -27,7 +27,6 @@ import {
 import { getCodemodeWorkerSpecifier, getQuickJSWasmPath } from "../../config.ts";
 import type { ExtensionToolContext, ToolNamespace } from "../../core/extensions/types.ts";
 import type { SessionEntry } from "../../core/session-manager.ts";
-import { limitToolResultText, toolOutputMaxBytes } from "../../core/tools/output-limit.ts";
 import { formatSize, sliceHead } from "../../core/tools/truncate.ts";
 import { combineUsage } from "../../core/usage-totals.ts";
 import { writeOutputFile } from "../../utils/output-files.ts";
@@ -594,15 +593,10 @@ export async function executeCodemode(
 	const status = result.ok ? "Script completed" : "Script failed";
 	const error = result.ok ? "" : `Script error:\n${formatError(result, calls)}\n`;
 	const header = `${status}\nWall time ${wallTime} seconds\n${error}Output:\n`;
-	const content: (TextContent | ImageContent)[] = [{ type: "text", text: header }, ...output];
-	const details = snapshot();
 	return {
-		// The session limits every result to the `toolOutputMaxTokens` setting; a script may ask for less.
-		content:
-			sourceOptions.maxOutputTokens === undefined
-				? content
-				: await limitToolResultText(content, toolOutputMaxBytes(sourceOptions.maxOutputTokens)),
-		details,
+		// The session limits the result to the `toolOutputMaxTokens` setting, as every tool result.
+		content: [{ type: "text", text: header }, ...output],
+		details: snapshot(),
 		...(modelUsage ? { usage: modelUsage } : {}),
 		...(result.ok ? {} : { isError: true }),
 	};

@@ -551,10 +551,11 @@ describe("codemode options and store", () => {
 	});
 
 	// No tools override: the session builds its own codemode tool, including the store writer.
-	async function setup() {
+	async function setup(settings: { toolOutputMaxTokens?: number } = {}) {
 		const harness = await createHarness({
 			initialActiveToolNames: ["codemode"],
 			extensionFactories: [createCodemodeExtension()],
+			settings,
 		});
 		harnesses.push(harness);
 		return harness;
@@ -591,7 +592,7 @@ describe("codemode options and store", () => {
 		expect(invalid.content).toEqual([
 			{
 				type: "text",
-				text: "@options only supports `max_output_tokens` and `timeout_ms`; got `yield`",
+				text: "@options only supports `timeout_ms`; got `yield`",
 			},
 		]);
 
@@ -619,11 +620,11 @@ describe("codemode options and store", () => {
 		expect(n).toBeLessThan(512);
 	});
 
-	it("limits output to the max_output_tokens option and saves the whole of it", async () => {
-		const harness = await setup();
+	it("limits output to the toolOutputMaxTokens setting and saves the whole of it", async () => {
+		const harness = await setup({ toolOutputMaxTokens: 100 });
 		const result = await run(
 			harness,
-			`// @options: {"max_output_tokens": 100}\nfor (let i = 0; i < 100; i++) text("row " + i);\nimage("data:image/png;base64,${TINY_PNG_BASE64}");`,
+			`for (let i = 0; i < 100; i++) text("row " + i);\nimage("data:image/png;base64,${TINY_PNG_BASE64}");`,
 		);
 		const text = resultText(result);
 		const path = text.match(
