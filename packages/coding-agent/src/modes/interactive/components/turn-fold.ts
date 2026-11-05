@@ -12,7 +12,7 @@ export interface TurnSummary {
 	thinking: number;
 	/** Tool calls that ended with an error. */
 	errors: number;
-	/** From the start of the turn to the end of its last response; undefined when the messages carry no times. */
+	/** From the message that opened the turn to the end of its last response; undefined without a response. */
 	durationMs: number | undefined;
 }
 
@@ -26,7 +26,7 @@ export class TurnFolds {
 	private readonly transcript: Container;
 	private folding: boolean;
 	private outputPad: number;
-	private openTurn: { after: Component | undefined; startedAt: number | undefined } | undefined;
+	private openTurn: { after: Component | undefined; startedAt: number } | undefined;
 
 	constructor(transcript: Container, folding: boolean, outputPad: number) {
 		this.transcript = transcript;
@@ -35,7 +35,7 @@ export class TurnFolds {
 	}
 
 	/** Open a turn after the transcript's current last row. */
-	start(startedAt: number | undefined): void {
+	start(startedAt: number): void {
 		const children = this.transcript.children;
 		this.openTurn = { after: children[children.length - 1], startedAt };
 	}
@@ -56,12 +56,15 @@ export class TurnFolds {
 		if (start === 0 && turn.after !== undefined) return;
 
 		const rows = children.slice(start);
+		let reply: AssistantMessageComponent | undefined;
 		let replyIndex = -1;
-		for (let i = rows.length - 1; i >= 0 && replyIndex < 0; i--) {
+		for (let i = rows.length - 1; i >= 0 && !reply; i--) {
 			const row = rows[i];
-			if (row instanceof AssistantMessageComponent && row.getMessage()?.stopReason !== "toolUse") replyIndex = i;
+			if (row instanceof AssistantMessageComponent && row.getMessage()?.stopReason !== "toolUse") {
+				reply = row;
+				replyIndex = i;
+			}
 		}
-		const reply = rows[replyIndex];
 		const activity: Component[] = [];
 		const afterReply: Component[] = [];
 		rows.forEach((row, index) => {
@@ -69,12 +72,11 @@ export class TurnFolds {
 			const folds = replyIndex < 0 || index < replyIndex || row instanceof ToolExecutionComponent;
 			(folds ? activity : afterReply).push(row);
 		});
-		const replyComponent = reply instanceof AssistantMessageComponent ? reply : undefined;
-		const summary = summarizeTurn(activity, replyComponent, turn.startedAt);
+		const summary = summarizeTurn(activity, reply, turn.startedAt);
 		if (summary.tools === 0 && summary.thinking === 0) return;
 
-		const fold = new TurnFoldComponent(activity, replyComponent, summary, this.folding, this.outputPad);
-		children.splice(start, rows.length, fold, ...(replyComponent ? [replyComponent] : []), ...afterReply);
+		const fold = new TurnFoldComponent(activity, reply, summary, this.folding, this.outputPad);
+		children.splice(start, rows.length, fold, ...(reply ? [reply] : []), ...afterReply);
 	}
 
 	/** Whether finished turns fold. */
@@ -84,6 +86,8 @@ export class TurnFolds {
 
 	/** Fold every finished turn, or show every turn in full. Folding again closes rows opened one by one. */
 	setFolding(folding: boolean): void {
+		// Settings are applied again on reload; rows opened one by one stay open unless folding changes.
+		if (folding === this.folding) return;
 		this.folding = folding;
 		for (const child of this.transcript.children) {
 			if (child instanceof TurnFoldComponent) child.setFolding(folding);
@@ -119,15 +123,14 @@ export function* transcriptRows(transcript: Container): Generator<Component> {
 }
 
 /** Count what a turn did from its rows. */
-export function summarizeTurn(
+function summarizeTurn(
 	activity: readonly Component[],
 	reply: AssistantMessageComponent | undefined,
-	startedAt: number | undefined,
+	startedAt: number,
 ): TurnSummary {
 	let tools = 0;
 	let thinking = 0;
 	let errors = 0;
-	let firstStart: number | undefined;
 	let lastEnd: number | undefined;
 	for (const row of reply ? [...activity, reply] : activity) {
 		if (row instanceof ToolExecutionComponent) {
@@ -137,17 +140,15 @@ export function summarizeTurn(
 			const message = row.getMessage();
 			if (!message) continue;
 			thinking += message.content.filter((part) => part.type === "thinking" && part.thinking.trim()).length;
-			firstStart ??= message.timestamp;
 			lastEnd = message.timestamp + (message.durationMs ?? 0);
 		}
 	}
-	const start = startedAt ?? firstStart;
-	const durationMs = start !== undefined && lastEnd !== undefined && lastEnd >= start ? lastEnd - start : undefined;
+	const durationMs = lastEnd !== undefined && lastEnd >= startedAt ? lastEnd - startedAt : undefined;
 	return { tools, thinking, errors, durationMs };
 }
 
 /** The row text without its open/closed glyph, for example `12 tools · 9 thinking · 1:40 · 2 errors`. */
-export function formatTurnSummary(summary: TurnSummary): string {
+function formatTurnSummary(summary: TurnSummary): string {
 	const parts: string[] = [];
 	if (summary.tools > 0) parts.push(`${summary.tools} ${summary.tools === 1 ? "tool" : "tools"}`);
 	if (summary.thinking > 0) parts.push(`${summary.thinking} thinking`);
@@ -222,6 +223,7 @@ export class TurnFoldComponent extends Container {
 		this.update();
 	}
 
+	/** Indent the row like the rest of the transcript. */
 	setOutputPad(outputPad: number): void {
 		this.outputPad = outputPad;
 	}
