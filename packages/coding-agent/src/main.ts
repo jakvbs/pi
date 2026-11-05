@@ -59,6 +59,7 @@ import {
 	MissingSessionCwdError,
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
+import { openSessionFileTail, type SessionFileTail } from "./core/session-file-tail.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
 import { collectSettingsDiagnostics, deduplicateDiagnostics } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
@@ -375,6 +376,59 @@ function validateSessionIdFlags(parsed: Args): void {
 
 	try {
 		assertValidSessionId(parsed.sessionId);
+	} catch (error: unknown) {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(chalk.red(`Error: ${message}`));
+		process.exit(1);
+	}
+}
+
+/**
+ * A view only shows a session: it cannot pick, create, name or fork one, and it needs the terminal.
+ * It loads no extensions, MCP servers, skills, prompt templates, context files or project-local files,
+ * and does no startup network work, so it starts without a provider login or any agent configuration.
+ */
+function prepareViewFlags(parsed: Args, appMode: AppMode): void {
+	if (parsed.view === undefined) return;
+
+	const conflictingFlags = [
+		parsed.session ? "--session" : undefined,
+		parsed.continue ? "--continue" : undefined,
+		parsed.resume ? "--resume" : undefined,
+		parsed.fork ? "--fork" : undefined,
+		parsed.noSession ? "--no-session" : undefined,
+		parsed.sessionId !== undefined ? "--session-id" : undefined,
+		parsed.name !== undefined ? "--name" : undefined,
+		parsed.messages.length > 0 || parsed.fileArgs.length > 0 ? "a prompt" : undefined,
+	].filter((flag): flag is string => flag !== undefined);
+	if (conflictingFlags.length > 0) {
+		console.error(chalk.red(`Error: --view cannot be combined with ${conflictingFlags.join(", ")}`));
+		process.exit(1);
+	}
+	if (appMode !== "interactive") {
+		console.error(chalk.red("Error: --view needs an interactive terminal"));
+		process.exit(1);
+	}
+
+	parsed.noExtensions = true;
+	parsed.extensions = undefined;
+	parsed.noMcp = true;
+	parsed.noSkills = true;
+	parsed.noPromptTemplates = true;
+	parsed.noContextFiles = true;
+	parsed.projectTrustOverride = false;
+	process.env.PI_OFFLINE = "1";
+	process.env.PI_SKIP_VERSION_CHECK = "1";
+}
+
+async function openSessionViewOrExit(
+	target: string,
+): Promise<{ sessionManager: SessionManager; tail: SessionFileTail }> {
+	try {
+		const { tail, entries } = await openSessionFileTail(resolvePath(target), () =>
+			console.error(chalk.dim(`Waiting for a session file at ${target}...`)),
+		);
+		return { sessionManager: SessionManager.view(tail.path, entries), tail };
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(chalk.red(`Error: ${message}`));
@@ -722,6 +776,7 @@ export async function main(args: string[], options?: MainOptions) {
 
 	validateForkFlags(parsed);
 	validateSessionIdFlags(parsed);
+	prepareViewFlags(parsed, appMode);
 
 	// Run migrations (pass cwd for project-local migrations)
 	const { migratedAuthProviders: migratedProviders, deprecationWarnings } = runMigrations(cwd);
@@ -732,7 +787,13 @@ export async function main(args: string[], options?: MainOptions) {
 
 	// Experimental first-time setup: theme choice and analytics opt-in.
 	// Runs before any runtime services are created so the chosen settings apply everywhere.
-	if (appMode === "interactive" && !parsed.help && parsed.listModels === undefined && shouldRunFirstTimeSetup()) {
+	if (
+		appMode === "interactive" &&
+		!parsed.help &&
+		parsed.listModels === undefined &&
+		parsed.view === undefined &&
+		shouldRunFirstTimeSetup()
+	) {
 		await showFirstTimeSetup(startupSettingsManager);
 		time("firstTimeSetup");
 	}
@@ -751,7 +812,9 @@ export async function main(args: string[], options?: MainOptions) {
 		(parsed.sessionDir ? normalizePath(parsed.sessionDir) : undefined) ??
 		(envSessionDir ? expandTildePath(envSessionDir) : undefined) ??
 		startupSettingsManager.getSessionDir();
-	let sessionManager = await createSessionManager(parsed, cwd, sessionDir, startupSettingsManager);
+	const sessionView = parsed.view !== undefined ? await openSessionViewOrExit(parsed.view) : undefined;
+	let sessionManager =
+		sessionView?.sessionManager ?? (await createSessionManager(parsed, cwd, sessionDir, startupSettingsManager));
 	const missingSessionCwdIssue = getMissingSessionCwdIssue(sessionManager, cwd);
 	if (missingSessionCwdIssue) {
 		if (appMode === "interactive") {
@@ -1010,7 +1073,8 @@ export async function main(args: string[], options?: MainOptions) {
 		const interactiveMode = new InteractiveMode(runtime, {
 			migratedProviders,
 			startupDiagnostics,
-			modelFallbackMessage,
+			// A view calls no model, so a model it cannot restore is no news.
+			modelFallbackMessage: sessionView ? undefined : modelFallbackMessage,
 			autoTrustOnReloadCwd,
 			initialMessage,
 			initialImages,
@@ -1018,6 +1082,7 @@ export async function main(args: string[], options?: MainOptions) {
 			verbose: parsed.verbose,
 			tuiMode: parsed.tuiMode,
 			initialThemeSetting: parsed.useTheme,
+			viewTail: sessionView?.tail,
 		});
 		if (startupBenchmark) {
 			await interactiveMode.init();

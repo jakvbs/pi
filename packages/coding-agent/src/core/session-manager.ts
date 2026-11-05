@@ -1108,18 +1108,38 @@ export class SessionManager {
 		this.leafId = null;
 		for (const entry of this.fileEntries) {
 			if (entry.type === "session") continue;
-			this.byId.set(entry.id, entry);
-			this.leafId = entry.id;
-			if (entry.type === "label") {
-				if (entry.label) {
-					this.labelsById.set(entry.targetId, entry.label);
-					this.labelTimestampsById.set(entry.targetId, entry.timestamp);
-				} else {
-					this.labelsById.delete(entry.targetId);
-					this.labelTimestampsById.delete(entry.targetId);
-				}
+			this._indexEntry(entry);
+		}
+	}
+
+	private _indexEntry(entry: SessionEntry): void {
+		this.byId.set(entry.id, entry);
+		this.leafId = entry.id;
+		if (entry.type === "label") {
+			if (entry.label) {
+				this.labelsById.set(entry.targetId, entry.label);
+				this.labelTimestampsById.set(entry.targetId, entry.timestamp);
+			} else {
+				this.labelsById.delete(entry.targetId);
+				this.labelTimestampsById.delete(entry.targetId);
 			}
 		}
+	}
+
+	/**
+	 * Add entries that another process appended to this session's file, as they are on disk.
+	 * The leaf moves to the last one. Nothing is written: this is how a read-only view follows a session.
+	 */
+	addFileEntries(entries: readonly SessionEntry[]): void {
+		for (const entry of entries) {
+			this.fileEntries.push(entry);
+			this._indexEntry(entry);
+		}
+	}
+
+	/** Replace every entry with what a rewritten session file now holds. Like `addFileEntries()`, writes nothing. */
+	reloadFileEntries(entries: FileEntry[]): void {
+		this._loadEntries(entries);
 	}
 
 	private _rewriteFile(): void {
@@ -1809,6 +1829,19 @@ export class SessionManager {
 			return new SessionManager(cwd, dir, mostRecent, true);
 		}
 		return new SessionManager(cwd, dir, undefined, true);
+	}
+
+	/**
+	 * Open a session file read-only from entries already read from it. The manager never writes:
+	 * `addFileEntries()` follows the file, and other appends stay in memory.
+	 * The cwd is the session's own when that directory still exists, otherwise the process cwd.
+	 */
+	static view(path: string, entries: FileEntry[]): SessionManager {
+		const header = entries[0]?.type === "session" ? entries[0] : undefined;
+		const headerCwd = header ? getSessionHeaderCwd(header) : undefined;
+		const cwd = headerCwd && existsSync(headerCwd) ? headerCwd : process.cwd();
+		const resolvedPath = resolvePath(path);
+		return new SessionManager(cwd, resolve(resolvedPath, ".."), resolvedPath, false, undefined, entries);
 	}
 
 	/** Create an in-memory session (no file persistence), optionally from entries held outside the filesystem. */

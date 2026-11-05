@@ -109,6 +109,7 @@ import { RADIUS_PROVIDER_ID } from "../../core/radius.ts";
 import { planRadiusMcpServer } from "../../core/radius-mcp.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
+import { SESSION_VIEW_POLL_MS, type SessionFileTail, type SessionTailRead } from "../../core/session-file-tail.ts";
 import {
 	type SessionEntry,
 	SessionManager,
@@ -284,6 +285,28 @@ type CompactionCostNotice = {
 
 type RenderSessionItem = AgentMessage | Extract<SessionEntry, { type: "custom" | "usage" }> | CompactionCostNotice;
 
+/** The items a transcript shows for session entries, in order, with each message's entry id and time. */
+function toRenderSessionItems(entries: readonly SessionEntry[]): {
+	items: RenderSessionItem[];
+	messageMeta: Map<AgentMessage, { id: string; timestamp: string }>;
+} {
+	const messageMeta = new Map<AgentMessage, { id: string; timestamp: string }>();
+	const items = entries.flatMap((entry): RenderSessionItem[] => {
+		if (entry.type === "custom" || (entry.type === "usage" && entry.kind === "cache_warm")) {
+			return [entry];
+		}
+		const messages = sessionEntryToContextMessages(entry);
+		for (const msg of messages) {
+			messageMeta.set(msg, { id: entry.id, timestamp: entry.timestamp });
+		}
+		if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage && messages.length > 0) {
+			return [...messages, { type: "compaction_cost", kind: entry.type, usage: entry.usage }];
+		}
+		return messages;
+	});
+	return { items, messageMeta };
+}
+
 function isCustomSessionEntry(item: RenderSessionItem): item is Extract<SessionEntry, { type: "custom" }> {
 	return "type" in item && item.type === "custom";
 }
@@ -453,6 +476,11 @@ export interface InteractiveModeOptions {
 	initialThemeSetting?: string;
 	/** Terminal implementation. Defaults to the current process terminal. */
 	terminal?: Terminal;
+	/**
+	 * Show the session read-only and follow this tail of its file: the editor takes no prompts and only
+	 * view keys work. The session manager must not persist (`SessionManager.view()`).
+	 */
+	viewTail?: SessionFileTail;
 }
 
 interface ExtensionChangelogUpdate {
@@ -522,6 +550,7 @@ export class InteractiveMode {
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
+	private viewFollowTimer: NodeJS.Timeout | undefined;
 
 	// Tool output expansion state
 	private toolDisplayMode: ToolDisplayMode = "compact";
@@ -1123,18 +1152,24 @@ export class InteractiveMode {
 		if (this.renderer.mode === "fullscreen") this.showFullscreenModelScopeNotice();
 		this.ui.requestRender();
 
-		// Ensure fd and rg are available after mounting the TUI (downloads if missing, adds to PATH via getBinDir)
-		// so slow downloads do not make startup appear frozen.
-		// Both are needed: fd for autocomplete, rg for grep tool and bash commands.
-		const [fdPath] = await Promise.all([
-			ensureTool("fd", (status) => this.showManagedToolStatus(status)),
-			ensureTool("rg", (status) => this.showManagedToolStatus(status)),
-		]);
-		this.fdPath = fdPath;
+		const viewTail = this.options.viewTail;
+		if (viewTail) {
+			// A view runs no tools and offers no autocomplete, so it needs neither fd nor rg.
+			this.setupViewKeyHandlers(viewTail);
+		} else {
+			// Ensure fd and rg are available after mounting the TUI (downloads if missing, adds to PATH via getBinDir)
+			// so slow downloads do not make startup appear frozen.
+			// Both are needed: fd for autocomplete, rg for grep tool and bash commands.
+			const [fdPath] = await Promise.all([
+				ensureTool("fd", (status) => this.showManagedToolStatus(status)),
+				ensureTool("rg", (status) => this.showManagedToolStatus(status)),
+			]);
+			this.fdPath = fdPath;
 
-		// Enable the remaining input handlers only after managed-tool setup completes.
-		this.setupKeyHandlers();
-		this.setupEditorSubmitHandler();
+			// Enable the remaining input handlers only after managed-tool setup completes.
+			this.setupKeyHandlers();
+			this.setupEditorSubmitHandler();
+		}
 		this.ui.requestRender();
 
 		// Initialize extensions first so resources are shown before messages
@@ -1142,6 +1177,9 @@ export class InteractiveMode {
 
 		// Render initial messages AFTER showing loaded resources
 		this.renderInitialMessages();
+		if (viewTail) {
+			this.viewFollowTimer = setInterval(() => this.followSessionView(viewTail), SESSION_VIEW_POLL_MS);
+		}
 
 		// Set up theme file watcher
 		onThemeChange(() => {
@@ -3187,6 +3225,59 @@ export class InteractiveMode {
 	// Key Handlers
 	// =========================================================================
 
+	/**
+	 * Keys of a read-only view: exit, the view toggles and copy. Nothing that prompts, runs, or changes the
+	 * session (model, thinking level, tree, fork, new session) is bound, and Enter submits nothing.
+	 */
+	private setupViewKeyHandlers(tail: SessionFileTail): void {
+		const fileName = path.basename(tail.path);
+		this.defaultEditor.readOnlyLine = () => theme.fg("dim", `Read-only view of ${fileName}, following new entries`);
+		this.defaultEditor.onSubmit = undefined;
+		this.defaultEditor.onEscape = undefined;
+		this.defaultEditor.onAction("app.clear", () => this.handleCtrlC());
+		this.defaultEditor.onCtrlD = () => this.handleCtrlD();
+		this.defaultEditor.onAction("app.suspend", () => this.handleCtrlZ());
+		this.defaultEditor.onAction("app.tools.expand", () => this.toggleToolOutputExpansion());
+		this.defaultEditor.onAction("app.thinking.toggle", () => this.toggleThinkingBlockVisibility());
+		this.defaultEditor.onAction("app.tools.toggle", () => this.toggleTurnFolding());
+		this.defaultEditor.onAction("app.turn.toggle", () => this.toggleLastTurn());
+		this.defaultEditor.onAction(
+			"app.message.copy",
+			() => void this.handleCopyCommand({ flashConfirmation: true, preferSelection: true }),
+		);
+	}
+
+	/**
+	 * Show what the writer added to the viewed session file since the last poll. Entries that continue the
+	 * shown branch are appended below it; a branch switch or a rewritten file rebuilds the transcript.
+	 */
+	private followSessionView(tail: SessionFileTail): void {
+		let read: SessionTailRead;
+		try {
+			read = tail.read();
+		} catch (error) {
+			clearInterval(this.viewFollowTimer);
+			this.viewFollowTimer = undefined;
+			this.showError(`Stopped following ${tail.path}: ${error instanceof Error ? error.message : String(error)}`);
+			return;
+		}
+		switch (read.type) {
+			case "none":
+				return;
+			case "append":
+				this.sessionManager.addFileEntries(read.entries);
+				if (read.continuesLeaf) this.appendSessionEntries(read.entries, { updateFooter: true });
+				else this.rebuildChatFromMessages();
+				break;
+			case "reload":
+				this.sessionManager.reloadFileEntries(read.entries);
+				this.rebuildChatFromMessages();
+				break;
+		}
+		this.footer.invalidate();
+		this.updateTerminalTitle();
+	}
+
 	private setupKeyHandlers(): void {
 		// Set up handlers on defaultEditor - they use this.editor for text access
 		// so they work correctly regardless of which editor is active
@@ -4134,9 +4225,6 @@ export class InteractiveMode {
 		messageMeta?: Map<AgentMessage, { id: string; timestamp: string }>,
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
-		this.pendingTools.clear();
-		this.turnFolds.reset();
-		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
 		// Cache misses are not persisted, unlike successful cache-warming usage.
 		// Re-derive them and inject them after the assistant messages that paid for them.
 		const cacheMisses = this.settingsManager.getShowCacheMissNotices()
@@ -4202,7 +4290,7 @@ export class InteractiveMode {
 							}
 							component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
 						} else {
-							renderedPendingTools.set(content.id, component);
+							this.pendingTools.set(content.id, component);
 						}
 					}
 				}
@@ -4212,10 +4300,10 @@ export class InteractiveMode {
 				}
 			} else if (message.role === "toolResult") {
 				// Match tool results to pending tool components
-				const component = renderedPendingTools.get(message.toolCallId);
+				const component = this.pendingTools.get(message.toolCallId);
 				if (component) {
 					component.updateResult(message);
-					renderedPendingTools.delete(message.toolCallId);
+					this.pendingTools.delete(message.toolCallId);
 				}
 			} else {
 				// All other messages use standard rendering
@@ -4228,9 +4316,6 @@ export class InteractiveMode {
 			}
 		}
 
-		for (const [toolCallId, component] of renderedPendingTools) {
-			this.pendingTools.set(toolCallId, component);
-		}
 		// The last turn stays open until the owner's next message, like a live one.
 		this.ui.requestRender();
 	}
@@ -4247,20 +4332,21 @@ export class InteractiveMode {
 	): void {
 		// Selection coordinates point into the transcript being replaced (#9311).
 		if (this.renderer instanceof TuiAltScreen) this.renderer.resetTextSelection();
-		const messageMeta = new Map<AgentMessage, { id: string; timestamp: string }>();
-		const items = entries.flatMap((entry): RenderSessionItem[] => {
-			if (entry.type === "custom" || (entry.type === "usage" && entry.kind === "cache_warm")) {
-				return [entry];
-			}
-			const messages = sessionEntryToContextMessages(entry);
-			for (const msg of messages) {
-				messageMeta.set(msg, { id: entry.id, timestamp: entry.timestamp });
-			}
-			if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage && messages.length > 0) {
-				return [...messages, { type: "compaction_cost", kind: entry.type, usage: entry.usage }];
-			}
-			return messages;
-		});
+		this.pendingTools.clear();
+		this.turnFolds.reset();
+		const { items, messageMeta } = toRenderSessionItems(entries);
+		this.renderSessionItems(items, messageMeta, options);
+	}
+
+	/**
+	 * Render session entries below the transcript already shown, as `renderSessionEntries()` would have
+	 * rendered them with the rest: a tool result fills its call even when the call was rendered earlier.
+	 */
+	private appendSessionEntries(
+		entries: readonly SessionEntry[],
+		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
+	): void {
+		const { items, messageMeta } = toRenderSessionItems(entries);
 		this.renderSessionItems(items, messageMeta, options);
 	}
 
@@ -4404,7 +4490,12 @@ export class InteractiveMode {
 	}
 
 	private renderProjectTrustWarningIfNeeded(): void {
-		if (this.settingsManager.isProjectTrusted() || !hasTrustRequiringProjectResources(this.sessionManager.getCwd())) {
+		// A view ignores project files on purpose, so the warning would not be about this session.
+		if (
+			this.options.viewTail ||
+			this.settingsManager.isProjectTrusted() ||
+			!hasTrustRequiringProjectResources(this.sessionManager.getCwd())
+		) {
 			return;
 		}
 
@@ -7292,6 +7383,8 @@ export class InteractiveMode {
 		this.clearStatusIndicator();
 		this.themeController.disableAutoSync();
 		this.clearExtensionTerminalInputListeners();
+		clearInterval(this.viewFollowTimer);
+		this.viewFollowTimer = undefined;
 		this.footer.dispose();
 		this.footerDataProvider.dispose();
 		if (this.unsubscribe) {
