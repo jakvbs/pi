@@ -564,6 +564,7 @@ function buildSessionOptions(
 	const diagnostics: AgentSessionRuntimeDiagnostic[] = [];
 	let cliThinkingFromModel = false;
 
+	// A view calls no model and runs no tools, so the CLI model, thinking and tool flags do not apply to it.
 	if (parsed.view !== undefined) {
 		return { options, cliThinkingFromModel, diagnostics };
 	}
