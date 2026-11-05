@@ -4,7 +4,8 @@
 
 ### Breaking Changes
 
-- Code mode scripts no longer accept `max_output_tokens` in their `// @options:` line; naming it fails the call. Script output keeps its fixed budget of 10000 estimated tokens.
+- Code mode scripts no longer accept `max_output_tokens` in their `// @options:` line; naming it fails the call.
+- Every tool result's text has one limit, the new `HarnessSettings.toolOutputMaxTokens` (default 5000 estimated tokens, 20000 bytes), as in the coding agent. This replaces the default `outputLimits` of 50 KiB and 2000 lines, which no longer limit lines, and code mode's 10000-token budget and 4 MiB limits. A tool's `outputLimits` may only lower the limit; `ToolExecutionApi.outputLimits` gives a call's limits. `read` cuts text to them, `bash` and `powershell` spill output past them, and code mode fits a cut result in them with its spill notice.
 
 ### Added
 

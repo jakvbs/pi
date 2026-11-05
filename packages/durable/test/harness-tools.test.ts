@@ -407,7 +407,7 @@ describe("tool results", () => {
 		);
 		const { harness, entries } = await run(setup, [calls(["tailed", {}, "c1"], ["headed", {}, "c2"]), DONE]);
 		expect(windows).toContainEqual({
-			maxBytes: 50 * 1024,
+			maxBytes: 20_000,
 			maxLines: 1,
 			minIntervalMs: 250,
 			bytesPerSecond: 100 * 1024,
@@ -1056,24 +1056,38 @@ describe("coding tools", () => {
 });
 
 describe("tool progress and lifetime", () => {
-	it("applies the default output limits", async () => {
+	it("bounds every tool's text to the settings' toolOutputMaxTokens, which a tool's limits only lower", async () => {
 		const setup = chatSetup();
+		const lines = Array.from({ length: 2500 }, (_, index) => `${index + 1}\n`).join("");
+		const limits: unknown[] = [];
 		addTool(
 			setup.registry,
 			tool("lines", async (_args, api) => {
-				for (let index = 1; index <= 2500; index++) api.output(`${index}\n`);
+				limits.push(api.outputLimits);
+				api.output(lines);
 				return {};
 			}),
 		);
-		const { harness, entries } = await run(setup, [calls(["lines", {}, "c1"]), DONE]);
-		const text = resultText(results(entries)[0]!);
-		expect(text.startsWith("1\n2\n")).toBe(true);
-		expect(
-			text.endsWith(
-				"\n2000\n|<harness>\n[warn] Output truncated to its beginning: 500 lines, 2500 bytes dropped\n</harness>",
-			),
-		).toBe(true);
-		await harness.close(context);
+		addTool(
+			setup.registry,
+			tool("wide", async () => ({ output: [{ type: "text", text: "x".repeat(500) }] }), {
+				outputLimits: { maxBytes: 1_000_000 },
+			}),
+		);
+		// 11393 bytes and no line limit by default: within 5000 tokens.
+		const first = await run(setup, [calls(["lines", {}, "c1"]), DONE]);
+		expect(resultText(results(first.entries)[0]!)).toBe(lines);
+		expect(limits).toEqual([{ maxBytes: 20_000, maxLines: Number.MAX_SAFE_INTEGER, retain: "head" }]);
+		await first.harness.close(context);
+		// 100 tokens are 400 bytes: lines 1-127 fill them exactly, and a tool's larger limit does not raise them.
+		setup.settings.toolOutputMaxTokens = 100;
+		const second = await run(setup, [calls(["lines", {}, "c1"], ["wide", {}, "c2"]), DONE]);
+		const result = (id: string) => resultText(results(second.entries).find((entry) => entry.toolCallId === id)!);
+		expect(result("c1")).toBe(
+			`${lines.slice(0, 400)}|<harness>\n[warn] Output truncated to its beginning: 2373 lines, 10993 bytes dropped\n</harness>`,
+		);
+		expect(result("c2")).toMatch(new RegExp(`^${"x".repeat(400)}\\|<harness>\\n\\[warn\\] Output truncated`));
+		await second.harness.close(context);
 	});
 
 	it("sanitizes running output but keeps explicit result content as the tool returned it", async () => {
