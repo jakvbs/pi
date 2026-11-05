@@ -3,7 +3,7 @@ import nodePath from "path";
 import { type Static, Type } from "typebox";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { cutHead, OutputHeadCollector } from "./output-head.ts";
-import { DEFAULT_TOOL_OUTPUT_MAX_TOKENS, OUTPUT_NOTICE_RESERVE_BYTES, toolOutputMaxBytes } from "./output-limit.ts";
+import { toolOutputBudgetBytes } from "./output-limit.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { lsRenderers } from "./renderers/ls.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -59,8 +59,7 @@ export function createLsToolDefinition(
 	options?: LsToolOptions,
 ): ToolDefinition<typeof lsSchema, LsToolDetails | undefined> {
 	const ops = options?.operations ?? defaultLsOperations;
-	const maxBytes =
-		toolOutputMaxBytes(options?.maxOutputTokens ?? DEFAULT_TOOL_OUTPUT_MAX_TOKENS) - OUTPUT_NOTICE_RESERVE_BYTES;
+	const maxBytes = toolOutputBudgetBytes(options?.maxOutputTokens);
 	return {
 		name: "ls",
 		label: "ls",

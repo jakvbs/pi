@@ -18,11 +18,19 @@ export const DEFAULT_TOOL_OUTPUT_MAX_TOKENS = 5000;
 const BYTES_PER_TOKEN = 4;
 
 /** Room a tool leaves in the budget for the notices it appends after its limited output. */
-export const OUTPUT_NOTICE_RESERVE_BYTES = 400;
+const OUTPUT_NOTICE_RESERVE_BYTES = 400;
 
 /** The byte budget for `maxTokens` estimated tokens. */
 export function toolOutputMaxBytes(maxTokens: number): number {
 	return maxTokens * BYTES_PER_TOKEN;
+}
+
+/**
+ * The bytes of output a tool that appends its own notices keeps within `maxTokens`. Never below 0: a
+ * budget smaller than the notices leaves no output, and the session limit cuts the notices.
+ */
+export function toolOutputBudgetBytes(maxTokens = DEFAULT_TOOL_OUTPUT_MAX_TOKENS): number {
+	return Math.max(0, toolOutputMaxBytes(maxTokens) - OUTPUT_NOTICE_RESERVE_BYTES);
 }
 
 /** The file that holds the whole output, and where the limited text starts in it. */

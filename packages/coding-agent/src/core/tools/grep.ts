@@ -6,7 +6,7 @@ import { type Static, Type } from "typebox";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { cutHead, OutputHeadCollector } from "./output-head.ts";
-import { DEFAULT_TOOL_OUTPUT_MAX_TOKENS, OUTPUT_NOTICE_RESERVE_BYTES, toolOutputMaxBytes } from "./output-limit.ts";
+import { toolOutputBudgetBytes } from "./output-limit.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { grepRenderers } from "./renderers/grep.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -77,8 +77,7 @@ export function createGrepToolDefinition(
 	options?: GrepToolOptions,
 ): ToolDefinition<typeof grepSchema, GrepToolDetails | undefined> {
 	const customOps = options?.operations;
-	const maxBytes =
-		toolOutputMaxBytes(options?.maxOutputTokens ?? DEFAULT_TOOL_OUTPUT_MAX_TOKENS) - OUTPUT_NOTICE_RESERVE_BYTES;
+	const maxBytes = toolOutputBudgetBytes(options?.maxOutputTokens);
 	return {
 		name: "grep",
 		label: "grep",

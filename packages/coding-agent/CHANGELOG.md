@@ -71,6 +71,7 @@
 - Extension model calls through `ctx.modelRegistry` (`stream`, `streamSimple`, `complete`) now use the session's request settings: timeouts, provider retries, client identity, and `before_provider_headers` handlers. Before, they reached the provider without them.
 - Fixed `!` commands and RPC `bash` returning the full-output file path before the file was written, so reading the file right away could fail or find it incomplete.
 - Fixed the bash tool's truncation details counting only the first and last 512KB of output longer than 1MB; `totalLines` and `totalBytes` now count the whole output, as its notice already did.
+- Fixed `toolOutputMaxTokens` below 100 crashing pi when `grep` or `find` returned results, and failing `bash` and `ls` with a TypeError: the room these tools leave for their notices made their own budget negative. Their budget now stops at 0, and the session limit cuts the notices.
 
 ## [1.5.0] - 2026-11-02
 
