@@ -258,6 +258,11 @@ export class ToolExecutionComponent extends Container {
 		return this.displayMode === "compact";
 	}
 
+	/** Whether the call has its final result. */
+	isFinished(): boolean {
+		return !this.isPartial;
+	}
+
 	/** When the call's final result arrived, in ms since the epoch; undefined while it runs or when not recorded. */
 	getFinishedAt(): number | undefined {
 		return this.isPartial ? undefined : this.result?.timestamp;

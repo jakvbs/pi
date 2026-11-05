@@ -299,7 +299,7 @@ describe("TurnFolds", () => {
 		]);
 	});
 
-	test("a compaction folds the running turn's first part; the rest folds at its reply", async () => {
+	test("a compaction folds the running turn's first part; a branch that ends in a running turn folds what it finished", async () => {
 		const mode = createMode({ isStreaming: true });
 		renderBranch(mode, [
 			user("long task", 0),
@@ -312,12 +312,70 @@ describe("TurnFolds", () => {
 
 		const live = visibleLines(mode);
 		expect(live[1]).toBe("▸ 1 tool · 0:01");
-		expect(live).toContain("✓ bash pwd");
+		expect(live.at(-1)).toBe("▸ 1 tool · 0:02");
+		expect(live).not.toContain("✓ bash pwd");
 
 		await respond(mode, assistant("Done.", 5_000, 1_000, "stop"));
-		const folded = visibleLines(mode);
-		expect(folded).not.toContain("✓ bash pwd");
-		expect(folded.slice(-2)).toEqual(["▸ 1 tool · 0:04", "Done."]);
+		expect(visibleLines(mode).slice(-2)).toEqual(["▸ 1 tool · 0:04", "Done."]);
+	});
+
+	test("a running turn folds each finished row at once; the running call and the response being written show below", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		const mode = createMode();
+		const step = assistant(
+			[fauxThinking("list the files"), fauxText("Listing."), fauxToolCall("bash", { command: "ls" }, { id: "t1" })],
+			1_000,
+			1_000,
+		);
+
+		await emit(mode, { type: "agent_start" });
+		await emit(mode, { type: "message_start", message: user("check", 0) });
+		await respond(mode, step);
+		await emit(mode, { type: "tool_execution_start", toolCallId: "t1", toolName: "bash", args: { command: "ls" } });
+		expect(visibleLines(mode)).toEqual(["check", "▸ 1 thinking · 0:02", "… bash ls"]);
+
+		await runTool(mode, "t1", "ls", 3_000);
+		const writing = assistant([fauxThinking("all files are there"), fauxText("All")], 4_000, 0, "stop");
+		await emit(mode, { type: "message_start", message: writing });
+		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 1 thinking · 0:03", "Thinking...", "All"]);
+
+		await emit(mode, {
+			type: "message_end",
+			message: assistant([fauxThinking("all files are there"), fauxText("All good.")], 4_000, 1_000, "stop"),
+		});
+		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 2 thinking · 0:05", "All good."]);
+
+		mode.turnFolds.toggleLast();
+		expect(visibleLines(mode)).toEqual([
+			"check",
+			"▾ 1 tool · 2 thinking · 0:05",
+			"list the files",
+			"Listing.",
+			"✓ bash ls",
+			"all files are there",
+			"All good.",
+		]);
+	});
+
+	test("a running turn opened by the toggle key stays open at its reply; with folding off it shows in full", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		const mode = createMode();
+
+		await emit(mode, { type: "agent_start" });
+		await emit(mode, { type: "message_start", message: user("check", 0) });
+		await respond(mode, assistant([fauxToolCall("bash", { command: "ls" }, { id: "t1" })], 1_000, 1_000));
+		await runTool(mode, "t1", "ls", 2_000);
+		expect(mode.turnFolds.toggleLast()).toBe(true);
+		await respond(mode, assistant("Done.", 3_000, 1_000, "stop"));
+		expect(visibleLines(mode)).toEqual(["check", "▾ 1 tool · 0:04", "✓ bash ls", "Done."]);
+
+		const full = createMode({ folding: false });
+		await emit(full, { type: "agent_start" });
+		await emit(full, { type: "message_start", message: user("check", 0) });
+		await respond(full, assistant([fauxToolCall("bash", { command: "ls" }, { id: "t1" })], 1_000, 1_000));
+		await runTool(full, "t1", "ls", 2_000);
+		await emit(full, { type: "message_start", message: assistant([fauxThinking("done")], 3_000, 0, "stop") });
+		expect(visibleLines(full)).toEqual(["check", "✓ bash ls", "done"]);
 	});
 
 	test("a finished run folds its turn at the reply; a turn without tools or thinking gets no row", async () => {

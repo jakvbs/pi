@@ -54,11 +54,11 @@ const APP_KEYBINDINGS = {
 	},
 	"app.tools.toggle": {
 		defaultKeys: "alt+h",
-		description: "Turn folding of finished turns on or off",
+		description: "Turn folding of turns on or off",
 	},
 	"app.turn.toggle": {
 		defaultKeys: "alt+o",
-		description: "Open or fold the last finished turn",
+		description: "Open or fold the last turn",
 	},
 	"app.session.toggleNamedFilter": {
 		defaultKeys: "ctrl+n",
