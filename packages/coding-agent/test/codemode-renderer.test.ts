@@ -101,17 +101,16 @@ describe("codemode renderer", () => {
 					{ type: "text", text: "Script completed\nWall time 0.1 seconds\nOutput:\n" },
 					{ type: "text", text: "x".repeat(1000) },
 				],
-				details: { calls: [], fullOutputPath: "/tmp/out.txt" },
+				details: { calls: [] },
 			},
 			false,
 			false,
 			50,
 		);
 		const lines = text.split("\n");
-		expect(lines).toHaveLength(7);
+		expect(lines).toHaveLength(6);
 		expect(lines.slice(0, 5)).toEqual(Array(5).fill("x".repeat(50)));
 		expect(lines[5]).toMatch(/^\.\.\. \(15 more lines,/);
-		expect(lines[6]).toBe("Full output: /tmp/out.txt");
 	});
 
 	// #10708

@@ -41,6 +41,7 @@ See [Choose a Model](models.md) for model selection and thinking controls.
 | Setting | Type | Default | Description |
 |---|---|---|---|
 | `defaultTools` | `string[]` | `read`, `bash`, `edit`, `write` | Tools enabled at startup. Plain names replace the defaults; `+name` adds a tool and `-name` removes one. An empty array disables all built-in tools but not extension or SDK tools. |
+| `toolOutputMaxTokens` | number | `5000` | Estimated tokens (4 bytes each) of a tool result the model sees. Longer text keeps its start and ends with a notice naming a file with the whole output and the line to continue from, which the model can `read` or `grep`. Applies to every tool: built-in, extension, MCP, and `codemode`. `read`, `bash`, `grep`, `find`, and `ls` stay within it themselves; `read` names the file it read. Results of tools a `codemode` script calls go to the script, not the model, and are not limited. |
 | `codemode.mode` | `"on"` \| `"only"` | `"on"` | How the `codemode` tool presents tools while it is active. `on`: declared tools get a note on calling them from scripts appended to their description, and `codemode` lists only tools that are not declared. `only`: `codemode` lists every tool scripts can call, and active built-in and extension tools are hidden from the model, so it reaches them through `codemode`. |
 | `codemode.inlineBudget` | number | `3000` | Estimated tokens (characters / 4) the `codemode` tool's description may spend on tool declarations. Tools that do not fit are left out and found with `searchTools()`. `0` lists only namespaces. |
 

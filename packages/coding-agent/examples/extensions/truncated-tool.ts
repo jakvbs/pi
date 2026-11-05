@@ -1,8 +1,9 @@
 /**
  * Truncated Tool Example - Demonstrates proper output truncation for custom tools
  *
- * Custom tools MUST truncate their output to avoid overwhelming the LLM context.
- * The built-in limit is 50KB (~10k tokens) and 2000 lines, whichever is hit first.
+ * Pi limits the text of every tool result to the `toolOutputMaxTokens` setting (default 5000
+ * tokens, 20000 bytes) and saves longer output to a file. A tool that limits its own output to fit,
+ * notice included, controls what the model sees instead.
  *
  * This example shows how to:
  * 1. Use the built-in truncation utilities
@@ -17,8 +18,6 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
-	DEFAULT_MAX_BYTES,
-	DEFAULT_MAX_LINES,
 	formatSize,
 	type TruncationResult,
 	truncateHead,
@@ -29,6 +28,9 @@ import { execSync } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";
 import { Type } from "typebox";
+
+/** The default output budget minus room for the notice. */
+const MAX_BYTES = 19_000;
 
 const RgParams = Type.Object({
 	pattern: Type.String({ description: "Search pattern (regex)" }),
@@ -50,7 +52,7 @@ export default function (pi: ExtensionAPI) {
 		name: "rg",
 		label: "ripgrep",
 		// Document the truncation limits in the tool description so the LLM knows
-		description: `Search file contents using ripgrep. Output is truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)} (whichever is hit first). If truncated, full output is saved to a temp file.`,
+		description: `Search file contents using ripgrep. Output is truncated to ${formatSize(MAX_BYTES)}. If truncated, full output is saved to a temp file.`,
 		parameters: RgParams,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -91,8 +93,8 @@ export default function (pi: ExtensionAPI) {
 			// truncateHead keeps the first N lines/bytes (good for search results)
 			// truncateTail keeps the last N lines/bytes (good for logs/command output)
 			const truncation = truncateHead(output, {
-				maxLines: DEFAULT_MAX_LINES,
-				maxBytes: DEFAULT_MAX_BYTES,
+				maxLines: Number.MAX_SAFE_INTEGER,
+				maxBytes: MAX_BYTES,
 			});
 
 			// Count matches (each non-empty line with a match)

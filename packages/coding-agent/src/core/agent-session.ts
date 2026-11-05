@@ -149,6 +149,7 @@ import {
 } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
+import { limitToolResultText, toolOutputMaxBytes } from "./tools/output-limit.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, combineUsage, createUsageTotals } from "./usage-totals.ts";
 import {
@@ -769,10 +770,18 @@ export class AgentSession {
 		const content = hookResult?.content ?? result.content ?? [];
 		// Runs after the extension hook so images injected or replaced by extensions are normalized too.
 		const resizeOptions = this._limitsModel()?.inputLimits?.images?.resize;
-		const normalizedContent = await normalizeToolResultImages(content, {
+		const imagesNormalized = await normalizeToolResultImages(content, {
 			autoResizeImages: this.settingsManager.getImageAutoResize(),
 			...(resizeOptions ? { resizeOptions } : {}),
 		});
+		// Results of nested calls go to the calling tool, not the model; the calling tool's result is limited.
+		const normalizedContent =
+			parentToolCallId === undefined
+				? await limitToolResultText(
+						imagesNormalized,
+						toolOutputMaxBytes(this.settingsManager.getToolOutputMaxTokens()),
+					)
+				: imagesNormalized;
 
 		if (!hookResult && normalizedContent === content) {
 			return undefined;
@@ -3770,6 +3779,7 @@ export class AgentSession {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
 		const shellPath = this.settingsManager.getShellPath();
+		const maxOutputTokens = this.settingsManager.getToolOutputMaxTokens();
 		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
@@ -3778,8 +3788,12 @@ export class AgentSession {
 					]),
 				)
 			: createAllToolDefinitions(this._cwd, {
-					read: { autoResizeImages },
-					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					read: { autoResizeImages, maxOutputTokens },
+					bash: { commandPrefix: shellCommandPrefix, shellPath, maxOutputTokens },
+					powershell: { maxOutputTokens },
+					grep: { maxOutputTokens },
+					find: { maxOutputTokens },
+					ls: { maxOutputTokens },
 				});
 
 		this._baseToolDefinitions = new Map(

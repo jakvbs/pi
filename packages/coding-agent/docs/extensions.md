@@ -2450,53 +2450,24 @@ See [Shell tool session environment](environment-variables.md#shell-tool-session
 
 ### Output Truncation
 
-**Tools MUST truncate their output** to avoid overwhelming the LLM context. Large outputs can cause:
-- Context overflow errors (prompt too long)
-- Compaction failures
-- Degraded model performance
+Pi limits the text of every tool result the model sees to the [`toolOutputMaxTokens`](settings.md#tools) setting (default 5000 estimated tokens, 4 bytes each). Longer text keeps its start, the whole text is saved to a temporary file, and a notice names the file and the line to continue from, so the model can `read` or `grep` the rest. Results of calls a tool makes with `ctx.executeTool()` go to that tool and are not limited.
 
-The built-in limit is **50KB** (~10k tokens) and **2000 lines**, whichever is hit first. Use the exported truncation utilities:
+A tool that can point at a better place than a copy of its output limits its text itself, notice included, so it stays within the budget and Pi leaves it as it is. The built-in `read` does this to name the file it read. The exported `truncateHead`, `truncateTail`, `truncateLine`, and `formatSize` help with that:
 
 ```typescript
-import {
-  truncateHead,      // Keep first N lines/bytes (good for file reads, search results)
-  truncateTail,      // Keep last N lines/bytes (good for logs, command output)
-  truncateLine,      // Truncate a single line to a character count; returns { text, wasTruncated }
-  formatSize,        // Human-readable size (e.g., "50KB", "1.5MB")
-  DEFAULT_MAX_BYTES, // 50KB
-  DEFAULT_MAX_LINES, // 2000
-} from "@earendil-works/pi-coding-agent";
+import { formatSize, truncateHead } from "@earendil-works/pi-coding-agent";
 
 async execute(toolCallId, params, signal, onUpdate, ctx) {
   const output = await runCommand();
-
-  // Apply truncation
-  const truncation = truncateHead(output, {
-    maxLines: DEFAULT_MAX_LINES,
-    maxBytes: DEFAULT_MAX_BYTES,
-  });
-
+  // Leave room for the notice within the 20000-byte default budget.
+  const truncation = truncateHead(output, { maxBytes: 19_000 });
   let result = truncation.content;
-
   if (truncation.truncated) {
-    // Write full output to temp file
-    const tempFile = writeTempFile(output);
-
-    // Inform the LLM where to find complete output
-    result += `\n\n[Output truncated: ${truncation.outputLines} of ${truncation.totalLines} lines`;
-    result += ` (${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}).`;
-    result += ` Full output saved to: ${tempFile}]`;
+    result += `\n\n[Showing ${truncation.outputLines} of ${truncation.totalLines} lines (${formatSize(truncation.outputBytes)}). Narrow the query for more.]`;
   }
-
   return { content: [{ type: "text", text: result }], details: { truncation } };
 }
 ```
-
-**Key points:**
-- Use `truncateHead` for content where the beginning matters (search results, file reads)
-- Use `truncateTail` for content where the end matters (logs, command output)
-- Always inform the LLM when output is truncated and where to find the full version
-- Document the truncation limits in your tool's description
 
 See [examples/extensions/truncated-tool.ts](../examples/extensions/truncated-tool.ts) for a complete example wrapping `rg` (ripgrep) with proper truncation.
 

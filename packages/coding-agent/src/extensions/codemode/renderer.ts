@@ -152,9 +152,6 @@ export const codemodeRenderers: Pick<
 						formatHint: (hidden) => expandHint(theme, hidden, "lines"),
 					}),
 				);
-				// The collapsed preview hides the truncation notice at the end, so name the file here.
-				const fullOutputPath = result.details?.fullOutputPath;
-				if (fullOutputPath) component.addChild(new Text(theme.fg("muted", `Full output: ${fullOutputPath}`), 0, 0));
 			}
 		}
 		if (timerText) {

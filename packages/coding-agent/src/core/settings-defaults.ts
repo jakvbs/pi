@@ -1,4 +1,5 @@
 import { DEFAULT_MAX_AGENT_RETRY_DELAY_MS } from "@earendil-works/pi-ai/utils/retry";
+import { DEFAULT_TOOL_OUTPUT_MAX_TOKENS } from "./tools/output-limit.ts";
 
 /** Runtime defaults shared by settings accessors and the published JSON Schema. */
 export const SETTINGS_DEFAULTS = {
@@ -43,6 +44,7 @@ export const SETTINGS_DEFAULTS = {
 		autoResize: true,
 		blockImages: false,
 	},
+	toolOutputMaxTokens: DEFAULT_TOOL_OUTPUT_MAX_TOKENS,
 	doubleEscapeAction: "tree",
 	treeFilterMode: "default",
 	editorPaddingX: 0,
