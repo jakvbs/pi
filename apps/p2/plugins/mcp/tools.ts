@@ -14,7 +14,6 @@ import {
 import {
 	type CallToolResult,
 	createMcpToolName,
-	limitMcpContent,
 	mcpNamespace,
 	normalizeMcpInputSchema,
 	toLlmContent,
@@ -140,6 +139,12 @@ function serversSection(servers: readonly string[], signIn: readonly string[], r
 }
 
 /**
+ * The harness keeps the start of a longer result, as pi keeps it for every tool: the bytes of pi's default
+ * `toolOutputMaxTokens` (5000 tokens at 4 bytes), with no line limit.
+ */
+const OUTPUT_LIMITS = { maxBytes: 20_000, maxLines: Number.MAX_SAFE_INTEGER, retain: "head" } as const;
+
+/**
  * One MCP tool as a Durable tool (not replay-safe: an interrupted call is not repeated). Deferred either way, so the
  * `codemode` section leaves it out; for `codemode` only other tools (scripts) may call it, so `tool_search` never
  * offers it to the model either. Only turns the owner started may call it: the owner's accounts are behind the servers.
@@ -154,6 +159,7 @@ function toolRegistration(name: string, { server, tool }: ServerTool, reach: Mcp
 		origin: "owner",
 		...(reach === "codemode" ? { callers: ["tools" as const] } : {}),
 		...(tool.outputSchema === undefined ? {} : { structuredOutputSchema: tool.outputSchema }),
+		outputLimits: OUTPUT_LIMITS,
 		async execute(args, api, context) {
 			// Durable checked `args` against `parameters`, an object schema; its type cannot follow a runtime schema.
 			const result = await call(
@@ -169,7 +175,6 @@ function toolRegistration(name: string, { server, tool }: ServerTool, reach: Mcp
 			const content = toLlmContent(result);
 			if (result.isError && !content.some((block) => block.type === "text" && block.text.trim() !== ""))
 				content.push({ type: "text", text: `MCP tool ${server}/${tool.name} returned an error` });
-			const limited = await limitMcpContent(content);
 			// Structured output only for a tool that declares its schema (Durable checks it), error results too. The
 			// server's JSON arrived as JSON; the type says `unknown` only because MCP allows any value.
 			const structured =
@@ -177,7 +182,7 @@ function toolRegistration(name: string, { server, tool }: ServerTool, reach: Mcp
 					? { structuredOutput: result.structuredContent as JsonValue }
 					: {};
 			return {
-				output: limited.content,
+				output: content,
 				isError: result.isError === true,
 				details: { server, tool: tool.name },
 				...structured,

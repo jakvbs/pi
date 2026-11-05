@@ -1218,7 +1218,7 @@ translated phone drawer and intercept chat taps.
   refusal because a newer generation runs ends it), and
   contributes one Durable extension `mcp` (a `self.writable`, rebuilt only when the tool list changes): deferred tools
   named by `createMcpToolName` (every tool of a colliding name gets the hash suffix, as in pi), results through
-  `toLlmContent` and `limitMcpContent`, `structuredOutput` only for tools with an output schema. Without code mode,
+  `toLlmContent`, limited by the harness to their first 20000 bytes as pi limits every tool, `structuredOutput` only for tools with an output schema. Without code mode,
   `tool_search` is installed by the worker's registry (`durableRegistry`: once, while code mode is off and any extension
   has a deferred tool the model may call; MCP's and the terminal tool share it). Tests: `mcp.test.ts` (manager and views on a bare host with `test/fixtures/mcp-server.mjs` and
   an HTTP fixture; projects, where sessions work, and an environment through the debug pi-env daemon, skipped without
