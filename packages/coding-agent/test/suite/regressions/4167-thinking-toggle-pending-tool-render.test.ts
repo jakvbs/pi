@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
 import type { ToolExecutionComponent } from "../../../src/modes/interactive/components/tool-execution.ts";
+import { TurnFolds } from "../../../src/modes/interactive/components/turn-fold.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../../src/utils/ansi.ts";
@@ -49,7 +50,7 @@ type RenderSessionContextThis = {
 	toolOutputExpanded: boolean;
 	isInitialized: boolean;
 	updateEditorBorderColor(): void;
-	refreshWorkingMessage(): void;
+	turnFolds: TurnFolds;
 	getRegisteredToolDefinition(toolName: string): undefined;
 	maybeShowAssistantDiagnostics(message: AssistantMessage): void;
 	addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void;
@@ -82,7 +83,7 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 		toolOutputExpanded: false,
 		isInitialized: true,
 		updateEditorBorderColor: vi.fn(),
-		refreshWorkingMessage: vi.fn(),
+		turnFolds: new TurnFolds(chatContainer, true, 1),
 		getRegisteredToolDefinition: (_toolName: string) => undefined,
 		maybeShowAssistantDiagnostics: vi.fn(),
 		renderSessionItems: (InteractiveMode.prototype as unknown as { renderSessionItems: RenderSessionItems })

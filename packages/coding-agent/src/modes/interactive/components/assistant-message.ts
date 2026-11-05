@@ -42,6 +42,8 @@ export class AssistantMessageComponent extends Container {
 	private timestamp?: string;
 	private thinkingVisibilityOverrides = new Map<number, boolean>();
 	private markdownSlots: MarkdownSlot[] = [];
+	/** Set while this message is the reply of a folded turn: thinking folds with the turn, the stop notice stays. */
+	private activityFolded = false;
 
 	constructor(
 		message?: AssistantMessage,
@@ -82,6 +84,23 @@ export class AssistantMessageComponent extends Container {
 	setHideThinkingBlock(hide: boolean): void {
 		this.hideThinkingBlock = hide;
 		this.thinkingVisibilityOverrides.clear();
+		if (this.lastMessage) {
+			this.updateContent(this.lastMessage);
+		}
+	}
+
+	/** The message last shown, or undefined before the first update. */
+	getMessage(): AssistantMessage | undefined {
+		return this.lastMessage;
+	}
+
+	/**
+	 * Fold or show this reply's thinking with its turn. While folded, an abort or error notice shows here even when the
+	 * message has tool calls, because their rows, which show it otherwise, are folded too.
+	 */
+	setActivityFolded(folded: boolean): void {
+		if (folded === this.activityFolded) return;
+		this.activityFolded = folded;
 		if (this.lastMessage) {
 			this.updateContent(this.lastMessage);
 		}
@@ -185,6 +204,9 @@ export class AssistantMessageComponent extends Container {
 				}
 
 				const runIndex = thinkingRunIndex++;
+				if (this.activityFolded) {
+					continue;
+				}
 				const hidden = this.thinkingVisibilityOverrides.get(runIndex) ?? this.hideThinkingBlock;
 				// A hidden run with an empty label renders nothing, including no spacing.
 				if (hidden && !this.hiddenThinkingLabel.trim()) {
@@ -236,12 +258,13 @@ export class AssistantMessageComponent extends Container {
 		// Length stops can happen before a tool call is complete, so surface them here too.
 		const hasToolCalls = message.content.some((c) => c.type === "toolCall");
 		this.hasToolCalls = hasToolCalls;
+		const showsStopNotice = !hasToolCalls || this.activityFolded;
 		if (message.stopReason === "length") {
 			this.contentContainer.addChild(new Spacer(1));
 			this.contentContainer.addChild(
 				new Text(theme.fg("error", "Response was truncated before completion."), this.outputPad, 0),
 			);
-		} else if (!hasToolCalls) {
+		} else if (showsStopNotice) {
 			if (message.stopReason === "aborted") {
 				const abortMessage =
 					message.errorMessage && message.errorMessage !== "Request was aborted"

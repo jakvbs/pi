@@ -967,8 +967,8 @@ export class SettingsManager {
 		return this.settings.hideThinkingBlock ?? SETTINGS_DEFAULTS.hideThinkingBlock;
 	}
 
-	getHideToolCalls(): boolean {
-		return this.settings.hideToolCalls ?? SETTINGS_DEFAULTS.hideToolCalls;
+	getFoldTurns(): boolean {
+		return this.settings.foldTurns ?? SETTINGS_DEFAULTS.foldTurns;
 	}
 
 	getShowCacheMissNotices(): boolean {
@@ -993,9 +993,9 @@ export class SettingsManager {
 		this.save();
 	}
 
-	setHideToolCalls(hide: boolean): void {
-		this.globalSettings.hideToolCalls = hide;
-		this.markModified("hideToolCalls");
+	setFoldTurns(fold: boolean): void {
+		this.globalSettings.foldTurns = fold;
+		this.markModified("foldTurns");
 		this.save();
 	}
 

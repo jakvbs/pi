@@ -1,8 +1,7 @@
-import { setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
-import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/components/footer.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
@@ -31,7 +30,6 @@ function createSession(options: {
 	usingSubscription?: boolean;
 	persisted?: boolean;
 	routedModel?: { model: { id: string }; thinkingLevel?: string };
-	hideToolCalls?: boolean;
 }): AgentSession {
 	const usage = options.usage;
 	const entries: Array<Record<string, unknown>> = [];
@@ -98,9 +96,6 @@ function createSession(options: {
 			percent: ((options.contextTokens ?? 0) / 200_000) * 100,
 		}),
 		routedModel: options.routedModel,
-		settingsManager: {
-			getHideToolCalls: () => options.hideToolCalls ?? false,
-		},
 		modelRuntime: {
 			isUsingSubscription: () => options.usingSubscription ?? false,
 		},
@@ -261,16 +256,6 @@ describe("FooterComponent width handling", () => {
 		const footer = new FooterComponent(session, createFooterData(1));
 
 		expect(stripAnsi(footer.render(120)[1]).trimEnd()).toBe(`ctx 161k${" ".repeat(102)}test-model`);
-	});
-
-	it("says on the stats line that tool calls are hidden, with the key that shows them", () => {
-		setKeybindings(new KeybindingsManager());
-		const session = createSession({ sessionName: "", contextTokens: 161_234, hideToolCalls: true });
-		const footer = new FooterComponent(session, createFooterData(1));
-
-		expect(stripAnsi(footer.render(120)[1]).trimEnd()).toBe(
-			`ctx 161k tools hidden (alt+h)${" ".repeat(81)}test-model`,
-		);
 	});
 
 	it("puts extension statuses on the stats line when they fit next to the model", () => {

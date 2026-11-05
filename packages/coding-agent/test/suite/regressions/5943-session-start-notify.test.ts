@@ -52,6 +52,7 @@ type RebindContext = {
 
 type ReloadCommandContext = {
 	hideThinkingBlock: boolean;
+	turnFolds: { setOutputPad(outputPad: number): void; setFolding(folding: boolean): void };
 	session: {
 		isStreaming: boolean;
 		isCompacting: boolean;
@@ -63,7 +64,7 @@ type ReloadCommandContext = {
 	settingsManager: {
 		getHttpIdleTimeoutMs: () => number;
 		getHideThinkingBlock: () => boolean;
-		getHideToolCalls: () => boolean;
+		getFoldTurns: () => boolean;
 		getOutputPad: () => 0 | 1;
 		getEditorPaddingX: () => number;
 		getAutocompleteMaxVisible: () => number;
@@ -122,6 +123,7 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 	const editor = overrides.editor ?? {};
 	return {
 		hideThinkingBlock: overrides.hideThinkingBlock ?? false,
+		turnFolds: overrides.turnFolds ?? { setOutputPad: () => {}, setFolding: () => {} },
 		session: {
 			isStreaming: false,
 			isCompacting: false,
@@ -136,7 +138,7 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 		settingsManager: {
 			getHttpIdleTimeoutMs: () => 0,
 			getHideThinkingBlock: () => false,
-			getHideToolCalls: () => false,
+			getFoldTurns: () => true,
 			getOutputPad: () => 1,
 			getEditorPaddingX: () => 1,
 			getAutocompleteMaxVisible: () => 10,

@@ -155,6 +155,8 @@ describe("InteractiveMode compaction events", () => {
 			updateEditorBorderColor: vi.fn(),
 			renderProjectTrustWarningIfNeeded: vi.fn(),
 			showStatus: vi.fn(),
+			session: { isStreaming: false },
+			turnFolds: { reset: vi.fn(), end: vi.fn() },
 			addMessageToChat: (message: AgentMessage) =>
 				rendered.push(
 					message.role === "compactionSummary"
