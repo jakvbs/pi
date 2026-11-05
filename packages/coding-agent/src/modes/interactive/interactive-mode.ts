@@ -4101,6 +4101,8 @@ export class InteractiveMode {
 		const startsTurn = foldsTurns || isMarker || (message.role === "custom" && message.display && !awaitsReply);
 		if (foldsTurns) this.turnFolds.end();
 		else if (startsTurn) this.turnFolds.finish();
+		// A view folds a turn at its reply, so a retry after a failed reply needs a turn of its own.
+		else if (this.options.viewTail && message.role === "assistant") this.turnFolds.resume(message.timestamp);
 		this.renderMessage(message, options);
 		if (startsTurn) this.turnFolds.start(message.timestamp);
 	}
@@ -4345,7 +4347,9 @@ export class InteractiveMode {
 			}
 		}
 
-		// The last turn stays open until the owner's next message, like a live one.
+		// The last turn stays open until the owner's next message, like a live one. A view never gets that message, so
+		// it folds a turn once its reply is in the file.
+		if (this.options.viewTail) this.turnFolds.endAnswered();
 		this.ui.requestRender();
 	}
 

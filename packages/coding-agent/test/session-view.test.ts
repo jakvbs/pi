@@ -256,7 +256,7 @@ async function openView(file: string, agentDir: string) {
 }
 
 describe("InteractiveMode session view", () => {
-	it("appends entries the writer adds below the rows already shown and ignores typed prompts", async () => {
+	it("follows the writer: the turn stays open while it runs and folds when its reply arrives; typed prompts are ignored", async () => {
 		const dir = tempDir();
 		const agentDir = join(dir, "agent");
 		mkdirSync(agentDir);
@@ -264,46 +264,44 @@ describe("InteractiveMode session view", () => {
 		const initial = [
 			header(dir),
 			userEntry("u1", null, "Please list the files"),
-			assistantEntry("a1", "u1", [{ type: "text", text: "Listing them now." }]),
+			assistantEntry("a1", "u1", [
+				{ type: "text", text: "Listing them now." },
+				{ type: "toolCall", id: "call-1", name: "bash", arguments: { command: "ls" } },
+			]),
 		];
 		writeFileSync(file, `${initial.join("\n")}\n`);
 
 		const { mode, runtime, terminal } = await openView(file, agentDir);
+		const screen = () => terminal.getViewport().map((row) => row.trimEnd());
 
 		try {
 			await mode.init();
 			await terminal.waitForRender();
-			const before = terminal.getViewport().map((row) => row.trimEnd());
-			expect(before.join("\n")).toContain("Please list the files");
-			expect(before.join("\n")).toContain("Listing them now.");
+			const before = screen();
 			expect(before.join("\n")).toContain("Read-only view of worker.jsonl, following new entries");
+			const taskRow = before.findIndex((row) => row.includes("Please list the files"));
+			expect(before.join("\n")).toContain("Listing them now.");
+			expect(before.join("\n")).toContain("bash ls");
 
-			// The writer appends a tool call, then its result in a later write, then the reply.
-			appendFileSync(
-				file,
-				`${assistantEntry("a2", "a1", [{ type: "toolCall", id: "call-1", name: "bash", arguments: { command: "ls" } }])}\n`,
-			);
-			await vi.waitFor(() => expect(terminal.getViewport().join("\n")).toContain("bash ls"), { timeout: 2000 });
-			appendFileSync(file, `${toolResultEntry("t1", "a2", "call-1", "alpha.txt")}\n`);
-			appendFileSync(file, `${assistantEntry("a3", "t1", [{ type: "text", text: "There is one file." }])}\n`);
-			await vi.waitFor(() => expect(terminal.getViewport().join("\n")).toContain("There is one file."), {
+			// The result arrives in a later write; it completes the call rendered earlier and the turn stays open.
+			appendFileSync(file, `${toolResultEntry("t1", "a1", "call-1", "alpha.txt")}\n`);
+			await vi.waitFor(() => expect(screen().find((row) => row.includes("bash ls"))).toContain("✓"), {
 				timeout: 2000,
 			});
 
-			const after = terminal.getViewport().map((row) => row.trimEnd());
-			const firstRow = after.findIndex((row) => row.includes("Please list the files"));
-			// The rows shown before the append stay in place, in order, and the new ones follow them.
-			expect(after.slice(firstRow, firstRow + 3)).toEqual(
-				before.slice(
-					before.findIndex((row) => row.includes("Please list the files")),
-					before.findIndex((row) => row.includes("Please list the files")) + 3,
-				),
-			);
-			const toolRow = after.findIndex((row) => row.includes("bash ls"));
-			expect(toolRow).toBeGreaterThan(after.findIndex((row) => row.includes("Listing them now.")));
-			// The result arrived in a later write and still completed the call rendered earlier.
-			expect(after[toolRow]).toContain("✓");
-			expect(after.findIndex((row) => row.includes("There is one file."))).toBeGreaterThan(toolRow);
+			appendFileSync(file, `${assistantEntry("a2", "t1", [{ type: "text", text: "There is one file." }])}\n`);
+			await vi.waitFor(() => expect(screen().join("\n")).toContain("There is one file."), { timeout: 2000 });
+
+			const after = screen();
+			// The task row keeps its place; the activity below it folds into one row above the reply.
+			expect(after[taskRow]).toBe(before[taskRow]);
+			const rows = after.slice(taskRow).filter((row) => row.trim());
+			expect(rows.slice(0, 3).map((row) => row.trim())).toEqual([
+				"Please list the files",
+				"▸ 1 tool · 0:00",
+				"There is one file.",
+			]);
+			expect(after.join("\n")).not.toContain("bash ls");
 
 			const bytes = readFileSync(file);
 			terminal.sendInput("hello from the viewer");
