@@ -40,6 +40,8 @@ const schema = obj({
 		}),
 	),
 	toolExecution: opt(StringEnum(["parallel", "sequential"] as const)),
+	/** pi's setting of that name: the one limit on every tool result's text, in estimated tokens (default 5000). */
+	toolOutputMaxTokens: opt(integer(1)),
 	steeringMode: opt(StringEnum(queueModes)),
 	followUpMode: opt(StringEnum(queueModes)),
 	/**

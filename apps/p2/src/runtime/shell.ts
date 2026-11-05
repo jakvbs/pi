@@ -9,7 +9,7 @@ import { AuthorSchema } from "./input.ts";
 /** Entry kind of a finished user shell command. */
 export const SHELL_ENTRY = "p2.shell";
 
-/** The output a command keeps: the tail within the bash tool's limits (Durable's DEFAULT_MAX_LINES/BYTES). */
+/** The output a command keeps: the tail within pi's limits for user shell commands (its bash executor's). */
 export const SHELL_MAX_LINES = 2000;
 export const SHELL_MAX_BYTES = 50 * 1024;
 
