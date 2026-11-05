@@ -710,7 +710,7 @@ export class InteractiveMode {
 		this.editorContainer = new Container();
 		this.editorContainer.addChild(this.editor as Component);
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
-		this.footer = new FooterComponent(this.session, this.footerDataProvider);
+		this.footer = new FooterComponent(this.session, this.footerDataProvider, options.viewTail ? "view" : "live");
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerContainer = new Container();
 		this.footerContainer.addChild(this.footer);
@@ -1021,9 +1021,12 @@ export class InteractiveMode {
 
 		this.registerSignalHandlers();
 
-		// Load changelogs (only show new entries, skip for resumed sessions)
-		this.changelogMarkdown = this.getChangelogForDisplay();
-		this.extensionChangelogUpdates = this.getExtensionChangelogUpdates();
+		// Load changelogs (only show new entries, skip for resumed sessions). A view skips them: checking
+		// records the seen version in settings, which would take the notice from the next normal start.
+		if (!this.options.viewTail) {
+			this.changelogMarkdown = this.getChangelogForDisplay();
+			this.extensionChangelogUpdates = this.getExtensionChangelogUpdates();
+		}
 
 		// Fullscreen renders on the alternate screen, so text printed to stdout here would stay in the shell
 		// after exit. Fullscreen shows the notice in the header instead (#11508).
@@ -1090,6 +1093,18 @@ export class InteractiveMode {
 			// Build startup instructions using keybinding hint helpers
 			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
 
+			const viewInstructions = () =>
+				[
+					hint("app.clear", "to clear"),
+					rawKeyHint(`${keyText("app.clear")} twice`, "to exit"),
+					hint("app.exit", "to exit"),
+					hint("app.suspend", "to suspend"),
+					hint("app.tools.expand", "to expand tools"),
+					hint("app.thinking.toggle", "to expand thinking"),
+					hint("app.tools.toggle", "to fold finished turns"),
+					hint("app.turn.toggle", "to open the last turn"),
+					hint("app.message.copy", "to copy the last message"),
+				].join("\n");
 			const expandedInstructions = () =>
 				[
 					hint("app.interrupt", "to interrupt"),
@@ -1115,6 +1130,11 @@ export class InteractiveMode {
 					hint("app.clipboard.pasteImage", "to paste files on macOS, images, or text"),
 					rawKeyHint("drop files", "to attach"),
 				].join("\n");
+			const compactViewInstructions = () =>
+				[
+					rawKeyHint(`${keyText("app.clear")}/${keyText("app.exit")}`, "clear/exit"),
+					hint("app.tools.expand", "more"),
+				].join(theme.fg("muted", " · "));
 			const compactInstructions = () =>
 				[
 					hint("app.interrupt", "interrupt"),
@@ -1130,9 +1150,14 @@ export class InteractiveMode {
 				);
 			const onboarding = () =>
 				theme.fg("dim", `Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.`);
+			// A view takes no prompts, so it names only its own keys and does not invite questions.
 			const header = new BuiltInHeader(
-				() => `${withLogo(compactInstructions())}\n${compactOnboarding()}\n\n${onboarding()}`,
-				() => `${withLogo(expandedInstructions())}\n\n${onboarding()}`,
+				this.options.viewTail
+					? () => `${withLogo(compactViewInstructions())}\n${compactOnboarding()}`
+					: () => `${withLogo(compactInstructions())}\n${compactOnboarding()}\n\n${onboarding()}`,
+				this.options.viewTail
+					? () => withLogo(viewInstructions())
+					: () => `${withLogo(expandedInstructions())}\n\n${onboarding()}`,
 				this.getStartupExpansionState(),
 				1,
 				0,

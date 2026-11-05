@@ -54,7 +54,21 @@ interface SessionStats {
 	latestCacheHitRate: number | undefined;
 	promptedRequests: number;
 	contextUsage: ContextUsage | undefined;
+	/** The model a viewed session recorded last; undefined in a live footer. */
+	sessionModel: SessionModel | undefined;
 }
+
+/** The model and thinking level a session's own entries name, as text: no registry lookup. */
+interface SessionModel {
+	provider: string | undefined;
+	label: string;
+}
+
+/**
+ * What the footer describes: the live agent and its model, or a session file shown read-only (`pi --view`),
+ * whose model is the one its entries recorded, even when that model's provider is not loaded here.
+ */
+export type FooterMode = "live" | "view";
 
 /** Cache hit rates at or above this are normal for a continuing session and stay out of the footer. */
 const CACHE_HIT_WARNING_PERCENT = 90;
@@ -68,10 +82,12 @@ export class FooterComponent implements Component {
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
 	private sessionStats?: SessionStats;
+	private readonly mode: FooterMode;
 
-	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
+	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider, mode: FooterMode = "live") {
 		this.session = session;
 		this.footerData = footerData;
+		this.mode = mode;
 	}
 
 	setSession(session: AgentSession): void {
@@ -147,6 +163,7 @@ export class FooterComponent implements Component {
 		// Calculate context usage from session (handles compaction correctly).
 		// After compaction, tokens are unknown until the next LLM response.
 		const contextUsage = this.session.getContextUsage();
+		const sessionModel = this.mode === "view" ? describeSessionModel(sessionManager) : undefined;
 		this.sessionStats = {
 			session: this.session,
 			sessionId,
@@ -157,13 +174,14 @@ export class FooterComponent implements Component {
 			latestCacheHitRate,
 			promptedRequests,
 			contextUsage,
+			sessionModel,
 		};
 		return this.sessionStats;
 	}
 
 	render(width: number): string[] {
 		const state = this.session.state;
-		const { usageTotals, latestCacheHitRate, promptedRequests, contextUsage } = this.getSessionStats();
+		const { usageTotals, latestCacheHitRate, promptedRequests, contextUsage, sessionModel } = this.getSessionStats();
 		const contextPercentValue = contextUsage?.percent ?? 0;
 		const contextTokens = contextUsage?.tokens ?? null;
 
@@ -182,7 +200,7 @@ export class FooterComponent implements Component {
 			pwd = `${pwd} • ${sessionName}`;
 		}
 
-		if (this.session.sessionManager.isPersisted()) {
+		if (this.session.sessionManager.isPersisted() || this.mode === "view") {
 			pwd = `${pwd} • ${this.session.sessionManager.getSessionId()}`;
 		}
 
@@ -207,8 +225,9 @@ export class FooterComponent implements Component {
 
 		// Kimi Coding is subscription-backed despite using API-key authentication. A subscription's
 		// cost is only an estimate of API pricing, so it stays in /session.
-		const usingSubscription = state.model
-			? state.model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(state.model.provider)
+		const provider = sessionModel ? sessionModel.provider : state.model?.provider;
+		const usingSubscription = provider
+			? provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(provider)
 			: false;
 		if (usageTotals.cost && !usingSubscription) {
 			statsParts.push(theme.fg("dim", `$${usageTotals.cost.toFixed(3)}`));
@@ -219,25 +238,10 @@ export class FooterComponent implements Component {
 
 		let statsLeft = statsParts.join(" ");
 
-		// Add model name on the right side, plus thinking level if model supports it
-		const modelName = state.model?.id || "no-model";
-
 		// Calculate available space for padding (minimum 2 spaces between stats and model)
 		const minPadding = 2;
 
-		// Add thinking level indicator if model supports reasoning
-		let rightSideWithoutProvider = modelName;
-		if (state.model?.reasoning) {
-			const thinkingLevel = state.thinkingLevel || "off";
-			rightSideWithoutProvider =
-				thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;
-		}
-		// A virtual model routes each request; show where the latest response went.
-		const routed = this.session.routedModel;
-		if (routed) {
-			const level = routed.thinkingLevel ? ` • ${routed.thinkingLevel}` : "";
-			rightSideWithoutProvider += ` → ${routed.model.id}${level}`;
-		}
+		const rightSideWithoutProvider = sessionModel ? sessionModel.label : this.describeLiveModel();
 
 		// Extension statuses, sorted by key. They join the stats line when they fit next to the model,
 		// and take a line of their own otherwise.
@@ -261,7 +265,7 @@ export class FooterComponent implements Component {
 
 		// Prepend the provider in parentheses if there are multiple providers and there's enough room
 		let rightSide = rightSideWithoutProvider;
-		if (this.footerData.getAvailableProviderCount() > 1 && state.model) {
+		if (!sessionModel && this.footerData.getAvailableProviderCount() > 1 && state.model) {
 			rightSide = `(${state.model!.provider}) ${rightSideWithoutProvider}`;
 			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
 				// Too wide, fall back
@@ -308,4 +312,28 @@ export class FooterComponent implements Component {
 
 		return lines;
 	}
+
+	/** The live model's id, its thinking level if it reasons, and where a virtual model routed the latest response. */
+	private describeLiveModel(): string {
+		const state = this.session.state;
+		const modelName = state.model?.id || "no-model";
+		let description = modelName;
+		if (state.model?.reasoning) {
+			const thinkingLevel = state.thinkingLevel || "off";
+			description = thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;
+		}
+		const routed = this.session.routedModel;
+		if (routed) {
+			const level = routed.thinkingLevel ? ` • ${routed.thinkingLevel}` : "";
+			description += ` → ${routed.model.id}${level}`;
+		}
+		return description;
+	}
+}
+
+/** `provider/model • level` from the current branch's entries; the level is left out when thinking is off. */
+function describeSessionModel(sessionManager: AgentSession["sessionManager"]): SessionModel {
+	const { model, thinkingLevel } = sessionManager.getBranchModelSettings();
+	const name = model ? `${model.provider}/${model.modelId}` : "no-model";
+	return { provider: model?.provider, label: thinkingLevel === "off" ? name : `${name} • ${thinkingLevel}` };
 }

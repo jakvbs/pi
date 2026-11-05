@@ -1,4 +1,14 @@
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	truncateSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -37,8 +47,8 @@ const usage = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-function header(cwd: string): string {
-	return JSON.stringify({ type: "session", version: 3, id: "view-test", timestamp: "2026-11-05T00:00:00.000Z", cwd });
+function header(cwd: string, id = "view-test"): string {
+	return JSON.stringify({ type: "session", version: 3, id, timestamp: "2026-11-05T00:00:00.000Z", cwd });
 }
 
 function userEntry(id: string, parentId: string | null, text: string): string {
@@ -58,6 +68,7 @@ function assistantEntry(
 		| { type: "text"; text: string }
 		| { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> }
 	>,
+	model = { provider: "anthropic", id: "claude-test" },
 ): string {
 	return JSON.stringify({
 		type: "message",
@@ -68,8 +79,8 @@ function assistantEntry(
 			role: "assistant",
 			content,
 			api: "anthropic-messages",
-			provider: "anthropic",
-			model: "claude-test",
+			provider: model.provider,
+			model: model.id,
 			usage,
 			stopReason: content.some((part) => part.type === "toolCall") ? "toolUse" : "stop",
 			timestamp: 2,
@@ -123,6 +134,58 @@ describe("SessionFileTail", () => {
 		expect(tail.read()).toMatchObject({ type: "append", continuesLeaf: false });
 	});
 
+	it("reloads a file rewritten in place to a larger different session, keeping its header", () => {
+		const dir = tempDir();
+		const file = join(dir, "s.jsonl");
+		writeFileSync(file, `${header(dir, "old")}\n${userEntry("u1", null, "old")}\n`);
+		const tail = new SessionFileTail(file);
+		tail.readAll();
+
+		writeFileSync(
+			file,
+			`${header(dir, "new")}\n${userEntry("b1", null, "x")}\n${userEntry("b2", "b1", "y")}\n${userEntry("b3", "b2", "z")}\n`,
+		);
+		const read = tail.read();
+
+		expect(read.type).toBe("reload");
+		expect(read.type === "reload" && read.entries.map((entry) => entry.id)).toEqual(["new", "b1", "b2", "b3"]);
+		expect(tail.read()).toEqual({ type: "none" });
+	});
+
+	it("reloads a file replaced by another one with the same header", () => {
+		const dir = tempDir();
+		const file = join(dir, "s.jsonl");
+		writeFileSync(file, `${header(dir)}\n${userEntry("u1", null, "a")}\n`);
+		const tail = new SessionFileTail(file);
+		tail.readAll();
+
+		writeFileSync(
+			join(dir, "next.tmp"),
+			`${header(dir)}\n${userEntry("v1", null, "b")}\n${userEntry("v2", "v1", "c")}\n`,
+		);
+		renameSync(join(dir, "next.tmp"), file);
+
+		expect(tail.read()).toMatchObject({ type: "reload", entries: [{ type: "session" }, { id: "v1" }, { id: "v2" }] });
+	});
+
+	it("keeps the file's own header when the file is truncated and refilled", () => {
+		const dir = tempDir();
+		const file = join(dir, "s.jsonl");
+		writeFileSync(file, `${header(dir, "keep")}\n${userEntry("u1", null, "a")}\n`);
+		const tail = new SessionFileTail(file);
+		const sessionManager = SessionManager.view(file, tail.readAll());
+
+		truncateSync(file, 0);
+		expect(tail.read()).toEqual({ type: "none" });
+		writeFileSync(file, `${header(dir, "keep")}\n${userEntry("u2", null, "b")}\n`);
+		const read = tail.read();
+
+		expect(read).toMatchObject({ type: "reload", entries: [{ type: "session", id: "keep" }, { id: "u2" }] });
+		if (read.type === "reload") sessionManager.reloadFileEntries(read.entries);
+		expect(sessionManager.getSessionId()).toBe("keep");
+		expect(sessionManager.getBranch().map((entry) => entry.id)).toEqual(["u2"]);
+	});
+
 	it("reloads every entry when the file shrank", () => {
 		const dir = tempDir();
 		const file = join(dir, "s.jsonl");
@@ -157,9 +220,43 @@ describe("SessionFileTail", () => {
 	});
 });
 
+/** Open `file` the way `pi --view` does: no extensions or resources, the settings and models in `agentDir`. */
+async function openView(file: string, agentDir: string) {
+	initTheme("dark");
+	const { tail, entries } = await openSessionFileTail(file, () => {});
+	const sessionManager = SessionManager.view(tail.path, entries);
+	const modelRuntime = await ModelRuntime.create({
+		credentials: AuthStorage.inMemory(),
+		modelsPath: join(agentDir, "models.json"),
+	});
+	const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
+		const services = await createAgentSessionServices({
+			cwd,
+			agentDir,
+			modelRuntime,
+			resourceLoaderOptions: {
+				noExtensions: true,
+				noSkills: true,
+				noPromptTemplates: true,
+				noThemes: true,
+				noContextFiles: true,
+			},
+		});
+		const created = await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent });
+		return { ...created, services, diagnostics: services.diagnostics };
+	};
+	const runtime = await createAgentSessionRuntime(createRuntime, {
+		cwd: sessionManager.getCwd(),
+		agentDir,
+		sessionManager,
+	});
+	const terminal = new VirtualTerminal(120, 40);
+	const mode = new InteractiveMode(runtime, { terminal, tuiMode: "regular", viewTail: tail });
+	return { mode, runtime, terminal };
+}
+
 describe("InteractiveMode session view", () => {
 	it("appends entries the writer adds below the rows already shown and ignores typed prompts", async () => {
-		initTheme("dark");
 		const dir = tempDir();
 		const agentDir = join(dir, "agent");
 		mkdirSync(agentDir);
@@ -171,31 +268,7 @@ describe("InteractiveMode session view", () => {
 		];
 		writeFileSync(file, `${initial.join("\n")}\n`);
 
-		const { tail, entries } = await openSessionFileTail(file, () => {});
-		const sessionManager = SessionManager.view(tail.path, entries);
-		const modelRuntime = await ModelRuntime.create({
-			credentials: AuthStorage.inMemory(),
-			modelsPath: join(agentDir, "models.json"),
-		});
-		const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
-			const services = await createAgentSessionServices({
-				cwd,
-				agentDir,
-				modelRuntime,
-				resourceLoaderOptions: {
-					noExtensions: true,
-					noSkills: true,
-					noPromptTemplates: true,
-					noThemes: true,
-					noContextFiles: true,
-				},
-			});
-			const created = await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent });
-			return { ...created, services, diagnostics: services.diagnostics };
-		};
-		const runtime = await createAgentSessionRuntime(createRuntime, { cwd: dir, agentDir, sessionManager });
-		const terminal = new VirtualTerminal(100, 40);
-		const mode = new InteractiveMode(runtime, { terminal, tuiMode: "regular", viewTail: tail });
+		const { mode, runtime, terminal } = await openView(file, agentDir);
 
 		try {
 			await mode.init();
@@ -240,6 +313,95 @@ describe("InteractiveMode session view", () => {
 			expect(terminal.getViewport().join("\n")).not.toContain("hello from the viewer");
 			expect(runtime.session.isStreaming).toBe(false);
 			expect(readFileSync(file).equals(bytes)).toBe(true);
+		} finally {
+			mode.stop();
+			await runtime.dispose();
+		}
+	});
+
+	it("names the session's own model in the footer when its provider is not loaded", async () => {
+		const dir = tempDir();
+		const agentDir = join(dir, "agent");
+		mkdirSync(agentDir);
+		const file = join(dir, "worker.jsonl");
+		const thinking = JSON.stringify({
+			type: "thinking_level_change",
+			id: "k1",
+			parentId: "u1",
+			timestamp: "2026-11-05T00:00:01.500Z",
+			thinkingLevel: "high",
+		});
+		const reply = assistantEntry("a1", "k1", [{ type: "text", text: "Done." }], {
+			provider: "pi-sub-anthropic",
+			id: "claude-opus-5-5",
+		});
+		writeFileSync(file, `${[header(dir), userEntry("u1", null, "hi"), thinking, reply].join("\n")}\n`);
+		const { mode, runtime, terminal } = await openView(file, agentDir);
+
+		try {
+			await mode.init();
+			await terminal.waitForRender();
+			const footer = terminal.getViewport().join("\n");
+			expect(footer).toContain("pi-sub-anthropic/claude-opus-5-5 • high");
+			expect(footer).toContain("view-test");
+		} finally {
+			mode.stop();
+			await runtime.dispose();
+		}
+	});
+
+	it("writes no settings when it opens a session that has only its header", async () => {
+		const dir = tempDir();
+		const agentDir = join(dir, "agent");
+		mkdirSync(agentDir);
+		const file = join(dir, "new.jsonl");
+		writeFileSync(file, `${header(dir)}\n`);
+		const { mode, runtime, terminal } = await openView(file, agentDir);
+
+		try {
+			await mode.init();
+			await terminal.waitForRender();
+			const screen = terminal.getViewport().join("\n");
+			expect(screen).toContain("Read-only view of new.jsonl");
+			// The startup header names only keys that work in a view.
+			expect(screen).not.toContain("commands");
+			expect(screen).not.toContain("bash");
+			expect(existsSync(join(agentDir, "settings.json"))).toBe(false);
+		} finally {
+			mode.stop();
+			await runtime.dispose();
+		}
+	});
+
+	it("shows the new session when the writer rewrites the file to a larger different one", async () => {
+		const dir = tempDir();
+		const agentDir = join(dir, "agent");
+		mkdirSync(agentDir);
+		const file = join(dir, "worker.jsonl");
+		writeFileSync(file, `${header(dir, "old")}\n${userEntry("o1", null, "Old question")}\n`);
+		const { mode, runtime, terminal } = await openView(file, agentDir);
+
+		try {
+			await mode.init();
+			await terminal.waitForRender();
+			expect(terminal.getViewport().join("\n")).toContain("Old question");
+
+			const rewritten = [
+				header(dir, "new"),
+				userEntry("n1", null, "New question"),
+				assistantEntry("n2", "n1", [{ type: "text", text: "New answer." }]),
+				userEntry("n3", "n2", "New follow-up"),
+			];
+			writeFileSync(file, `${rewritten.join("\n")}\n`);
+			await vi.waitFor(() => expect(terminal.getViewport().join("\n")).toContain("New follow-up"), {
+				timeout: 2000,
+			});
+
+			const screen = terminal.getViewport().join("\n");
+			expect(screen).not.toContain("Old question");
+			expect(screen).toContain("New answer.");
+			expect(runtime.session.sessionManager.getSessionId()).toBe("new");
+			expect(runtime.session.sessionManager.getBranch().map((entry) => entry.id)).toEqual(["n1", "n2", "n3"]);
 		} finally {
 			mode.stop();
 			await runtime.dispose();
