@@ -39,7 +39,7 @@ describe("/om:log", () => {
 				"Memory changelog (3, oldest first):",
 				"2026-10-23 09:02 UTC · observer +1 observation",
 				"2026-10-23 09:05 UTC · reflector +1 reflection",
-				"2026-10-23 09:06 UTC · dropper −1 observation",
+				"2026-10-23 09:06 UTC · reflector −1 observation",
 			].join("\n"),
 		);
 	});
@@ -49,7 +49,7 @@ describe("/om:log", () => {
 			[
 				"Memory changelog (last 2 of 3, oldest first):",
 				"2026-10-23 09:05 UTC · reflector +1 reflection\n  - [eeeeeeeeeeee] Reflection eeeeeeeeeeee",
-				"2026-10-23 09:06 UTC · dropper −1 observation\n  - [aaaaaaaaaaaa] 2026-05-02T10:00:00.000Z [medium] Observation aaaaaaaaaaaa",
+				"2026-10-23 09:06 UTC · reflector −1 observation\n  - [aaaaaaaaaaaa] 2026-05-02T10:00:00.000Z [medium] Observation aaaaaaaaaaaa",
 			].join("\n\n"),
 		);
 	});

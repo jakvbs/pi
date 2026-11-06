@@ -82,18 +82,19 @@ describe("session-ledger V3 projections", () => {
 		expect(latestFullFoldBoundaryId(entries)).toBe("raw-3");
 	});
 
-	it("first normal compaction includes observations by coverage and excludes maintenance streams", () => {
+	it("first compaction folds observations by coverage and leaves out reflector results beyond the fold", () => {
 		const obs1 = observation("aaaaaaaaaaaa", { sourceEntryIds: ["raw-2"], tokenCount: 10 });
 		const ref1 = reflection("eeeeeeeeeeee", ["aaaaaaaaaaaa"]);
 		const entries = [
 			textCustomMessage("raw-1", "aaaa"),
 			textCustomMessage("raw-2", "bbbb"),
 			observationsRecordedEntry("om-aaaaaaaaaaaa", { observations: [obs1], coversUpToId: "raw-2" }),
-			reflectionsRecordedEntry("om-eeeeeeeeeeee", { reflections: [ref1], coversUpToId: "raw-2" }),
-			observationsDroppedEntry("om-drop-1", { observationIds: ["aaaaaaaaaaaa"], coversUpToId: "raw-2" }),
+			textCustomMessage("raw-3", "cccc"),
+			reflectionsRecordedEntry("om-eeeeeeeeeeee", { reflections: [ref1], coversUpToId: "raw-3" }),
+			observationsDroppedEntry("om-drop-1", { observationIds: ["aaaaaaaaaaaa"], coversUpToId: "raw-3" }),
 		];
 
-		const result = buildCompactionProjection(entries, "raw-2", { observationsPoolMaxTokens: 100 });
+		const result = buildCompactionProjection(entries, "raw-2");
 
 		expect(result.fullFold).toBe(false);
 		expect(result.observations.map((obs) => obs.id)).toEqual(["aaaaaaaaaaaa"]);
@@ -101,7 +102,24 @@ describe("session-ledger V3 projections", () => {
 		expect(result.details).toMatchObject({ type: "om.folded", version: 1, fullFold: false });
 	});
 
-	it("normal compaction projection includes current observations but keeps reflections and drops at latest full-fold boundary", () => {
+	it("first compaction that reaches a reflector result is a full fold", () => {
+		const obs1 = observation("aaaaaaaaaaaa", { sourceEntryIds: ["raw-2"], tokenCount: 10 });
+		const entries = [
+			textCustomMessage("raw-1", "aaaa"),
+			textCustomMessage("raw-2", "bbbb"),
+			observationsRecordedEntry("om-aaaaaaaaaaaa", { observations: [obs1], coversUpToId: "raw-2" }),
+			observationsDroppedEntry("om-drop-1", { observationIds: ["aaaaaaaaaaaa"], coversUpToId: "raw-2" }),
+		];
+
+		const result = buildCompactionProjection(entries, "raw-2");
+
+		expect(result.fullFold).toBe(true);
+		expect(result.observations).toEqual([]);
+		expect(result.reflections).toEqual([]);
+		expect(result.details).toMatchObject({ type: "om.folded", version: 1, fullFold: true });
+	});
+
+	it("normal compaction projection includes current observations but keeps reflector results at latest full-fold boundary", () => {
 		const obs1 = observation("aaaaaaaaaaaa", { tokenCount: 5 });
 		const obs2 = observation("bbbbbbbbbbbb", { tokenCount: 5 });
 		const ref1 = reflection("eeeeeeeeeeee", ["aaaaaaaaaaaa"]);
@@ -113,11 +131,12 @@ describe("session-ledger V3 projections", () => {
 			compactionEntry("cmp-full", { firstKeptEntryId: "raw-1", details: memoryDetails({ fullFold: true, observations: [obs1], reflections: [ref1] }) }),
 			textCustomMessage("raw-2", "bbbb"),
 			observationsRecordedEntry("om-bbbbbbbbbbbb", { observations: [obs2], coversUpToId: "raw-2" }),
-			reflectionsRecordedEntry("om-ffffffffffff", { reflections: [ref2], coversUpToId: "raw-2" }),
-			observationsDroppedEntry("om-drop-2", { observationIds: ["aaaaaaaaaaaa"], coversUpToId: "raw-2" }),
+			textCustomMessage("raw-3", "cccc"),
+			reflectionsRecordedEntry("om-ffffffffffff", { reflections: [ref2], coversUpToId: "raw-3" }),
+			observationsDroppedEntry("om-drop-2", { observationIds: ["aaaaaaaaaaaa"], coversUpToId: "raw-3" }),
 		];
 
-		const result = buildCompactionProjection(entries, "raw-2", { observationsPoolMaxTokens: 100 });
+		const result = buildCompactionProjection(entries, "raw-2");
 
 		expect(result.fullFold).toBe(false);
 		expect(result.observations.map((obs) => obs.id)).toEqual(["aaaaaaaaaaaa", "bbbbbbbbbbbb"]);
@@ -141,7 +160,7 @@ describe("session-ledger V3 projections", () => {
 			observationsDroppedEntry("om-drop-2", { observationIds: ["aaaaaaaaaaaa"], coversUpToId: "raw-2" }),
 		];
 
-		const result = buildCompactionProjection(entries, "raw-2", { observationsPoolMaxTokens: 100 });
+		const result = buildCompactionProjection(entries, "raw-2");
 
 		expect(result.fullFold).toBe(true);
 		expect(result.observations.map((obs) => obs.id)).toEqual(["bbbbbbbbbbbb"]);
@@ -182,14 +201,14 @@ describe("session-ledger V3 projections", () => {
 		expect(projection.reflections).toEqual([firstRef]);
 	});
 
-	it("uses >= observationsPoolMaxTokens for full-fold pressure", () => {
-		const obs1 = observation("aaaaaaaaaaaa", { tokenCount: 50 });
+	it("does not full-fold on observation size alone", () => {
+		const obs1 = observation("aaaaaaaaaaaa", { tokenCount: 1_000_000 });
 		const entries = [
 			textCustomMessage("raw-1", "aaaa"),
 			observationsRecordedEntry("om-aaaaaaaaaaaa", { observations: [obs1], coversUpToId: "raw-1" }),
 		];
 
-		expect(buildCompactionProjection(entries, "raw-1", { observationsPoolMaxTokens: 50 }).fullFold).toBe(true);
+		expect(buildCompactionProjection(entries, "raw-1").fullFold).toBe(false);
 	});
 
 	it("reports visible/full drift", () => {
@@ -231,7 +250,7 @@ describe("fold boundary persisted by a moved-cut full fold (PR #81 review, issue
 	}
 
 	it("records the fold boundary in the compaction details", () => {
-		const projection = buildCompactionProjection(branch({}).slice(0, 7), "raw-3", { observationsPoolMaxTokens: 1 });
+		const projection = buildCompactionProjection(branch({}).slice(0, 7), "raw-3");
 
 		expect(projection.fullFold).toBe(true);
 		expect(projection.details.foldThroughEntryId).toBe("raw-3");
@@ -242,7 +261,7 @@ describe("fold boundary persisted by a moved-cut full fold (PR #81 review, issue
 		const entries = branch(details);
 
 		expect(latestFullFoldBoundaryId(entries)).toBe("raw-3");
-		const next = buildCompactionProjection(entries, "raw-5", { observationsPoolMaxTokens: 10_000 });
+		const next = buildCompactionProjection(entries, "raw-5");
 
 		expect(next.fullFold).toBe(false);
 		expect(next.observations.map((obs) => obs.id)).toEqual(["bbbbbbbbbbbb", "cccccccccccc"]);

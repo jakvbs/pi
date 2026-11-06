@@ -113,13 +113,6 @@ export function summarizeCoverageTransitionsByRelevance(
 	return summary;
 }
 
-export function observationToDropperLine(
-	observation: Observation,
-	coverage: ReflectionCoverageTier,
-): string {
-	return `[${observation.id}] ${observation.timestamp} [${observation.relevance}] [coverage: ${coverage}] ${observation.content}`;
-}
-
 export function coverageTierForObservation(
 	observation: Observation,
 	coverageById: ReadonlyMap<string, ReflectionCoverageTier>,

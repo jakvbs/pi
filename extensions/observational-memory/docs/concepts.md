@@ -58,11 +58,11 @@ Rendered:
 
 Reflections are written by the reflector into `om.reflections.recorded` ledger entries. They should be fewer and more durable than observations; the reflector should not turn every observation into a reflection. The reflector receives each active observation with a deterministic coverage tier (`none`, `partial`, or `strong`) so it can review durable facts that are not yet preserved, but coverage is review context rather than a quota or automatic reflection rule.
 
-A reflection's `supportingObservationIds` are downstream dropper coverage evidence. They should include all and only current observations whose durable meaning the reflection preserves with equivalent fidelity. False or inflated support ids can make later pruning look safer than it is.
+A reflection's `supportingObservationIds` are coverage evidence for the drops of the same and later reflector passes. They should include all and only current observations whose durable meaning the reflection preserves with equivalent fidelity. False or inflated support ids can make later pruning look safer than it is.
 
 ### Drops
 
-A drop is a tombstone for observation ids that should no longer be active memory. Drops are written by the dropper into `om.observations.dropped` ledger entries.
+A drop is a tombstone for observation ids that should no longer be active memory. Drops are written by the reflector into `om.observations.dropped` ledger entries.
 
 Dropping does not delete history. Dropped observations remain recallable from ledger history, but they are not active observations in projections.
 
@@ -78,21 +78,17 @@ Observations are written in the language the user writes in; the reflector follo
 
 ### Reflector
 
-The reflector runs in the reflect/drop lane from `turn_end` when its raw-token clock reaches `reflectAfterTokens` and the observer is not due.
+The reflector runs after the observer in the same consolidation pass, when the observer recorded observations no earlier pass read and either `reflectAfterTokens` of observed source arrived since the latest pass or the active observation pool reached `observationsPoolMaxTokens`.
 
-It reads active observations and current reflections, then appends durable new reflections as `om.reflections.recorded`. Reflections must cite valid supporting observation ids. The reflector's coverage annotations describe current support state only; this first coverage-stewardship model does not repair historical coverage on existing reflections that already missed a supporting observation id.
+One pass has up to two steps. First it reads active observations and current reflections and appends durable new reflections as `om.reflections.recorded`. Reflections must cite valid supporting observation ids. Then, only while the active pool is over `observationsPoolTargetTokens`, it drops observations toward that target and appends the drops as `om.observations.dropped`. Within the target the pass only reflects. Reflections recorded in the first step count as coverage in the second. The reflector's coverage annotations describe current support state only; it does not repair historical coverage on existing reflections that already missed a supporting observation id.
 
-### Dropper
-
-The dropper runs only as post-reflection maintenance: after the reflector records non-empty same-turn reflections, the dropper may run if the folded active observation ledger is over `observationsPoolTargetTokens`. The dropper can see same-turn new reflections before deciding what to prune.
-
-The dropper can only drop active observation ids. It cannot rewrite or merge observations. Relevance is treated as importance/resistance rather than an absolute lock: `critical` observations are the highest-resistance candidates, but they can be dropped when the model judges that age, reflection coverage, supersession, redundancy, and semantic safety make removal from active memory safe. Its maximum drop count is computed from tokens over target converted to an approximate observation count, and the model may drop fewer or none.
+The reflector can only drop active observation ids. It cannot rewrite or merge observations. Relevance is treated as importance/resistance rather than an absolute lock: `critical` observations are the highest-resistance candidates, but they can be dropped when the model judges that age, reflection coverage, supersession, redundancy, and semantic safety make removal from active memory safe. Its maximum drop count is computed from tokens over target converted to an approximate observation count, and the model may drop fewer or none.
 
 ### Compaction hook
 
 The compaction hook runs during `session_before_compact`. When V3 memory exists, it is deterministic and model-free:
 
-- it does not run observer, reflector, or dropper;
+- it does not run the observer or the reflector;
 - it does not call a model;
 - it does not wait for background memory workers;
 - it folds/projects ledger state and renders the summary.
@@ -182,7 +178,7 @@ Observation relevance is assigned by the observer:
 | `medium` | Useful task-level context and ordinary progress. |
 | `low` | Routine status, tool acknowledgements, or details likely re-derivable from nearby context. |
 
-The dropper uses relevance as part of its judgment, but it is not the only signal and it is not a permanent active-memory pin. User assertions, exact decisions, unique identifiers, dated events, errors, and rationale should be preserved unless safely represented by durable reflections or newer memory. Dropping removes observations from active memory, not from ledger history; recall can still recover dropped observations when their ids are known.
+The reflector uses relevance as part of its drop judgment, but it is not the only signal and it is not a permanent active-memory pin. User assertions, exact decisions, unique identifiers, dated events, errors, and rationale should be preserved unless safely represented by durable reflections or newer memory. Dropping removes observations from active memory, not from ledger history; recall can still recover dropped observations when their ids are known.
 
 ## V2 compatibility model
 
@@ -201,11 +197,10 @@ When upgrading from V2, update settings and start a new clean session.
 | Drop | Tombstone that removes an observation id from active memory. |
 | Visible memory | Latest folded memory visible to the agent through compaction details. |
 | Full memory | Full V3 ledger truth folded at branch tip or another boundary. |
-| Full fold | Compaction mode that folds observations, reflections, and drops through the boundary. |
-| Progress watermark | `coversUpToId`; marker used for raw-token progress clocks. |
+| Full fold | Compaction mode that folds observations, reflections, and drops through the boundary; used when the boundary reaches a reflector result the latest full fold did not apply. |
+| Progress watermark | `coversUpToId`; marker used for the observer's raw-token clock and for projections. |
 | Observer | Background agent that records observations. |
-| Reflector | Background agent that records durable reflections. |
-| Dropper | Background agent that drops active observations by id. |
+| Reflector | Background agent that records durable reflections and drops active observations by id. |
 | Recall | Agent tool for exact evidence behind a memory id. |
 
 ## Where to go next

@@ -420,16 +420,6 @@ function latestCoverageIndex(entries, customType) {
 function latestCoverageMarkerId(entries, customType) {
   return furthestCoverage(entries, customType)?.entry.data.coversUpToId;
 }
-function earlierCoverageMarkerId(entries, firstId, secondId) {
-  if (!firstId) return secondId;
-  if (!secondId) return firstId;
-  const idToIndex = entryIndexById(entries);
-  const firstIndex = idToIndex.get(firstId);
-  const secondIndex = idToIndex.get(secondId);
-  if (firstIndex === void 0) return secondIndex === void 0 ? void 0 : secondId;
-  if (secondIndex === void 0) return firstId;
-  return firstIndex <= secondIndex ? firstId : secondId;
-}
 function rawTokensAfterIndex(entries, index) {
   let total = 0;
   for (let i = Math.max(0, index + 1); i < entries.length; i++) {
@@ -443,12 +433,23 @@ function rawTokensSinceCoverage(entries, customType) {
 function rawTokensSinceObservationCoverage(entries) {
   return rawTokensSinceCoverage(entries, OM_OBSERVATIONS_RECORDED);
 }
-function rawObservedTokensSinceReflectionCoverage(entries) {
-  const reflectionIndex = latestCoverageIndex(entries, OM_REFLECTIONS_RECORDED);
+function latestReflectorPass(entries) {
+  const reflections = furthestCoverage(entries, OM_REFLECTIONS_RECORDED);
+  const drops = furthestCoverage(entries, OM_OBSERVATIONS_DROPPED);
+  if (!reflections || !drops) return reflections ?? drops;
+  return drops.coverageIndex > reflections.coverageIndex ? drops : reflections;
+}
+function latestReflectorPassIndex(entries) {
+  return latestReflectorPass(entries)?.coverageIndex ?? -1;
+}
+function latestReflectorPassMarkerId(entries) {
+  return latestReflectorPass(entries)?.entry.data.coversUpToId;
+}
+function rawObservedTokensSinceReflectorPass(entries) {
+  const passIndex = latestReflectorPassIndex(entries);
   const observationIndex = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
-  if (observationIndex <= reflectionIndex) return 0;
   let total = 0;
-  for (let i = reflectionIndex + 1; i <= observationIndex; i++) {
+  for (let i = passIndex + 1; i <= observationIndex; i++) {
     if (isSourceEntry(entries[i])) total += estimateEntryTokens(entries[i]);
   }
   return total;
@@ -523,8 +524,7 @@ function realContextTokensAtCoverage(entries, coverageIdx) {
   }
   return void 0;
 }
-function realTokensSinceAnchor(entries, customType, currentContextTokens) {
-  const coverageIdx = customType ? latestCoverageIndex(entries, customType) : -1;
+function realTokensSinceAnchor(entries, coverageIdx, currentContextTokens) {
   const compactionIdx = findLastCompactionIndex(entries);
   if (compactionIdx > coverageIdx) {
     const baseline = realContextTokensAfterCompaction(entries, compactionIdx);
@@ -695,12 +695,9 @@ function fullProjection(entries, upToEntryId) {
     dropsBoundary: boundary
   });
 }
-function visibleProjection(entries, upToEntryId) {
-  if (!upToEntryId) {
-    const details = latestV3CompactionDetails(entries);
-    return details ? projectionFromMemoryDetails(details) : { observations: [], reflections: [] };
-  }
-  return buildCompactionProjection(entries, upToEntryId, { observationsPoolMaxTokens: Number.POSITIVE_INFINITY });
+function visibleProjection(entries) {
+  const details = latestV3CompactionDetails(entries);
+  return details ? projectionFromMemoryDetails(details) : { observations: [], reflections: [] };
 }
 function latestFullFoldBoundaryId(entries) {
   const indexes = entryIndexById2(entries);
@@ -717,27 +714,24 @@ function latestFullFoldBoundaryId(entries) {
   }
   return void 0;
 }
-function buildCompactionProjection(entries, firstKeptEntryId, config) {
+function buildCompactionProjection(entries, foldThroughEntryId) {
   const fullFoldBoundaryId = latestFullFoldBoundaryId(entries);
   const maintenanceBoundary = fullFoldBoundaryId ? entryBoundary(fullFoldBoundaryId) : noneBoundary();
-  const normalProjection = foldProjection(entries, {
-    observationsBoundary: entryBoundary(firstKeptEntryId),
-    reflectionsBoundary: maintenanceBoundary,
-    dropsBoundary: maintenanceBoundary
+  const foldBoundary = entryBoundary(foldThroughEntryId);
+  const fullFold = reachesUnappliedReflectorResult(entries, maintenanceBoundary, foldBoundary);
+  const reflectorBoundary = fullFold ? foldBoundary : maintenanceBoundary;
+  const projection = foldProjection(entries, {
+    observationsBoundary: foldBoundary,
+    reflectionsBoundary: reflectorBoundary,
+    dropsBoundary: reflectorBoundary
   });
-  const observationTokens = normalProjection.observations.reduce(
-    (total, observation) => total + observation.tokenCount,
-    0
-  );
-  const fullFold = observationTokens >= config.observationsPoolMaxTokens;
-  const projection = fullFold ? fullProjection(entries, firstKeptEntryId) : normalProjection;
   const details = {
     type: OM_FOLDED,
     version: 1,
     fullFold,
     observations: projection.observations,
     reflections: projection.reflections,
-    foldThroughEntryId: firstKeptEntryId
+    foldThroughEntryId
   };
   return {
     fullFold,
@@ -745,6 +739,14 @@ function buildCompactionProjection(entries, firstKeptEntryId, config) {
     reflections: projection.reflections,
     details
   };
+}
+function reachesUnappliedReflectorResult(entries, appliedBoundary, foldBoundary) {
+  const indexes = entryIndexById2(entries);
+  const appliedIndex = boundaryIndex(entries, indexes, appliedBoundary);
+  const foldIndex = boundaryIndex(entries, indexes, foldBoundary);
+  return branchLedger(entries).some(
+    ({ entry, coverageIndex }) => entry.customType !== OM_OBSERVATIONS_RECORDED && coverageIndex > appliedIndex && coverageIndex <= foldIndex
+  );
 }
 function diffProjection(visible, full) {
   const visibleObservationIds = new Set(visible.observations.map((observation) => observation.id));
@@ -1048,7 +1050,7 @@ function changeHeadline(change) {
     case "reflected":
       return `reflector +${plural(change.reflections.length, "reflection")}`;
     case "dropped":
-      return `dropper \u2212${plural(change.observations.length + change.unknownIds.length, "observation")}`;
+      return `reflector \u2212${plural(change.observations.length + change.unknownIds.length, "observation")}`;
   }
 }
 function changeItems(change) {
@@ -1191,7 +1193,7 @@ function registerLogCommand(pi, runtime) {
   });
 }
 
-// src/agents/dropper/pool.ts
+// src/agents/reflector/pool.ts
 function observationTokenSum(observations) {
   return observations.reduce((sum, observation) => sum + observationLineTokenCount(observation), 0);
 }
@@ -1278,7 +1280,7 @@ function registerStatusCommand(pi, runtime) {
         [addedSuffix(drift.reflectionsOnlyInFull.length)]
       );
       const obsProgress = rawTokensSinceObservationCoverage(entries);
-      const reflectionProgress = rawObservedTokensSinceReflectionCoverage(entries);
+      const reflectionProgress = rawObservedTokensSinceReflectorPass(entries);
       const unobservedSinceCompaction = Math.max(
         0,
         measuredTokensSinceLastCompaction(entries) - measuredObservedTokensSinceLastCompaction(entries)
@@ -1303,9 +1305,9 @@ function registerStatusCommand(pi, runtime) {
         `Next reflection:  ~${reflectionProgress.toLocaleString()} / ${runtime.config.reflectAfterTokens.toLocaleString()} observed source tokens (${pct(reflectionProgress, runtime.config.reflectAfterTokens)}%)`,
         activationLine,
         `Observer backlog: ~${unobservedSinceCompaction.toLocaleString()} unobserved source tokens since the compaction boundary`,
-        `Visible observation pool: ~${visibleObservationTokens.toLocaleString()} / ${runtime.config.observationsPoolMaxTokens.toLocaleString()} tokens (${pct(visibleObservationTokens, runtime.config.observationsPoolMaxTokens)}%)`,
-        `Active observation pool: ~${activeObservationPool.observationTokens.toLocaleString()} / ${runtime.config.observationsPoolTargetTokens.toLocaleString()} target tokens (${pct(activeObservationPool.observationTokens, runtime.config.observationsPoolTargetTokens)}%)`,
-        `Reflection pool:         ~${visibleReflectionTokens.toLocaleString()} tokens`
+        `Active observation pool: ~${activeObservationPool.observationTokens.toLocaleString()} tokens (reflection at ${runtime.config.observationsPoolMaxTokens.toLocaleString()}, drops above ${runtime.config.observationsPoolTargetTokens.toLocaleString()})`,
+        `Visible observation pool: ~${visibleObservationTokens.toLocaleString()} tokens`,
+        `Visible reflection pool:  ~${visibleReflectionTokens.toLocaleString()} tokens`
       ];
       if (runtime.consolidationInFlight || runtime.compactHookInFlight) {
         lines.push("", "\u2500\u2500 In flight \u2500\u2500");
@@ -1315,11 +1317,10 @@ function registerStatusCommand(pi, runtime) {
         }
         if (runtime.compactHookInFlight) lines.push("Compaction hook: running");
       }
-      if (runtime.lastObserverError || runtime.lastReflectorError || runtime.lastDropperError) {
+      if (runtime.lastObserverError || runtime.lastReflectorError) {
         lines.push("", "\u2500\u2500 Last error \u2500\u2500");
         if (runtime.lastObserverError) lines.push(`Observer: ${runtime.lastObserverError}`);
         if (runtime.lastReflectorError) lines.push(`Reflector: ${runtime.lastReflectorError}`);
-        if (runtime.lastDropperError) lines.push(`Dropper: ${runtime.lastDropperError}`);
       }
       ctx.ui.notify(lines.join("\n"), "info");
     }
@@ -1562,7 +1563,7 @@ Relevance levels (pick one per observation; this field drives future dropping):
 - critical: user assertions about identity, role, or persistent preferences; explicit corrections ("no, don't do X"); concrete completions that future runs MUST NOT redo. These are highest-resistance, load-bearing observations and require the strongest evidence before leaving active memory. Why this matters: if a "critical" item is lost, the assistant may redo finished work, contradict a correction, or misrepresent who the user is.
 - high: non-trivial technical decisions, architectural direction, unresolved blockers, key constraints. Worth keeping across many compactions.
 - medium: task-level context that helps within the current work but isn't durable. The default when you are unsure between medium and high.
-- low: routine tool-call acks, repetitive status updates, content trivially re-derivable from recent messages. The dropper will drop these first.
+- low: routine tool-call acks, repetitive status updates, content trivially re-derivable from recent messages. The reflector will drop these first.
 
 Do NOT default to "critical" or "high". Most observations are medium or low. Reserve "critical" for things that would cause real damage if forgotten.
 
@@ -2109,11 +2110,6 @@ async function catchUpObserver(args) {
 import {
   sessionEntryToContextMessages
 } from "@earendil-works/pi-coding-agent";
-var DEFAULT_OBSERVATIONS_POOL_MAX_TOKENS = 2e4;
-function observationsPoolMaxTokens(runtime) {
-  const value = runtime.config.observationsPoolMaxTokens;
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : DEFAULT_OBSERVATIONS_POOL_MAX_TOKENS;
-}
 var CUT_POINT_ROLES = /* @__PURE__ */ new Set(["user", "assistant", "bashExecution", "custom", "branchSummary", "compactionSummary"]);
 function isCutPointEntry(entry) {
   if (entry.type === "compaction") return false;
@@ -2212,11 +2208,7 @@ async function handleCompaction(pi, event, ctx, runtime) {
   let projection;
   let summary = "";
   if (resolution.kind === "cut") {
-    projection = buildCompactionProjection(
-      entries,
-      resolution.cut.foldThroughEntryId,
-      { observationsPoolMaxTokens: observationsPoolMaxTokens(runtime) }
-    );
+    projection = buildCompactionProjection(entries, resolution.cut.foldThroughEntryId);
     const rendered = renderSummaryWithBudget(projection.reflections, projection.observations, { maxTokens: summaryMaxTokens });
     summary = rendered.text;
     const hadRecords = projection.reflections.length + projection.observations.length > 0;
@@ -2257,7 +2249,7 @@ async function handleCompaction(pi, event, ctx, runtime) {
   }
   if (resolution.kind === "uncovered" || !projection || summary.length === 0) {
     const why = resolution.kind === "uncovered" ? resolution.reason : "no memory record to render";
-    return compactAtProposedCut(entries, event, ctx, runtime, { why, gap: resolution.gap, summaryMaxTokens });
+    return compactAtProposedCut(entries, event, ctx, { why, gap: resolution.gap, summaryMaxTokens });
   }
   if (resolution.gap && ctx.hasUI) {
     ctx.ui.notify(
@@ -2274,11 +2266,9 @@ async function handleCompaction(pi, event, ctx, runtime) {
     }
   };
 }
-function compactAtProposedCut(entries, event, ctx, runtime, args) {
+function compactAtProposedCut(entries, event, ctx, args) {
   const { firstKeptEntryId, tokensBefore } = event.preparation;
-  const projection = buildCompactionProjection(entries, foldThroughEntryIdFor(entries, firstKeptEntryId), {
-    observationsPoolMaxTokens: observationsPoolMaxTokens(runtime)
-  });
+  const projection = buildCompactionProjection(entries, foldThroughEntryIdFor(entries, firstKeptEntryId));
   const rendered = renderSummaryWithBudget(projection.reflections, projection.observations, {
     maxTokens: args.summaryMaxTokens
   });
@@ -2425,9 +2415,7 @@ async function activate(pi, runtime, event, ctx) {
     return void 0;
   }
   const foldThroughEntryId = resolution.cut.foldThroughEntryId;
-  const projection = buildCompactionProjection(entries, foldThroughEntryId, {
-    observationsPoolMaxTokens: runtime.config.observationsPoolMaxTokens
-  });
+  const projection = buildCompactionProjection(entries, foldThroughEntryId);
   const rendered = renderSummaryWithBudget(projection.reflections, projection.observations, {
     maxTokens: resolveCompactionSummaryMaxTokens(runtime.config, contextWindow)
   });
@@ -2471,41 +2459,121 @@ function registerActivation(pi, runtime) {
   });
 }
 
-// src/agents/dropper/agent.ts
+// src/agents/reflector/agent.ts
 import { agentLoop as agentLoop2 } from "@earendil-works/pi-agent-core";
 import { Type as Type2 } from "typebox";
 
-// src/agents/dropper/prompts.ts
-var DROPPER_SYSTEM = `You are the dropper agent for a coding assistant.
+// src/agents/reflector/prompts.ts
+var INTRO = `You are the reflection agent for a coding assistant.
 
-These records are the ONLY information the assistant will have about past interactions once the raw conversation is compacted out of context. Dropping the wrong observation can make future work repeat, contradict, or misremember the user. Take this seriously.
+These records are the ONLY information the assistant will have about past interactions once the raw conversation is compacted out of context. Anything you fail to preserve may be forgotten. Anything you distort may be remembered wrong. Take this seriously. Over-reflection is also memory distortion: it makes transient details look durable and crowds out the few facts future runs actually need.`;
+var REFLECT_ONLY_TASK = `Your job is to distill stable, long-lived facts and patterns from active observations into new reflections by calling record_reflections. The active observation pool is within its target, so this run drops nothing.
 
-Your job is to identify only the safest active observations to remove from compacted memory by calling drop_observations with their ids. Default action is KEEP. When uncertain, keep the observation.
+Your task is different from the observer's: you are not recording events. Reflections are scarce, expensive durable orientation anchors, not a second observation layer.`;
+var REFLECT_AND_DROP_TASK = `The active observation pool is over its target. Your job is to bring it back toward the target without losing load-bearing meaning. It has two parts, done in this order:
+1. Reflect: distill stable, long-lived facts and patterns from active observations into new reflections by calling record_reflections.
+2. Drop: remove the safest active observations from compacted memory by calling drop_observations with their ids.
 
-Active-memory framing. Dropping an observation removes it from active compacted memory; it does not erase the ledger history or source evidence. Still, future compressed context will no longer show the observation, so only drop it when its durable meaning is safely captured elsewhere or it is genuinely low-signal and carries no unique future value.
+Your task is different from the observer's: you are not recording events. Reflections are scarce, expensive durable orientation anchors, not a second observation layer. Dropping removes an observation from active compacted memory; it does not erase the ledger history or source evidence. Still, future compressed context will no longer show a dropped observation, so its durable meaning must survive in a reflection or a newer observation, or it must carry no unique future value.`;
+var INPUTS = `You receive:
+- Current reflections: durable facts already crystallized.
+- Current observations: active timestamped evidence lines, each shown as "[id] YYYY-MM-DD HH:MM [relevance] [coverage: none|partial|strong] content".
+- Coverage tiers: none means no current reflection supports the observation id, partial means exactly one current reflection supports it, and strong means two or more current reflections support it. Coverage is review context, not a quota or an instruction to emit reflections.`;
+var DROP_INPUTS = `- A reflection you record in this run counts toward coverage too: the record_reflections receipt lists the observation ids it now supports.
+- The active pool size, its target, and "Maximum drops allowed this run".`;
+var REFLECTION_RULES = `What to emit:
+- Emit only new durable reflections not already present in current reflections.
+- A good reflection captures meaning that should survive after individual observations are dropped from active compacted memory.
+- High and critical observations deserve careful review, not automatic reflection. Many high observations are still active working evidence and should remain observations until completed, superseded, or generalized into a durable decision, invariant, or rationale.
+- Ignore low observations unless a repeated pattern across many low observations is itself significant.
+- Do not lightly reword existing reflections. Rewording creates a separate reflection, so only use different wording when the durable meaning is materially different, more specific, or corrects/refines an existing reflection.
+- Do not emit update-style records or provenance metadata. Reflections are plain durable facts, not patches.
+- It is fine to emit zero reflections when nothing new is stable enough.
 
-The user message includes the active observation pool target and "Maximum drops allowed this run". The maximum is a hard upper bound sized to move the pool toward the target if every proposed drop is clearly safe. It is not a target. Do not try to fill it. Drop fewer or none when fewer observations are safely removable. When the active pool is far over target, make a thorough pass over safe candidates rather than stopping after a few obvious examples.
+Decision procedure:
+1. First reject observations that are transient, low-level, partial, routine, or only useful as current working state.
+2. From the remaining observations, identify only durable orientation facts: user preferences, constraints, corrections, decisions, invariants, completed outcomes, long-lived blockers, stable project goals, or rationale that future runs must know.
+3. Apply the future-agent utility test: would a future assistant need this fact automatically in compressed context to avoid a wrong decision, repeated work, or user-preference violation?
+4. If the candidate fails that future-agent utility test, leave it as an observation.
+5. If unsure, emit no reflection.
+
+Abstraction gate:
+- Do not turn each observation into a reflection. Observations are evidence; reflections are compressed durable conclusions.
+- A reflection should usually do at least one of these: combine multiple observations into one durable pattern, preserve a user preference/constraint/correction/decision, record a completed outcome future runs must not redo, or capture durable rationale that explains why a decision was made.
+- Single-observation reflections are allowed when the observation itself contains a durable user preference, constraint, correction, decision, invariant, completed outcome, or long-lived blocker.
+- Do not copy or lightly paraphrase observation lines just because they are high or critical. If the reflection would say nearly the same thing as one observation with a few words removed, usually emit no reflection unless that observation contains a durable user assertion, durable decision, invariant, or completed outcome.
+- Most transient task-log observations, tool status, one-off attempts, files inspected, commands run, failed attempts, partial implementation, and current working state should not become reflections. Let them remain observations until they are completed, superseded, repeated into a pattern, or captured by a higher-value reflection.
+- Prefer fewer, higher-value reflections. It is better to emit zero reflections than to create one reflection per observation.
+
+Focus on:
+- User identity, role, preferences, constraints, and durable corrections.
+- Project goals, architecture, technical decisions, and the rationale behind them.
+- Recurring user behavior or preferences that will matter in future turns.
+- Completed outcomes future runs must not redo.
+- Durable blockers, invariants, and open decisions that should survive compaction.
+
+Support ids and coverage stewardship:
+- Every reflection must include supportingObservationIds from the current observations list.
+- First decide whether the reflection content passes the durable-value bar. Then audit support ids for that already-worthy reflection.
+- supportingObservationIds are a coverage/provenance set: include all current observation ids whose durable meaning is preserved by the reflection with equivalent fidelity and can later be treated as redundant active-memory detail.
+- supportingObservationIds are not a checklist to cover every observation. Do not add ids merely to improve coverage counts or to justify a drop.
+- False or inflated support ids make unsafe drops look safe, including removal of high-resistance active observations whose meaning was not actually preserved.
+- Leave observations unsupported when their details are still active working state, too specific to compress safely, or not yet durable enough.
+- Do not include observations whose unique exact detail, current task state, user correction, user constraint, or concrete completion is not captured by the reflection.
+- Never invent observation ids. Proposals with missing, empty, or invalid supportingObservationIds are rejected.
+
+User assertions are authoritative. If the observation pool contains both "User stated they use Postgres" and a later "User asked which db they are on", the assertion answers the question \u2014 crystallize the assertion, never the question, as the durable fact.
+
+Reflection content rules:
+- Single line of plain prose. No markdown, no bullets, no code fences, no XML/HTML tags, no emojis.
+- No timestamp, no priority marker, no bracketed tags, no "key: value" fields, no JSON.
+- Write in the language of the current observations, which follow the language the user writes in; when they mix languages, follow the newest ones. The examples below are in English only for illustration. Keep identifiers, paths, commands, code, error messages, and quoted user words verbatim, untranslated.
+- Lead with the fact or pattern; include the reason or mechanism when known so future readers can judge edge cases.
+- Preserve user assertions exactly. Use the user's exact words when non-standard.
+- Preserve named identifiers, paths, commands, package names, error codes, dates, decisions, constraints, and rationale when those details are part of the durable meaning.
+
+Examples:
+- BAD: User discussed databases.
+- GOOD: User stated they use Postgres for the project database.
+- BAD: User asked about database setup.
+- GOOD: User stated they use Postgres for the project database.
+- BAD: User ran npm test and it failed.
+- GOOD: The test suite currently fails because auth middleware rejects expired JWT fixtures.
+- BAD: User prefers React Query.
+- BAD: User switched from SWR.
+- GOOD: User chose React Query over SWR for server-state caching.
+- BAD: completed: edited src/hooks/reflect-drop-trigger.ts.
+- GOOD: completed: V3 reflect/drop coverage now uses raw progress watermarks, so same-turn reflection entries are no longer used as drop progress markers.
+- BAD: npm test passed.
+- GOOD: completed: V3 package namespace migration passed full tests and typecheck.
+- BAD: Observation aaaaaaaaaaaa says the user likes short answers.
+- GOOD: User prefers short answers without generic summaries.
+- ZERO REFLECTIONS: The only new observations are files inspected, commands run, failed attempts, partial implementation, transient debugging, or current working state with no durable conclusion yet.`;
+var REFLECT_ONLY_CLOSING = `When you are done, stop calling tools and reply with one short sentence. If nothing is worth reflecting, call no tool.`;
+var DROP_RULES = `Default action is KEEP. When uncertain, keep the observation.
+
+"Maximum drops allowed this run" is a hard upper bound sized to move the pool toward the target if every proposed drop is clearly safe. It is not a target. Do not try to fill it. Drop fewer or none when fewer observations are safely removable. When the active pool is far over target, make a thorough pass over safe candidates rather than stopping after a few obvious examples.
 
 What to drop, in priority order:
-- Redundant observations whose durable meaning is already captured by current reflections with equivalent fidelity.
-- Superseded observations where a later observation clearly replaces the older state.
+- Redundant observations whose durable meaning is already captured by current reflections, including the ones you recorded in this run, with equivalent fidelity.
+- Superseded observations where a later observation clearly replaces the older state. When observations about the same task disagree, the newest one holds the current state: drop the older state, never the newer one.
 - Repeated routine tool acknowledgements or low-signal progress updates that do not carry decisions, constraints, exact errors, or user-specific facts.
 - Older observations that no longer carry working context and are covered by a reflection or a newer observation.
 
 Age-gradient rule. Recent observations carry working context the assistant may still need; older observations have usually been summarized elsewhere or are no longer load-bearing. Prefer older safe drops before newer working context, but age alone is not enough to drop important or uniquely load-bearing observations.
 
-Reflection coverage guidance. Each observation line includes [coverage: none|partial|strong]. Coverage is evidence, not an automatic decision:
-- none: no current reflection cites this observation id. Be cautious, especially for high or critical observations.
-- partial: one current reflection cites this observation id. Compare the observation to the reflection before dropping.
-- strong: two or more current reflections cite this observation id. This is stronger evidence that the durable meaning is preserved, but you must still keep uniquely load-bearing or uncertain observations.
+Coverage is evidence, not an automatic decision:
+- none: no reflection cites this observation id. Be cautious, especially for high or critical observations.
+- partial: one reflection cites this observation id. Compare the observation to the reflection before dropping.
+- strong: two or more reflections cite this observation id. This is stronger evidence that the durable meaning is preserved, but you must still keep uniquely load-bearing or uncertain observations.
 
-Relevance guidance. Relevance is importance/resistance, not an absolute keep/drop lock:
+Relevance is importance/resistance, not an absolute keep/drop lock:
 - low: consider first, but drop only when it carries no unique detail, decision, state, error, identifier, or user-specific fact.
 - medium: drop when redundant with reflections or other observations, or when the work state is clearly obsolete.
 - high: drop only when clearly superseded or already captured by a reflection with equivalent fidelity.
 - critical: highest importance and strongest resistance. Do not drop fresh or uniquely load-bearing critical observations. Critical observations may be dropped only with strong semantic evidence such as age plus partial/strong reflection coverage, supersession by newer memory, redundancy, or clear obsolescence.
 
-User assertions and concrete completions must be preserved unless a current reflection or newer observation preserves the exact assertion/completion and its important details with equivalent fidelity.
+User assertions and concrete completions must be preserved unless a reflection or newer observation preserves the exact assertion/completion and its important details with equivalent fidelity.
 
 Preservation floor. Regardless of relevance label, budget pressure, coverage, or age, do not drop observations that uniquely carry any of the following:
 - User preferences, constraints, corrections, or identity/role facts.
@@ -2517,15 +2585,28 @@ Preservation floor. Regardless of relevance label, budget pressure, coverage, or
 - Current unresolved blockers, TODOs, partial work, or decisions waiting on the user.
 - Non-standard user terminology or unusual phrasing needed for future recognition.
 
-What you cannot do:
-- You cannot merge observations.
-- You cannot rewrite or edit observations.
-- You cannot add new observations or reflections.
-- You can only call drop_observations with ids from the current observations list.
+Never drop an observation that records an open task, a pending user decision, or work not yet done, unless a newer observation shows it is done or abandoned.
 
-Do not force drops you do not believe in. If no observations are safe to drop, do not call the tool and reply briefly. Hitting the budget or maximum count is less important than preserving load-bearing memory.`;
+Check reflections you recorded in this run as strictly as older ones. Before you drop an observation because a reflection supports it, compare the two: the reflection must keep the observation's identifiers, numbers, paths, done or open state, and any decision waiting on the user. A general reflection does not replace a specific observation.
 
-// src/agents/dropper/coverage.ts
+You cannot merge, rewrite, or edit observations. You can only drop ids from the current observations list.
+
+Do not force drops you do not believe in. Hitting the budget or maximum count is less important than preserving load-bearing memory. When both parts are done, stop calling tools and reply with one short sentence; if nothing is worth reflecting or safe to drop, call no tool.`;
+var REFLECTOR_SYSTEM = [INTRO, REFLECT_ONLY_TASK, INPUTS, REFLECTION_RULES, REFLECT_ONLY_CLOSING].join("\n\n");
+var REFLECTOR_DROP_SYSTEM = [
+  INTRO,
+  REFLECT_AND_DROP_TASK,
+  `${INPUTS}
+${DROP_INPUTS}`,
+  `Part 1: Reflections
+
+${REFLECTION_RULES}`,
+  `Part 2: Drops
+
+${DROP_RULES}`
+].join("\n\n");
+
+// src/agents/reflector/coverage.ts
 var REFLECTION_COVERAGE_DROP_RANK = {
   strong: 0,
   partial: 1,
@@ -2606,309 +2687,9 @@ function summarizeCoverageTransitionsByRelevance(observations, beforeCoverageByI
   }
   return summary;
 }
-function observationToDropperLine(observation, coverage) {
-  return `[${observation.id}] ${observation.timestamp} [${observation.relevance}] [coverage: ${coverage}] ${observation.content}`;
-}
 function coverageTierForObservation(observation, coverageById) {
   return coverageById.get(observation.id) ?? "none";
 }
-
-// src/agents/dropper/agent.ts
-var DropperStreamError = class extends Error {
-  stopReason;
-  constructor(stopReason, errorMessage) {
-    super(`dropper stream ended with stopReason "${stopReason}"${errorMessage ? `: ${errorMessage}` : ""}`);
-    this.name = "DropperStreamError";
-    this.stopReason = stopReason;
-  }
-};
-var RELEVANCE_DROP_RANK = {
-  low: 0,
-  medium: 1,
-  high: 2,
-  critical: 3
-};
-var DropObservationsSchema = Type2.Object({
-  ids: Type2.Array(Type2.String({ minLength: 1 }), { minItems: 1 }),
-  reason: Type2.Optional(Type2.String())
-});
-function joinOrEmpty2(items) {
-  return items.length ? items.join("\n") : "(none yet)";
-}
-function relevanceCounts(observations) {
-  return observations.reduce((counts, observation) => {
-    counts[observation.relevance]++;
-    return counts;
-  }, { low: 0, medium: 0, high: 0, critical: 0 });
-}
-function timestampRank(timestamp) {
-  const parsed = Date.parse(timestamp);
-  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
-}
-function selectDropCandidates(ids, observations, maxDrops, reflections = []) {
-  if (maxDrops <= 0 || ids.length === 0) return [];
-  const byId = new Map(observations.map((observation) => [observation.id, observation]));
-  const coverageById = reflectionCoverageMap(observations, reflections);
-  const firstProposalIndex = /* @__PURE__ */ new Map();
-  for (let i = 0; i < ids.length; i++) {
-    const id = ids[i];
-    if (!firstProposalIndex.has(id)) firstProposalIndex.set(id, i);
-  }
-  return Array.from(firstProposalIndex.entries()).map(([id, index]) => ({ id, index, observation: byId.get(id) })).filter(
-    (candidate) => candidate.observation !== void 0
-  ).sort((a, b) => {
-    const coverageDelta = REFLECTION_COVERAGE_DROP_RANK[coverageTierForObservation(a.observation, coverageById)] - REFLECTION_COVERAGE_DROP_RANK[coverageTierForObservation(b.observation, coverageById)];
-    const relevanceDelta = RELEVANCE_DROP_RANK[a.observation.relevance] - RELEVANCE_DROP_RANK[b.observation.relevance];
-    const ageDelta = timestampRank(a.observation.timestamp) - timestampRank(b.observation.timestamp);
-    return coverageDelta || relevanceDelta || ageDelta || a.index - b.index;
-  }).slice(0, maxDrops).map((candidate) => candidate.id);
-}
-async function runDropper(args) {
-  const { model, reflections, observations, targetTokens, signal } = args;
-  if (observations.length === 0) return void 0;
-  const metrics = observationPoolMetrics(observations, targetTokens);
-  const { observationTokens, fullness, tokensOverTarget, maxDropsAllowed } = metrics;
-  const coverageById = reflectionCoverageMap(observations, reflections);
-  const coverageSummaryByRelevance = summarizeCoverageByRelevance(observations, coverageById);
-  debugLog("dropper.agent_start", {
-    activeObservationCount: observations.length,
-    reflectionCount: reflections.length,
-    observationTokens,
-    targetTokens,
-    tokensOverTarget,
-    fullness,
-    maxDropsAllowed,
-    relevanceCounts: relevanceCounts(observations),
-    coverageSummaryByRelevance
-  });
-  if (maxDropsAllowed <= 0) {
-    debugLog("dropper.result", {
-      reason: "not_over_target",
-      toolCallCount: 0,
-      rawRequestedIdsCount: 0,
-      acceptedCandidateCount: 0,
-      selectedDropsCount: 0,
-      selectedDropTokens: 0,
-      selectedCoverageSummaryByRelevance: summarizeCoverageByRelevanceForIds([], observations, coverageById),
-      maxDropsAllowed
-    });
-    return void 0;
-  }
-  const proposedDropIds = [];
-  const proposed = /* @__PURE__ */ new Set();
-  const allowed = new Map(observations.map((observation) => [observation.id, observation]));
-  let toolCallCount = 0;
-  let rawRequestedIdsCount = 0;
-  let missingIdsCount = 0;
-  let criticalCandidateIdsCount = 0;
-  let duplicateInRequestCount = 0;
-  let duplicateInRunCount = 0;
-  const dropObservations = {
-    name: "drop_observations",
-    label: "Drop observations",
-    description: "Propose active observation ids that are safe to remove from compacted memory.",
-    parameters: DropObservationsSchema,
-    execute: async (_id, params) => {
-      toolCallCount++;
-      rawRequestedIdsCount += params.ids.length;
-      const seenInRequest = /* @__PURE__ */ new Set();
-      let added = 0;
-      let requestMissingIds = 0;
-      let requestCriticalCandidateIds = 0;
-      let requestDuplicateIds = 0;
-      let requestDuplicateInRunIds = 0;
-      for (const id of params.ids) {
-        const observation = allowed.get(id);
-        if (!observation) {
-          missingIdsCount++;
-          requestMissingIds++;
-          continue;
-        }
-        if (seenInRequest.has(id)) {
-          duplicateInRequestCount++;
-          requestDuplicateIds++;
-          continue;
-        }
-        seenInRequest.add(id);
-        if (proposed.has(id)) {
-          duplicateInRunCount++;
-          requestDuplicateInRunIds++;
-          continue;
-        }
-        proposed.add(id);
-        proposedDropIds.push(id);
-        if (observation.relevance === "critical") {
-          criticalCandidateIdsCount++;
-          requestCriticalCandidateIds++;
-        }
-        added++;
-      }
-      debugLog("dropper.tool_call", {
-        toolCallCount,
-        rawRequestedIdsCount: params.ids.length,
-        acceptedIdsCount: added,
-        missingIdsCount: requestMissingIds,
-        criticalCandidateIdsCount: requestCriticalCandidateIds,
-        duplicateInRequestCount: requestDuplicateIds,
-        duplicateInRunCount: requestDuplicateInRunIds,
-        totalCandidates: proposedDropIds.length,
-        maxDropsAllowed
-      });
-      return {
-        content: [{ type: "text", text: `Queued ${added} drop candidate${added === 1 ? "" : "s"}. Candidates this run: ${proposedDropIds.length}. Maximum drops allowed: ${maxDropsAllowed}.` }],
-        details: { added, totalCandidates: proposedDropIds.length, maxDropsAllowed }
-      };
-    }
-  };
-  const fullnessPercent = Math.round(fullness * 100);
-  const userText = `CURRENT REFLECTIONS:
-${joinOrEmpty2(reflections.map(reflectionToSummaryLine))}
-
-CURRENT OBSERVATIONS:
-${joinOrEmpty2(observations.map((observation) => observationToDropperLine(observation, coverageTierForObservation(observation, coverageById))))}
-
-Active observation pool: ~${observationTokens.toLocaleString()} tokens; target: ~${targetTokens.toLocaleString()} tokens; fullness against target: ~${fullnessPercent.toLocaleString()}%; over target by ~${tokensOverTarget.toLocaleString()} tokens.
-Maximum drops allowed this run: ${maxDropsAllowed.toLocaleString()} observation${maxDropsAllowed === 1 ? "" : "s"}. This maximum is sized to move the active pool toward the target if every proposed drop is clearly safe.
-This maximum is a hard upper bound, not a target. Drop fewer or none if fewer observations are clearly safe.`;
-  const prompts = [{ role: "user", content: [{ type: "text", text: userText }], timestamp: Date.now() }];
-  const context = {
-    messages: [{ role: "system", content: DROPPER_SYSTEM, timestamp: Date.now() }],
-    tools: [dropObservations]
-  };
-  const reasoning = model.reasoning;
-  const thinkingLevel = args.thinkingLevel ?? "low";
-  const effectiveMaxTurns = args.maxTurns && args.maxTurns > 0 ? args.maxTurns : void 0;
-  let turnCount = 0;
-  const config = {
-    model,
-    maxTokens: boundedMaxTokens(model, args.maxOutputTokens ?? AGENT_LOOP_MAX_TOKENS),
-    convertToLlm: (msgs) => msgs,
-    toolExecution: "sequential",
-    ...reasoning && thinkingLevel !== "off" ? { reasoning: thinkingLevel } : {},
-    ...effectiveMaxTurns !== void 0 ? {
-      finishTurn: (turn) => {
-        if (turn.message.stopReason === "error" || turn.message.stopReason === "aborted") return;
-        return ++turnCount >= effectiveMaxTurns ? { action: "end" } : void 0;
-      }
-    } : {}
-  };
-  const streamError = await runWorkerConversation({
-    stage: "dropper",
-    registry: args.modelRegistry,
-    loop: args.agentLoop ?? agentLoop2,
-    prompts,
-    context,
-    config,
-    signal
-  });
-  const droppedIds = selectDropCandidates(proposedDropIds, observations, maxDropsAllowed, reflections);
-  if (droppedIds.length === 0 && streamError) throw new DropperStreamError(streamError.stopReason, streamError.errorMessage);
-  const reason = droppedIds.length > 0 ? "selected_nonempty" : toolCallCount === 0 ? "no_tool_call" : proposedDropIds.length === 0 ? "all_filtered" : "selected_empty";
-  const selectedDropTokens = droppedIds.reduce((sum, id) => sum + (allowed.get(id)?.tokenCount ?? 0), 0);
-  debugLog("dropper.result", {
-    reason,
-    toolCallCount,
-    rawRequestedIdsCount,
-    missingIdsCount,
-    criticalCandidateIdsCount,
-    duplicateInRequestCount,
-    duplicateInRunCount,
-    acceptedCandidateCount: proposedDropIds.length,
-    selectedDropsCount: droppedIds.length,
-    selectedDropTokens,
-    selectedCoverageSummaryByRelevance: summarizeCoverageByRelevanceForIds(droppedIds, observations, coverageById),
-    maxDropsAllowed
-  });
-  return droppedIds.length > 0 ? droppedIds : void 0;
-}
-
-// src/agents/reflector/agent.ts
-import { agentLoop as agentLoop3 } from "@earendil-works/pi-agent-core";
-import { Type as Type3 } from "typebox";
-
-// src/agents/reflector/prompts.ts
-var REFLECTOR_SYSTEM = `You are the reflection agent for a coding assistant.
-
-These records are the ONLY information the assistant will have about past interactions once the raw conversation is compacted out of context. Anything you fail to preserve may be forgotten. Anything you distort may be remembered wrong. Take this seriously. Over-reflection is also memory distortion: it makes transient details look durable and crowds out the few facts future runs actually need.
-
-Your task is different from the observer's: you are not recording events, you are distilling stable, long-lived facts and patterns from active observations into new reflections by calling record_reflections. Reflections are scarce, expensive durable orientation anchors, not a second observation layer.
-
-You receive:
-- Current reflections: durable facts already crystallized.
-- Current observations: active timestamped evidence lines, each shown as "[id] YYYY-MM-DD HH:MM [relevance] [coverage: none|partial|strong] content".
-- Coverage tiers are review context: none means no current reflection supports the observation id, partial means exactly one current reflection supports it, and strong means two or more current reflections support it. Coverage is not a quota, target, priority score, or instruction to emit reflections.
-
-What to emit:
-- Emit only new durable reflections not already present in current reflections.
-- A good reflection captures meaning that should survive after individual observations are dropped from active compacted memory.
-- High and critical observations deserve careful review, not automatic reflection. Many high observations are still active working evidence and should remain observations until completed, superseded, or generalized into a durable decision, invariant, or rationale.
-- Ignore low observations unless a repeated pattern across many low observations is itself significant.
-- Do not lightly reword existing reflections. Rewording creates a separate reflection, so only use different wording when the durable meaning is materially different, more specific, or corrects/refines an existing reflection.
-- Do not emit update-style records or provenance metadata. Reflections are plain durable facts, not patches.
-- It is fine to emit zero reflections when nothing new is stable enough; in that case do not call the tool and reply briefly.
-
-Decision procedure:
-1. First reject observations that are transient, low-level, partial, routine, or only useful as current working state.
-2. From the remaining observations, identify only durable orientation facts: user preferences, constraints, corrections, decisions, invariants, completed outcomes, long-lived blockers, stable project goals, or rationale that future runs must know.
-3. Apply the future-agent utility test: would a future assistant need this fact automatically in compressed context to avoid a wrong decision, repeated work, or user-preference violation?
-4. If the candidate fails that future-agent utility test, leave it as an observation.
-5. If unsure, emit no reflection.
-
-Abstraction gate:
-- Do not turn each observation into a reflection. Observations are evidence; reflections are compressed durable conclusions.
-- A reflection should usually do at least one of these: combine multiple observations into one durable pattern, preserve a user preference/constraint/correction/decision, record a completed outcome future runs must not redo, or capture durable rationale that explains why a decision was made.
-- Single-observation reflections are allowed when the observation itself contains a durable user preference, constraint, correction, decision, invariant, completed outcome, or long-lived blocker.
-- Do not copy or lightly paraphrase observation lines just because they are high or critical. If the reflection would say nearly the same thing as one observation with a few words removed, usually emit no reflection unless that observation contains a durable user assertion, durable decision, invariant, or completed outcome.
-- Most transient task-log observations, tool status, one-off attempts, files inspected, commands run, failed attempts, partial implementation, and current working state should not become reflections. Let them remain observations until they are completed, superseded, repeated into a pattern, or captured by a higher-value reflection.
-- Prefer fewer, higher-value reflections. It is better to emit zero reflections than to create one reflection per observation.
-
-Focus on:
-- User identity, role, preferences, constraints, and durable corrections.
-- Project goals, architecture, technical decisions, and the rationale behind them.
-- Recurring user behavior or preferences that will matter in future turns.
-- Completed outcomes future runs must not redo.
-- Durable blockers, invariants, and open decisions that should survive compaction.
-
-Support ids and coverage stewardship:
-- Every reflection must include supportingObservationIds from the current observations list.
-- First decide whether the reflection content passes the durable-value bar. Then audit support ids for that already-worthy reflection.
-- supportingObservationIds are a coverage/provenance set and downstream dropper coverage evidence: include all current observation ids whose durable meaning is preserved by the reflection with equivalent fidelity and can later be treated as redundant active-memory detail.
-- supportingObservationIds are not a checklist to cover every observation. Do not add ids merely to improve coverage counts, maximize support ids, maximize strong coverage, or unlock the dropper.
-- False or inflated support ids can cause unsafe downstream dropper pruning, including removal of high-resistance active observations whose meaning was not actually preserved.
-- Include additional observation ids only when the reflection preserves their durable meaning with equivalent fidelity.
-- Leave observations unsupported when their details are still active working state, too specific to compress safely, or not yet durable enough.
-- Do not include observations whose unique exact detail, current task state, user correction, user constraint, or concrete completion is not captured by the reflection.
-- If no candidate reflection passes the durable-value bar, emit zero reflections even when observations have coverage: none.
-- Never invent observation ids. Proposals with missing, empty, or invalid supportingObservationIds are rejected.
-
-User assertions are authoritative. If the observation pool contains both "User stated they use Postgres" and a later "User asked which db they are on", the assertion answers the question \u2014 crystallize the assertion, never the question, as the durable fact.
-
-Reflection content rules:
-- Single line of plain prose. No markdown, no bullets, no code fences, no XML/HTML tags, no emojis.
-- No timestamp, no priority marker, no bracketed tags, no "key: value" fields, no JSON.
-- Write in the language of the current observations, which follow the language the user writes in; when they mix languages, follow the newest ones. The examples below are in English only for illustration. Keep identifiers, paths, commands, code, error messages, and quoted user words verbatim, untranslated.
-- Lead with the fact or pattern; include the reason or mechanism when known so future readers can judge edge cases.
-- Preserve user assertions exactly. Use the user's exact words when non-standard.
-- Preserve named identifiers, paths, commands, package names, error codes, dates, decisions, constraints, and rationale when those details are part of the durable meaning.
-
-Examples:
-- BAD: User discussed databases.
-- GOOD: User stated they use Postgres for the project database.
-- BAD: User asked about database setup.
-- GOOD: User stated they use Postgres for the project database.
-- BAD: User ran npm test and it failed.
-- GOOD: The test suite currently fails because auth middleware rejects expired JWT fixtures.
-- BAD: User prefers React Query.
-- BAD: User switched from SWR.
-- GOOD: User chose React Query over SWR for server-state caching.
-- BAD: completed: edited src/hooks/reflect-drop-trigger.ts.
-- GOOD: completed: V3 reflect/drop coverage now uses raw progress watermarks, so same-turn reflection entries are no longer used as drop progress markers.
-- BAD: npm test passed.
-- GOOD: completed: V3 package namespace migration passed full tests and typecheck.
-- BAD: Observation aaaaaaaaaaaa says the user likes short answers.
-- GOOD: User prefers short answers without generic summaries.
-- ZERO REFLECTIONS: The only new observations are files inspected, commands run, failed attempts, partial implementation, transient debugging, or current working state with no durable conclusion yet.
-- ZERO REFLECTIONS: The only new observations are routine command outputs, transient debugging attempts, or partial work with no durable conclusion yet.`;
 
 // src/agents/reflector/agent.ts
 var ReflectorStreamError = class extends Error {
@@ -2919,16 +2700,26 @@ var ReflectorStreamError = class extends Error {
     this.stopReason = stopReason;
   }
 };
-var RecordReflectionsSchema = Type3.Object({
-  reflections: Type3.Array(
-    Type3.Object({
-      content: Type3.String({ minLength: 1 }),
-      supportingObservationIds: Type3.Array(Type3.String({ minLength: 1 }), { minItems: 1 })
+var RecordReflectionsSchema = Type2.Object({
+  reflections: Type2.Array(
+    Type2.Object({
+      content: Type2.String({ minLength: 1 }),
+      supportingObservationIds: Type2.Array(Type2.String({ minLength: 1 }), { minItems: 1 })
     }),
     { minItems: 1 }
   )
 });
-function joinOrEmpty3(items) {
+var DropObservationsSchema = Type2.Object({
+  ids: Type2.Array(Type2.String({ minLength: 1 }), { minItems: 1 }),
+  reason: Type2.Optional(Type2.String())
+});
+var RELEVANCE_DROP_RANK = {
+  low: 0,
+  medium: 1,
+  high: 2,
+  critical: 3
+};
+function joinOrEmpty2(items) {
   return items.length ? items.join("\n") : "(none yet)";
 }
 function observationToReflectorLine(observation, coverage) {
@@ -2970,34 +2761,61 @@ function normalizeReflectionContent(content) {
   if (!normalized || /\r|\n/.test(normalized)) return void 0;
   return normalized;
 }
+function timestampRank(timestamp) {
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+}
+function selectDropCandidates(ids, observations, maxDrops, reflections = []) {
+  if (maxDrops <= 0 || ids.length === 0) return [];
+  const byId = new Map(observations.map((observation) => [observation.id, observation]));
+  const coverageById = reflectionCoverageMap(observations, reflections);
+  const firstProposalIndex = /* @__PURE__ */ new Map();
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    if (!firstProposalIndex.has(id)) firstProposalIndex.set(id, i);
+  }
+  return Array.from(firstProposalIndex.entries()).map(([id, index]) => ({ id, index, observation: byId.get(id) })).filter(
+    (candidate) => candidate.observation !== void 0
+  ).sort((a, b) => {
+    const coverageDelta = REFLECTION_COVERAGE_DROP_RANK[coverageTierForObservation(a.observation, coverageById)] - REFLECTION_COVERAGE_DROP_RANK[coverageTierForObservation(b.observation, coverageById)];
+    const relevanceDelta = RELEVANCE_DROP_RANK[a.observation.relevance] - RELEVANCE_DROP_RANK[b.observation.relevance];
+    const ageDelta = timestampRank(a.observation.timestamp) - timestampRank(b.observation.timestamp);
+    return coverageDelta || relevanceDelta || ageDelta || a.index - b.index;
+  }).slice(0, maxDrops).map((candidate) => candidate.id);
+}
 async function runReflector(args) {
-  const { model, reflections, observations, signal } = args;
+  const { model, reflections, observations, pool, signal } = args;
   if (observations.length === 0) return void 0;
   const coverageById = reflectionCoverageMap(observations, reflections);
   debugLog("reflector.agent_start", {
     activeObservationCount: observations.length,
     reflectionCount: reflections.length,
+    observationTokens: pool.observationTokens,
+    targetTokens: pool.targetTokens,
+    maxDropsAllowed: pool.maxDropsAllowed,
     coverageSummaryByRelevance: summarizeCoverageByRelevance(observations, coverageById)
   });
   const allowedObservationIds = observations.map((observation) => observation.id);
+  const allowedObservations = new Map(observations.map((observation) => [observation.id, observation]));
   const existingReflectionIds = new Set(reflections.map((reflection) => reflection.id));
   const accumulated = /* @__PURE__ */ new Map();
-  let toolCallCount = 0;
-  let rawProposedReflectionCount = 0;
-  let acceptedReflectionCount = 0;
-  let duplicateReflectionCount = 0;
+  const proposedDropIds = [];
+  let reflectionToolCalls = 0;
+  let dropToolCalls = 0;
   let rejectedReflectionCount = 0;
+  let duplicateReflectionCount = 0;
+  let missingDropIdsCount = 0;
   const recordReflections = {
     name: "record_reflections",
     label: "Record reflections",
     description: "Record new durable reflections with supporting observation ids.",
     parameters: RecordReflectionsSchema,
     execute: async (_id, params) => {
-      toolCallCount++;
-      rawProposedReflectionCount += params.reflections.length;
+      reflectionToolCalls++;
       let added = 0;
       let duplicates = 0;
       let rejected = 0;
+      const supported = /* @__PURE__ */ new Set();
       for (const proposal of params.reflections) {
         const content = normalizeReflectionContent(proposal.content);
         const supportingObservationIds = normalizeSupportingObservationIds(proposal.supportingObservationIds, allowedObservationIds);
@@ -3010,34 +2828,60 @@ async function runReflector(args) {
           duplicates++;
           continue;
         }
-        accumulated.set(id, {
-          id,
-          content,
-          supportingObservationIds,
-          tokenCount: estimateStringTokens(content)
-        });
+        accumulated.set(id, { id, content, supportingObservationIds, tokenCount: estimateStringTokens(content) });
+        for (const observationId of supportingObservationIds) supported.add(observationId);
         added++;
       }
-      acceptedReflectionCount += added;
       duplicateReflectionCount += duplicates;
       rejectedReflectionCount += rejected;
+      const supportedPart = supported.size > 0 ? ` Observations these reflections now support: ${Array.from(supported).join(", ")}.` : "";
       return {
-        content: [{ type: "text", text: `Recorded ${added} reflection${added === 1 ? "" : "s"}; ${duplicates} duplicate${duplicates === 1 ? "" : "s"}; ${rejected} rejected. Total this run: ${accumulated.size}.` }],
+        content: [{ type: "text", text: `Recorded ${added} reflection${added === 1 ? "" : "s"}; ${duplicates} duplicate${duplicates === 1 ? "" : "s"}; ${rejected} rejected. Total this run: ${accumulated.size}.${supportedPart}` }],
         details: { added, duplicates, rejected, total: accumulated.size }
       };
     }
   };
-  const userText = `CURRENT REFLECTIONS:
-${joinOrEmpty3(reflections.map(reflectionToSummaryLine))}
+  const dropObservations = {
+    name: "drop_observations",
+    label: "Drop observations",
+    description: "Propose active observation ids that are safe to remove from compacted memory.",
+    parameters: DropObservationsSchema,
+    execute: async (_id, params) => {
+      dropToolCalls++;
+      let added = 0;
+      for (const id of params.ids) {
+        if (!allowedObservations.has(id)) {
+          missingDropIdsCount++;
+          continue;
+        }
+        if (proposedDropIds.includes(id)) continue;
+        proposedDropIds.push(id);
+        added++;
+      }
+      return {
+        content: [{ type: "text", text: `Queued ${added} drop candidate${added === 1 ? "" : "s"}. Candidates this run: ${proposedDropIds.length}. Maximum drops allowed: ${pool.maxDropsAllowed}.` }],
+        details: { added, totalCandidates: proposedDropIds.length, maxDropsAllowed: pool.maxDropsAllowed }
+      };
+    }
+  };
+  const memoryText = `CURRENT REFLECTIONS:
+${joinOrEmpty2(reflections.map(reflectionToSummaryLine))}
 
 CURRENT OBSERVATIONS:
-${joinOrEmpty3(observations.map((observation) => observationToReflectorLine(observation, coverageTierForObservation(observation, coverageById))))}
+${joinOrEmpty2(observations.map((observation) => observationToReflectorLine(observation, coverageTierForObservation(observation, coverageById))))}`;
+  const dropsAllowed = pool.maxDropsAllowed > 0;
+  const userText = dropsAllowed ? `${memoryText}
+
+Active observation pool: ~${pool.observationTokens.toLocaleString()} tokens; target: ~${pool.targetTokens.toLocaleString()} tokens; fullness against target: ~${Math.round(pool.fullness * 100).toLocaleString()}%; over target by ~${pool.tokensOverTarget.toLocaleString()} tokens.
+Maximum drops allowed this run: ${pool.maxDropsAllowed.toLocaleString()} observation${pool.maxDropsAllowed === 1 ? "" : "s"}. This maximum is a hard upper bound, not a target. Drop fewer or none if fewer observations are clearly safe.
+
+First crystallize any missing durable reflections with record_reflections, then drop the safest observations with drop_observations.` : `${memoryText}
 
 Crystallize any missing durable facts or patterns into new reflections. If nothing is stable enough, do not call the tool.`;
   const prompts = [{ role: "user", content: [{ type: "text", text: userText }], timestamp: Date.now() }];
   const context = {
-    messages: [{ role: "system", content: REFLECTOR_SYSTEM, timestamp: Date.now() }],
-    tools: [recordReflections]
+    messages: [{ role: "system", content: dropsAllowed ? REFLECTOR_DROP_SYSTEM : REFLECTOR_SYSTEM, timestamp: Date.now() }],
+    tools: dropsAllowed ? [recordReflections, dropObservations] : [recordReflections]
   };
   const reasoning = model.reasoning;
   const thinkingLevel = args.thinkingLevel ?? "low";
@@ -3059,62 +2903,66 @@ Crystallize any missing durable facts or patterns into new reflections. If nothi
   const streamError = await runWorkerConversation({
     stage: "reflector",
     registry: args.modelRegistry,
-    loop: args.agentLoop ?? agentLoop3,
+    loop: args.agentLoop ?? agentLoop2,
     prompts,
     context,
     config,
     signal
   });
   const acceptedReflections = Array.from(accumulated.values());
-  if (acceptedReflections.length === 0 && streamError) throw new ReflectorStreamError(streamError.stopReason, streamError.errorMessage);
-  const afterCoverageById = reflectionCoverageMap(observations, [...reflections, ...acceptedReflections]);
+  const afterReflections = [...reflections, ...acceptedReflections];
+  const droppedObservationIds = selectDropCandidates(proposedDropIds, observations, pool.maxDropsAllowed, afterReflections);
+  const changed = acceptedReflections.length > 0 || droppedObservationIds.length > 0;
+  if (!changed && streamError) throw new ReflectorStreamError(streamError.stopReason, streamError.errorMessage);
+  const afterCoverageById = reflectionCoverageMap(observations, afterReflections);
   debugLog("reflector.result", {
-    reason: acceptedReflections.length > 0 ? "accepted_nonempty" : toolCallCount === 0 ? "no_tool_call" : "all_filtered",
-    toolCallCount,
-    rawProposedReflectionCount,
-    acceptedReflectionCount,
+    reason: changed ? "accepted_nonempty" : reflectionToolCalls + dropToolCalls === 0 ? "no_tool_call" : "all_filtered",
+    reflectionToolCalls,
+    dropToolCalls,
+    acceptedReflectionCount: acceptedReflections.length,
     duplicateReflectionCount,
     rejectedReflectionCount,
     acceptedSupportIdCounts: summarizeSupportIdCounts(acceptedReflections),
-    coverageTransitionsByRelevance: summarizeCoverageTransitionsByRelevance(observations, coverageById, afterCoverageById)
+    coverageTransitionsByRelevance: summarizeCoverageTransitionsByRelevance(observations, coverageById, afterCoverageById),
+    proposedDropCount: proposedDropIds.length,
+    missingDropIdsCount,
+    selectedDropsCount: droppedObservationIds.length,
+    selectedDropTokens: droppedObservationIds.reduce((sum, id) => sum + (allowedObservations.get(id)?.tokenCount ?? 0), 0),
+    selectedCoverageSummaryByRelevance: summarizeCoverageByRelevanceForIds(droppedObservationIds, observations, afterCoverageById),
+    maxDropsAllowed: pool.maxDropsAllowed
   });
-  return acceptedReflections.length > 0 ? acceptedReflections : void 0;
+  return changed ? { reflections: acceptedReflections, droppedObservationIds } : void 0;
 }
 
 // src/hooks/consolidation-trigger.ts
 function sourceEntriesAfter(entries, index) {
   return entries.slice(index + 1).filter(isSourceEntry);
 }
-function mergeReflections(existing, additional) {
-  const seen = new Set(existing.map((reflection) => reflection.id));
-  const merged = [...existing];
-  for (const reflection of additional) {
-    if (seen.has(reflection.id)) continue;
-    seen.add(reflection.id);
-    merged.push(reflection);
-  }
-  return merged;
-}
 function realContextTokens(ctx) {
   const usage = typeof ctx.getContextUsage === "function" ? ctx.getContextUsage() : void 0;
   const tokens = usage?.tokens;
   return typeof tokens === "number" && Number.isFinite(tokens) ? tokens : void 0;
 }
-function stageDue(entries, runtime, currentTokens, customType, rawEstimateFn, threshold) {
-  if (rawEstimateFn(entries) >= threshold) return true;
-  if (currentTokens !== void 0) {
-    const real = realTokensSinceAnchor(entries, customType, currentTokens);
-    if (real !== void 0) return real >= threshold;
-  }
-  return false;
-}
-function stageTokens(entries, customType, currentTokens, rawEstimateFn) {
-  const raw = rawEstimateFn(entries);
-  const real = currentTokens !== void 0 ? realTokensSinceAnchor(entries, customType, currentTokens) : void 0;
+function stageTokens(entries, raw, anchorIndex, currentTokens) {
+  const real = currentTokens !== void 0 ? realTokensSinceAnchor(entries, anchorIndex, currentTokens) : void 0;
   return real !== void 0 ? Math.max(raw, real) : raw;
 }
-function anyStageDue(entries, runtime, currentTokens) {
-  return stageDue(entries, runtime, currentTokens, OM_OBSERVATIONS_RECORDED, rawTokensSinceObservationCoverage, runtime.config.observeAfterTokens) || stageDue(entries, runtime, currentTokens, OM_REFLECTIONS_RECORDED, rawObservedTokensSinceReflectionCoverage, runtime.config.reflectAfterTokens);
+function observerTokens(entries, currentTokens) {
+  return stageTokens(entries, rawTokensSinceObservationCoverage(entries), latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED), currentTokens);
+}
+function reflectorTokens(entries, currentTokens) {
+  return stageTokens(entries, rawObservedTokensSinceReflectorPass(entries), latestReflectorPassIndex(entries), currentTokens);
+}
+function reflectorDue(entries, runtime, currentTokens, sessionIdentity2) {
+  if (latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED) <= latestReflectorPassIndex(entries)) return false;
+  const tokens = reflectorTokens(entries, currentTokens);
+  const backoff = runtime.reflectorEmptyBackoff;
+  if (backoff && backoff.sessionIdentity === sessionIdentity2 && backoff.passMarkerId === latestReflectorPassMarkerId(entries) && tokens < backoff.tokensAtEmpty + runtime.config.reflectAfterTokens) return false;
+  return tokens >= runtime.config.reflectAfterTokens || observationTokenSum(foldLedger(entries).activeObservations) >= runtime.config.observationsPoolMaxTokens;
+}
+function anyStageDue(entries, runtime, ctx) {
+  const currentTokens = realContextTokens(ctx);
+  return observerTokens(entries, currentTokens) >= runtime.config.observeAfterTokens || reflectorDue(entries, runtime, currentTokens, sessionIdentity(ctx));
 }
 function shouldNotifyWorker(runtime, ctx) {
   return runtime.config.showWorkerNotifications && ctx.hasUI;
@@ -3156,12 +3004,16 @@ function debugSessionMetadata(ctx) {
     return {};
   }
 }
+function sessionIdentity(ctx) {
+  const metadata = debugSessionMetadata(ctx);
+  return metadata.sessionId ?? metadata.sessionFile;
+}
 function maybeLaunchConsolidation(pi, runtime, ctx) {
   runtime.ensureConfig(ctx.cwd);
   if (runtime.config.passive === true) return void 0;
   if (runtime.consolidationInFlight) return void 0;
   const entries = ctx.sessionManager.getBranch();
-  if (!anyStageDue(entries, runtime, realContextTokens(ctx))) return void 0;
+  if (!anyStageDue(entries, runtime, ctx)) return void 0;
   const runId = `consolidation-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
   const consolidationCtx = {
     cwd: ctx.cwd,
@@ -3201,34 +3053,22 @@ async function runConsolidationPipeline(pi, runtime, ctx) {
   }
   if (wasAborted(runtime)) return;
   runtime.consolidationPhase = "reflector";
-  let reflectorResult;
   try {
-    reflectorResult = await runReflectorStage(pi, runtime, ctx, resolver);
-    if (reflectorResult.outcome === "abort") return;
+    await runReflectorStage(pi, runtime, ctx, resolver);
   } catch (error) {
     if (wasAborted(runtime)) return;
     debugLog("reflector.error", { errorMessage: runtime.recordConsolidationStageError(ctx, "reflector", error) });
-    return;
-  }
-  if (wasAborted(runtime)) return;
-  runtime.consolidationPhase = "dropper";
-  try {
-    await runDropperStage(pi, runtime, ctx, resolver, reflectorResult.sameRunReflections, reflectorResult.effectiveReflectionCoverageId);
-  } catch (error) {
-    if (wasAborted(runtime)) return;
-    debugLog("dropper.error", { errorMessage: runtime.recordConsolidationStageError(ctx, "dropper", error) });
   }
 }
 async function runObserverStage(pi, runtime, ctx, resolver) {
   const entries = ctx.sessionManager.getBranch();
-  const tokens = stageTokens(entries, OM_OBSERVATIONS_RECORDED, realContextTokens(ctx), rawTokensSinceObservationCoverage);
+  const tokens = observerTokens(entries, realContextTokens(ctx));
   if (tokens < runtime.config.observeAfterTokens) return "continue";
-  const sessionMetadata = debugSessionMetadata(ctx);
-  const sessionIdentity = sessionMetadata.sessionId ?? sessionMetadata.sessionFile;
+  const identity = sessionIdentity(ctx);
   const coverageId = latestCoverageMarkerId(entries, OM_OBSERVATIONS_RECORDED);
   const backoff = runtime.observerEmptyBackoff;
   if (backoff) {
-    if (sessionIdentity !== backoff.sessionIdentity || coverageId !== backoff.coverageId || tokens >= backoff.tokensAtEmpty + runtime.config.observeAfterTokens) {
+    if (identity !== backoff.sessionIdentity || coverageId !== backoff.coverageId || tokens >= backoff.tokensAtEmpty + runtime.config.observeAfterTokens) {
       runtime.observerEmptyBackoff = void 0;
     } else {
       debugLog("observer.empty_backoff", { tokens, resumeAtTokens: backoff.tokensAtEmpty + runtime.config.observeAfterTokens });
@@ -3314,7 +3154,7 @@ async function runObserverStage(pi, runtime, ctx, resolver) {
   }
   if (!observations || observations.length === 0) {
     debugLog("observer.empty", { coversUpToId });
-    runtime.observerEmptyBackoff = { sessionIdentity, coverageId, tokensAtEmpty: tokens };
+    runtime.observerEmptyBackoff = { sessionIdentity: identity, coverageId, tokensAtEmpty: tokens };
     if (shouldNotifyWorker(runtime, ctx)) ctx.ui?.notify(
       "Observational memory: observer found nothing new in this chunk (coverage unchanged; will retry later)",
       "info"
@@ -3335,110 +3175,45 @@ async function runObserverStage(pi, runtime, ctx, resolver) {
 }
 async function runReflectorStage(pi, runtime, ctx, resolver) {
   const entries = ctx.sessionManager.getBranch();
-  const reflectionTokens = stageTokens(entries, OM_REFLECTIONS_RECORDED, realContextTokens(ctx), rawObservedTokensSinceReflectionCoverage);
-  if (reflectionTokens < runtime.config.reflectAfterTokens) return { outcome: "continue", sameRunReflections: [] };
-  const observationCoverageId = latestCoverageMarkerId(entries, OM_OBSERVATIONS_RECORDED);
-  if (!observationCoverageId) return { outcome: "continue", sameRunReflections: [] };
-  if (shouldNotifyWorker(runtime, ctx)) ctx.ui?.notify(
-    `Observational memory: reflector running (~${reflectionTokens.toLocaleString()} tokens)`,
-    "info"
-  );
-  const resolved = await resolver.resolve("reflector");
-  if (!resolved) return { outcome: "abort", sameRunReflections: [] };
-  if (wasAborted(runtime)) {
-    debugLog("reflector.aborted", {});
-    return { outcome: "abort", sameRunReflections: [] };
-  }
-  const folded = foldLedger(entries);
-  const reflections = await resolver.runStage("reflector", resolved, (worker) => {
-    const reflectorMemory = boundWorkerMemory(
-      folded.reflections,
-      folded.activeObservations,
-      resolveWorkerMemoryMaxTokens(runtime.config, worker.model.contextWindow)
-    );
-    return runReflector({
-      model: worker.model,
-      reflections: reflectorMemory.reflections,
-      observations: reflectorMemory.observations,
-      maxTurns: runtime.config.agentMaxTurns,
-      maxOutputTokens: runtime.config.agentMaxTokens,
-      signal: consolidationSignal(runtime),
-      thinkingLevel: workerThinkingLevel(runtime, worker),
-      modelRegistry: ctx.modelRegistry
-    });
-  }, consolidationSignal(runtime));
-  if (wasAborted(runtime)) {
-    debugLog("reflector.aborted", {});
-    return { outcome: "abort", sameRunReflections: [] };
-  }
-  if (!reflections) return { outcome: "continue", sameRunReflections: [] };
-  const data = buildReflectionsRecordedData(reflections, observationCoverageId);
-  if (!data) return { outcome: "continue", sameRunReflections: [] };
-  if (!recordMemoryEntry(pi, runtime.config, ctx, entries, OM_REFLECTIONS_RECORDED, data)) {
-    return { outcome: "abort", sameRunReflections: [] };
-  }
-  return {
-    outcome: "continue",
-    sameRunReflections: reflections,
-    effectiveReflectionCoverageId: data.coversUpToId
-  };
-}
-async function runDropperStage(pi, runtime, ctx, resolver, sameRunReflections, sameRunReflectionCoverageId) {
-  if (!sameRunReflectionCoverageId || sameRunReflections.length === 0) {
-    debugLog("dropper.waiting_for_reflection", { sameRunReflections: sameRunReflections.length });
-    return "continue";
-  }
-  const entries = ctx.sessionManager.getBranch();
+  const identity = sessionIdentity(ctx);
+  const currentTokens = realContextTokens(ctx);
+  if (!reflectorDue(entries, runtime, currentTokens, identity)) return "continue";
   const observationCoverageId = latestCoverageMarkerId(entries, OM_OBSERVATIONS_RECORDED);
   if (!observationCoverageId) return "continue";
   const folded = foldLedger(entries);
-  const metrics = observationPoolMetrics(folded.activeObservations, runtime.config.observationsPoolTargetTokens);
-  if (!metrics.ready) {
-    debugLog("dropper.not_ready", {
-      observationTokens: metrics.observationTokens,
-      targetTokens: metrics.targetTokens,
-      tokensOverTarget: metrics.tokensOverTarget,
-      fullness: metrics.fullness,
-      activeObservationCount: metrics.activeObservationCount,
-      droppableCount: metrics.droppableCount,
-      maxDropsAllowed: metrics.maxDropsAllowed
-    });
-    return "continue";
-  }
-  debugLog("dropper.stage_start", {
+  const pool = observationPoolMetrics(folded.activeObservations, runtime.config.observationsPoolTargetTokens);
+  const tokens = reflectorTokens(entries, currentTokens);
+  debugLog("reflector.stage_start", {
     observationCoverageId,
-    sameRunReflectionCoverageId,
-    sameRunReflectionCount: sameRunReflections.length,
-    activeObservationCount: metrics.activeObservationCount,
-    observationTokens: metrics.observationTokens,
-    targetTokens: metrics.targetTokens,
-    tokensOverTarget: metrics.tokensOverTarget,
-    fullness: metrics.fullness,
-    maxDropsAllowed: metrics.maxDropsAllowed
+    tokens,
+    activeObservationCount: pool.activeObservationCount,
+    observationTokens: pool.observationTokens,
+    maxTokens: runtime.config.observationsPoolMaxTokens,
+    targetTokens: pool.targetTokens,
+    maxDropsAllowed: pool.maxDropsAllowed
   });
   if (shouldNotifyWorker(runtime, ctx)) ctx.ui?.notify(
-    `Observational memory: dropper running after reflection \u2014 active observation pool ~${metrics.observationTokens.toLocaleString()} / ${metrics.targetTokens.toLocaleString()} target tokens (${Math.round(metrics.fullness * 100).toLocaleString()}%)`,
+    `Observational memory: reflector running (~${tokens.toLocaleString()} tokens) \u2014 active observation pool ~${pool.observationTokens.toLocaleString()} / ${pool.targetTokens.toLocaleString()} target tokens`,
     "info"
   );
-  const resolved = await resolver.resolve("dropper");
+  const resolved = await resolver.resolve("reflector");
   if (!resolved) return "abort";
   if (wasAborted(runtime)) {
-    debugLog("dropper.aborted", {});
+    debugLog("reflector.aborted", {});
     return "abort";
   }
-  const reflectionsForDropper = mergeReflections(folded.reflections, sameRunReflections);
-  const droppedIds = await resolver.runStage("dropper", resolved, (worker) => {
-    const dropperMemory = boundWorkerMemory(
-      reflectionsForDropper,
+  const result = await resolver.runStage("reflector", resolved, (worker) => {
+    const memory = boundWorkerMemory(
+      folded.reflections,
       folded.activeObservations,
       resolveWorkerMemoryMaxTokens(runtime.config, worker.model.contextWindow),
       { observationsFrom: "oldest" }
     );
-    return runDropper({
+    return runReflector({
       model: worker.model,
-      reflections: dropperMemory.reflections,
-      observations: dropperMemory.observations,
-      targetTokens: runtime.config.observationsPoolTargetTokens,
+      reflections: memory.reflections,
+      observations: memory.observations,
+      pool,
       maxTurns: runtime.config.agentMaxTurns,
       maxOutputTokens: runtime.config.agentMaxTokens,
       signal: consolidationSignal(runtime),
@@ -3447,18 +3222,19 @@ async function runDropperStage(pi, runtime, ctx, resolver, sameRunReflections, s
     });
   }, consolidationSignal(runtime));
   if (wasAborted(runtime)) {
-    debugLog("dropper.aborted", {});
+    debugLog("reflector.aborted", {});
     return "abort";
   }
-  const coversUpToId = earlierCoverageMarkerId(entries, observationCoverageId, sameRunReflectionCoverageId);
-  const data = coversUpToId && droppedIds ? buildObservationsDroppedData(droppedIds, coversUpToId) : void 0;
-  debugLog("dropper.append", {
-    droppedIdsCount: droppedIds?.length ?? 0,
-    coversUpToId,
-    dataBuilt: data !== void 0,
-    appended: data !== void 0
-  });
-  if (data) recordMemoryEntry(pi, runtime.config, ctx, entries, OM_OBSERVATIONS_DROPPED, data);
+  if (!result) {
+    runtime.reflectorEmptyBackoff = { sessionIdentity: identity, passMarkerId: latestReflectorPassMarkerId(entries), tokensAtEmpty: tokens };
+    debugLog("reflector.empty", { observationCoverageId, tokens });
+    return "continue";
+  }
+  runtime.reflectorEmptyBackoff = void 0;
+  const reflectionsData = buildReflectionsRecordedData(result.reflections, observationCoverageId);
+  if (reflectionsData && !recordMemoryEntry(pi, runtime.config, ctx, entries, OM_REFLECTIONS_RECORDED, reflectionsData)) return "abort";
+  const dropsData = buildObservationsDroppedData(result.droppedObservationIds, observationCoverageId);
+  if (dropsData && !recordMemoryEntry(pi, runtime.config, ctx, entries, OM_OBSERVATIONS_DROPPED, dropsData)) return "abort";
   return "continue";
 }
 
@@ -3494,7 +3270,11 @@ var Runtime = class {
   warnings = new Warnings();
   lastObserverError;
   lastReflectorError;
-  lastDropperError;
+  /**
+   * Reflector progress (`tokensAtEmpty`) at a session's last pass that changed nothing, after the
+   * reflector pass marked by `passMarkerId`: the next pass waits for another `reflectAfterTokens`.
+   */
+  reflectorEmptyBackoff;
   /** Deliberate-empty backoff (#23): skip observer re-fires over the same span until enough new tokens arrive. */
   observerEmptyBackoff;
   ensureConfig(cwd) {
@@ -3575,7 +3355,6 @@ var Runtime = class {
     this.consolidationPhase = void 0;
     this.lastObserverError = void 0;
     this.lastReflectorError = void 0;
-    this.lastDropperError = void 0;
     const controller = new AbortController();
     this.consolidationAbortController = controller;
     const promise = this.launchTrackedTask(ctx, work, () => {
@@ -3598,7 +3377,6 @@ var Runtime = class {
     const message = error instanceof Error ? error.message : String(error);
     if (phase === "observer") this.lastObserverError = message;
     if (phase === "reflector") this.lastReflectorError = message;
-    if (phase === "dropper") this.lastDropperError = message;
     this.warnings.warn(ctx, `${phase} failed`, `Observational memory: ${phase} failed: ${formatNotifyError(message)}`);
     return message;
   }
@@ -3624,7 +3402,7 @@ var Runtime = class {
 };
 
 // src/tools/recall-observation.ts
-import { Type as Type4 } from "typebox";
+import { Type as Type3 } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 var RECALL_OBSERVATION_TOOL_NAME = "recall";
@@ -3967,8 +3745,8 @@ var recallObservationTool = defineTool({
     "Do not use recall as semantic search or transcript browsing; you must already have a specific 12-character memory id.",
     "Do not recall every id preemptively. Recall only when exact source context will materially improve the next action."
   ],
-  parameters: Type4.Object({
-    id: Type4.String({
+  parameters: Type3.Object({
+    id: Type3.String({
       pattern: "^[a-f0-9]{12}$",
       description: "12-character lowercase hex observation or reflection id shown in compacted memory, /om:view, or a previous recall result. Must be a specific id; this tool does not search by topic."
     })

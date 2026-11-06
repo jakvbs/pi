@@ -1,15 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
-	observationToDropperLine,
 	reflectionCoverageMap,
 	reflectionCoverageTierForCount,
 	summarizeCoverageByRelevance,
 	summarizeCoverageTransitionsByRelevance,
-} from "../src/agents/dropper/agent.ts";
+} from "../src/agents/reflector/coverage.ts";
 import { observation, reflection } from "./fixtures/session.ts";
 
-describe("V3 dropper reflection coverage helpers", () => {
+describe("V3 reflection coverage helpers", () => {
 	it("maps support counts to deterministic coverage tiers", () => {
 		expect(reflectionCoverageTierForCount(0)).toBe("none");
 		expect(reflectionCoverageTierForCount(1)).toBe("partial");
@@ -75,19 +74,5 @@ describe("V3 dropper reflection coverage helpers", () => {
 				"none->strong": { count: 1, tokens: 7 },
 			},
 		});
-	});
-
-	it("renders model-facing observation lines with coverage evidence only", () => {
-		const line = observationToDropperLine(
-			observation("aaaaaaaaaaaa", { relevance: "critical", content: "Important fact" }),
-			"strong",
-		);
-
-		expect(line).toContain("[aaaaaaaaaaaa]");
-		expect(line).toContain("[critical]");
-		expect(line).toContain("[coverage: strong]");
-		expect(line).toContain("Important fact");
-		expect(line).not.toContain("drop-priority");
-		expect(line).not.toContain("drop-resistance");
 	});
 });

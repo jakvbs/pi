@@ -4,8 +4,10 @@ import {
 	normalizeSupportingObservationIds,
 	observationToReflectorLine,
 	runReflector,
+	selectDropCandidates,
 	summarizeSupportIdCounts,
 } from "../src/agents/reflector/agent.ts";
+import { maxDropCountForPool, observationPoolFullness, observationPoolMetrics } from "../src/agents/reflector/pool.ts";
 import { hashId } from "../src/ids.ts";
 import { estimateStringTokens } from "../src/tokens.ts";
 import { AGENT_LOOP_MAX_TOKENS } from "../src/model-budget.ts";
@@ -21,11 +23,16 @@ function fakeAgentLoop(handler: (prompts: any[], context: any, config: any) => P
 	})) as any;
 }
 
+const registry = { streamSimple: () => { throw new Error("the fake agent loop never streams"); } } as any;
+
+function poolArgs(observations: ReturnType<typeof observation>[], targetTokens: number) {
+	return { observations, pool: observationPoolMetrics(observations, targetTokens), modelRegistry: registry };
+}
+
 describe("runReflector maxTokens clamping", () => {
 	const args = {
-		apiKey: "test",
 		reflections: [],
-		observations: [observation("aaaaaaaaaaaa"), observation("bbbbbbbbbbbb")],
+		...poolArgs([observation("aaaaaaaaaaaa"), observation("bbbbbbbbbbbb")], 0),
 	};
 
 	function captureLoopConfig() {
@@ -84,101 +91,55 @@ describe("runReflector maxTokens clamping", () => {
 });
 
 describe("V3 reflector agent", () => {
-	const obsA = observation("aaaaaaaaaaaa");
-	const obsB = observation("bbbbbbbbbbbb");
+	const obsA = observation("aaaaaaaaaaaa", { relevance: "medium" });
+	const obsB = observation("bbbbbbbbbbbb", { relevance: "low" });
+	const critical = observation("cccccccccccc", { relevance: "critical" });
+	// Rendered observation lines: 19 + 18 + 19 = 56 tokens. A 20-token target allows 2 drops.
 	const baseArgs = {
 		model: {} as any,
-		apiKey: "test",
-		reflections: [],
-		observations: [obsA, obsB],
+		reflections: [reflection("eeeeeeeeeeee", ["aaaaaaaaaaaa"])],
+		...poolArgs([obsA, obsB, critical], 20),
 	};
+	const recordTool = (context: any) => context.tools.find((tool: any) => tool.name === "record_reflections");
+	const dropTool = (context: any) => context.tools.find((tool: any) => tool.name === "drop_observations");
 
-	it("keeps core reflector prompt guidance in V3 terms", async () => {
+	it("asks for reflections first, then drops, with the drop safety rules", async () => {
 		let systemPrompt = "";
+		let tools: string[] = [];
 		const loop = fakeAgentLoop((_prompts, context) => {
 			systemPrompt = context.messages[0]?.role === "system" ? context.messages[0].content : "";
+			tools = context.tools.map((tool: any) => tool.name);
 		});
 
 		await runReflector({ ...baseArgs, agentLoop: loop });
 
-		expect(systemPrompt).toContain("Your task is different from the observer");
-		expect(systemPrompt).toContain("User assertions are authoritative");
-		expect(systemPrompt).toContain("supportingObservationIds");
-		expect(systemPrompt).toContain("coverage/provenance set");
-		expect(systemPrompt).toContain("Do not lightly reword existing reflections");
+		expect(tools).toEqual(["record_reflections", "drop_observations"]);
+		expect(systemPrompt).toContain("1. Reflect: distill stable, long-lived facts");
+		expect(systemPrompt).toContain("2. Drop: remove the safest active observations");
 		expect(systemPrompt).toContain("Reflections are scarce, expensive durable orientation anchors");
-		expect(systemPrompt).toContain("not a second observation layer");
-		expect(systemPrompt).toContain("Over-reflection is also memory distortion");
-		expect(systemPrompt).toContain("makes transient details look durable");
-		expect(systemPrompt).toContain("Decision procedure:");
-		expect(systemPrompt).toContain("First reject observations that are transient, low-level, partial, routine, or only useful as current working state");
-		expect(systemPrompt).toContain("future-agent utility test");
-		expect(systemPrompt).toContain("avoid a wrong decision, repeated work, or user-preference violation");
-		expect(systemPrompt).toContain("If the candidate fails that future-agent utility test, leave it as an observation");
 		expect(systemPrompt).toContain("If unsure, emit no reflection");
-		expect(systemPrompt).toContain("High and critical observations deserve careful review, not automatic reflection");
-		expect(systemPrompt).toContain("Do not turn each observation into a reflection");
-		expect(systemPrompt).toContain("Observations are evidence; reflections are compressed durable conclusions");
-		expect(systemPrompt).toContain("Single-observation reflections are allowed");
-		expect(systemPrompt).toContain("durable user preference, constraint, correction, decision, invariant, completed outcome, or long-lived blocker");
-		expect(systemPrompt).toContain("Do not copy or lightly paraphrase observation lines");
-		expect(systemPrompt).toContain("Prefer fewer, higher-value reflections");
-		expect(systemPrompt).toContain("zero reflections than to create one reflection per observation");
-		expect(systemPrompt).toContain("Most transient task-log observations");
-		expect(systemPrompt).toContain("files inspected, commands run, failed attempts, partial implementation, and current working state");
-		expect(systemPrompt).toContain("[coverage: none|partial|strong]");
-		expect(systemPrompt).toContain("Coverage tiers are review context");
-		expect(systemPrompt).toContain("Coverage is not a quota, target, priority score, or instruction to emit reflections");
-		expect(systemPrompt).toContain("Support ids and coverage stewardship");
-		expect(systemPrompt).toContain("First decide whether the reflection content passes the durable-value bar");
-		expect(systemPrompt).toContain("include all current observation ids whose durable meaning is preserved");
-		expect(systemPrompt).toContain("supportingObservationIds are not a checklist");
-		expect(systemPrompt).toContain("Do not add ids merely to improve coverage counts");
-		expect(systemPrompt).toContain("False or inflated support ids can cause unsafe downstream dropper pruning");
-		expect(systemPrompt).toContain("emit zero reflections even when observations have coverage: none");
-		expect(systemPrompt).toContain("BAD: completed: edited src/hooks/reflect-drop-trigger.ts");
-		expect(systemPrompt).toContain("GOOD: completed: V3 reflect/drop coverage now uses raw progress watermarks");
-		expect(systemPrompt).toContain("BAD: npm test passed");
-		expect(systemPrompt).toContain("GOOD: completed: V3 package namespace migration passed full tests and typecheck");
-		expect(systemPrompt).toContain("ZERO REFLECTIONS: The only new observations are files inspected, commands run, failed attempts, partial implementation, transient debugging, or current working state with no durable conclusion yet");
-		expect(systemPrompt).toContain("Focus on:");
-		expect(systemPrompt).toContain("User identity, role, preferences, constraints");
-		expect(systemPrompt).toContain("Project goals, architecture, technical decisions");
-		expect(systemPrompt).toContain("Recurring user behavior or preferences");
-		expect(systemPrompt).toContain("Completed outcomes future runs must not redo");
-		expect(systemPrompt).toContain("Durable blockers, invariants, and open decisions");
-		expect(systemPrompt).toContain("Reflection content rules");
-		expect(systemPrompt).toContain("Lead with the fact or pattern");
-		expect(systemPrompt).not.toContain("legacy/no-provenance");
-		expect(systemPrompt).not.toContain("pruner");
-		expect(systemPrompt).not.toContain("Pass strategy");
+		expect(systemPrompt).toContain("False or inflated support ids make unsafe drops look safe");
+		expect(systemPrompt).toContain("Default action is KEEP");
+		expect(systemPrompt).toContain("hard upper bound");
+		expect(systemPrompt).toContain("Preservation floor");
+		expect(systemPrompt).toContain("the newest one holds the current state: drop the older state, never the newer one");
+		expect(systemPrompt).toContain("Never drop an observation that records an open task, a pending user decision, or work not yet done");
+		expect(systemPrompt).toContain("Check reflections you recorded in this run as strictly as older ones");
+		expect(systemPrompt).toContain("You cannot merge, rewrite, or edit observations");
 	});
 
-	it("renders coverage tiers in every active observation line for the reflector", async () => {
-		const none = observation("aaaaaaaaaaaa", { content: "Uncovered durable fact" });
-		const partial = observation("bbbbbbbbbbbb", { content: "Partially covered fact" });
-		const strong = observation("cccccccccccc", { content: "Strongly covered fact" });
+	it("shows coverage tiers, pool size, target, and the drop cap", async () => {
 		let userText = "";
 		const loop = fakeAgentLoop((prompts) => {
 			userText = prompts[0].content[0].text;
 		});
 
-		await runReflector({
-			...baseArgs,
-			observations: [none, partial, strong],
-			reflections: [
-				reflection("rrrrrrrrrrr1", ["bbbbbbbbbbbb", "cccccccccccc"]),
-				reflection("rrrrrrrrrrr2", ["cccccccccccc"]),
-			],
-			agentLoop: loop,
-		});
+		await runReflector({ ...baseArgs, agentLoop: loop });
 
-		expect(userText).toContain("[aaaaaaaaaaaa]");
-		expect(userText).toContain("[coverage: none] Uncovered durable fact");
-		expect(userText).toContain("[coverage: partial] Partially covered fact");
-		expect(userText).toContain("[coverage: strong] Strongly covered fact");
-		expect(userText).not.toContain("drop-priority");
-		expect(userText).not.toContain("drop-resistance");
+		expect(userText).toContain("[aaaaaaaaaaaa] 2026-05-02T10:00:00.000Z [medium] [coverage: partial] Observation aaaaaaaaaaaa");
+		expect(userText).toContain("[bbbbbbbbbbbb] 2026-05-02T10:00:00.000Z [low] [coverage: none]");
+		expect(userText).toContain("Active observation pool: ~56 tokens; target: ~20 tokens; fullness against target: ~280%; over target by ~36 tokens.");
+		expect(userText).toContain("Maximum drops allowed this run: 2 observations. This maximum is a hard upper bound, not a target.");
 	});
 
 	it("renders reflector observation lines with coverage evidence only", () => {
@@ -192,7 +153,6 @@ describe("V3 reflector agent", () => {
 		expect(line).toContain("[coverage: partial]");
 		expect(line).toContain("Important reflected fact");
 		expect(line).not.toContain("drop-priority");
-		expect(line).not.toContain("drop-resistance");
 	});
 
 	it("summarizes accepted reflection support-id counts without exposing ids", () => {
@@ -223,22 +183,25 @@ describe("V3 reflector agent", () => {
 		expect(normalizeSupportingObservationIds([], ["aaaaaaaaaaaa"])).toBeUndefined();
 	});
 
-	it("records one-line V3 reflections with code-computed ids and token counts", async () => {
+	it("records one-line reflections with code-computed ids and token counts", async () => {
 		const content = "User prefers source-backed memory.";
 		const loop = fakeAgentLoop(async (_prompts, context) => {
-			await context.tools[0].execute("tool-1", {
+			await recordTool(context).execute("tool-1", {
 				reflections: [{ content, supportingObservationIds: ["bbbbbbbbbbbb", "aaaaaaaaaaaa"] }],
 			});
 		});
 
 		const result = await runReflector({ ...baseArgs, agentLoop: loop });
 
-		expect(result).toEqual([{ id: hashId(content), content, supportingObservationIds: ["aaaaaaaaaaaa", "bbbbbbbbbbbb"], tokenCount: estimateStringTokens(content) }]);
+		expect(result).toEqual({
+			reflections: [{ id: hashId(content), content, supportingObservationIds: ["aaaaaaaaaaaa", "bbbbbbbbbbbb"], tokenCount: estimateStringTokens(content) }],
+			droppedObservationIds: [],
+		});
 	});
 
 	it("rejects invented support ids and multiline content", async () => {
 		const loop = fakeAgentLoop(async (_prompts, context) => {
-			await context.tools[0].execute("tool-1", {
+			await recordTool(context).execute("tool-1", {
 				reflections: [
 					{ content: "Bad support", supportingObservationIds: ["missing"] },
 					{ content: "Two\nlines", supportingObservationIds: ["aaaaaaaaaaaa"] },
@@ -253,7 +216,7 @@ describe("V3 reflector agent", () => {
 		const content = "User prefers terse updates.";
 		const existing = reflection(hashId(content), ["aaaaaaaaaaaa"], { content });
 		const loop = fakeAgentLoop(async (_prompts, context) => {
-			await context.tools[0].execute("tool-1", {
+			await recordTool(context).execute("tool-1", {
 				reflections: [
 					{ content, supportingObservationIds: ["aaaaaaaaaaaa"] },
 					{ content: "New durable fact.", supportingObservationIds: ["aaaaaaaaaaaa"] },
@@ -264,15 +227,135 @@ describe("V3 reflector agent", () => {
 
 		const result = await runReflector({ ...baseArgs, reflections: [existing], agentLoop: loop });
 
-		expect(result?.map((item) => item.content)).toEqual(["New durable fact."]);
+		expect(result?.reflections.map((item) => item.content)).toEqual(["New durable fact."]);
 	});
 
-	it("returns undefined when no tool call records reflections", async () => {
+	it("tells the model which observations its new reflections support", async () => {
+		let receipt = "";
+		const loop = fakeAgentLoop(async (_prompts, context) => {
+			const result = await recordTool(context).execute("tool-1", {
+				reflections: [{ content: "User chose Postgres.", supportingObservationIds: ["bbbbbbbbbbbb", "aaaaaaaaaaaa"] }],
+			});
+			receipt = result.content[0].text;
+		});
+
+		await runReflector({ ...baseArgs, agentLoop: loop });
+
+		expect(receipt).toContain("Observations these reflections now support: aaaaaaaaaaaa, bbbbbbbbbbbb.");
+	});
+
+	it("computes observation pool fullness defensively", () => {
+		expect(observationPoolFullness(0, 100)).toBe(0);
+		expect(observationPoolFullness(-1, 100)).toBe(0);
+		expect(observationPoolFullness(10, 0)).toBe(0);
+		expect(observationPoolFullness(10, Number.NaN)).toBe(0);
+		expect(observationPoolFullness(25, 100)).toBe(0.25);
+	});
+
+	it("computes max drops from token excess above target", () => {
+		const observations = Array.from({ length: 10 }, (_, index) =>
+			observation(`${index}`.padStart(12, "a"), { relevance: "low", tokenCount: 10 }),
+		);
+
+		expect(maxDropCountForPool(observations, 100, 100)).toBe(0);
+		expect(maxDropCountForPool(observations, 100, 90)).toBe(1);
+		expect(maxDropCountForPool(observations, 100, 50)).toBe(5);
+		expect(maxDropCountForPool(observations, 100, 0)).toBe(10);
+	});
+
+	it("selects final drops by coverage, lower relevance, age, then stable ordering", () => {
+		const highA = observation("aaaaaaaaaaaa", { relevance: "high" });
+		const lowA = observation("bbbbbbbbbbbb", { relevance: "low" });
+		const medium = observation("dddddddddddd", { relevance: "medium" });
+		const lowB = observation("eeeeeeeeeeee", { relevance: "low" });
+		const highB = observation("ffffffffffff", { relevance: "high" });
+		const criticalObs = observation("111111111111", { relevance: "critical" });
+		const observations = [highA, lowA, medium, lowB, highB, criticalObs];
+
+		expect(selectDropCandidates([
+			"aaaaaaaaaaaa",
+			"missing",
+			"111111111111",
+			"bbbbbbbbbbbb",
+			"dddddddddddd",
+			"bbbbbbbbbbbb",
+			"eeeeeeeeeeee",
+			"ffffffffffff",
+		], observations, 3)).toEqual(["bbbbbbbbbbbb", "eeeeeeeeeeee", "dddddddddddd"]);
+
+		const oldHigh = observation("999999999999", { relevance: "high", timestamp: "2026-01-01T00:00:00.000Z" });
+		const newHigh = observation("888888888888", { relevance: "high", timestamp: "2026-02-01T00:00:00.000Z" });
+		expect(selectDropCandidates(["888888888888", "999999999999"], [oldHigh, newHigh], 1)).toEqual(["999999999999"]);
+	});
+
+	it("prefers stronger reflection coverage before relevance when over cap", () => {
+		const strongCritical = observation("aaaaaaaaaaaa", { relevance: "critical", timestamp: "2026-01-01T00:00:00.000Z" });
+		const partialLow = observation("bbbbbbbbbbbb", { relevance: "low", timestamp: "2026-01-01T00:00:00.000Z" });
+		const noneLow = observation("cccccccccccc", { relevance: "low", timestamp: "2026-01-01T00:00:00.000Z" });
+		const reflections = [
+			reflection("rrrrrrrrrrr1", ["aaaaaaaaaaaa", "bbbbbbbbbbbb"]),
+			reflection("rrrrrrrrrrr2", ["aaaaaaaaaaaa"]),
+		];
+
+		expect(selectDropCandidates(["cccccccccccc", "bbbbbbbbbbbb", "aaaaaaaaaaaa"], [strongCritical, partialLow, noneLow], 2, reflections)).toEqual(["aaaaaaaaaaaa", "bbbbbbbbbbbb"]);
+	});
+
+	it("caps drops at maxDropsAllowed across repeated calls and ignores unknown ids", async () => {
+		const loop = fakeAgentLoop(async (_prompts, context) => {
+			await dropTool(context).execute("tool-1", { ids: ["aaaaaaaaaaaa", "missing"] });
+			await dropTool(context).execute("tool-2", { ids: ["bbbbbbbbbbbb", "aaaaaaaaaaaa"] });
+		});
+
+		// A 40-token target leaves 16 tokens over: one drop at most.
+		const result = await runReflector({ ...baseArgs, ...poolArgs([obsA, obsB, critical], 40), agentLoop: loop });
+
+		// obsA has partial coverage from the existing reflection, so it goes before the uncovered obsB.
+		expect(result).toEqual({ reflections: [], droppedObservationIds: ["aaaaaaaaaaaa"] });
+	});
+
+	it("counts reflections recorded in the same pass as coverage when choosing drops", async () => {
+		const loop = fakeAgentLoop(async (_prompts, context) => {
+			await recordTool(context).execute("tool-1", {
+				reflections: [{ content: "Low detail is durable.", supportingObservationIds: ["bbbbbbbbbbbb"] }],
+			});
+			await recordTool(context).execute("tool-2", {
+				reflections: [{ content: "Low detail matters twice.", supportingObservationIds: ["bbbbbbbbbbbb"] }],
+			});
+			await dropTool(context).execute("tool-3", { ids: ["aaaaaaaaaaaa", "bbbbbbbbbbbb"] });
+		});
+
+		const result = await runReflector({ ...baseArgs, ...poolArgs([obsA, obsB, critical], 40), agentLoop: loop });
+
+		// obsB is now strongly covered by two new reflections; obsA only partially by the old one.
+		expect(result?.droppedObservationIds).toEqual(["bbbbbbbbbbbb"]);
+	});
+
+	it("only reflects, with no drop tool or drop rules, when the pool is at or below its target", async () => {
+		let seen: { tools: string[]; system: string; user: string } | undefined;
+		const loop = fakeAgentLoop(async (prompts, context) => {
+			seen = { tools: context.tools.map((tool: any) => tool.name), system: context.messages[0].content, user: prompts[0].content[0].text };
+			await recordTool(context).execute("tool-1", { reflections: [{ content: "User prefers source-backed memory.", supportingObservationIds: ["aaaaaaaaaaaa"] }] });
+		});
+
+		const result = await runReflector({ ...baseArgs, ...poolArgs([obsA, obsB, critical], 56), agentLoop: loop });
+
+		expect(seen?.tools).toEqual(["record_reflections"]);
+		expect(seen?.system).toContain("The active observation pool is within its target, so this run drops nothing.");
+		expect(seen?.system).toContain("If unsure, emit no reflection");
+		expect(seen?.system).not.toContain("drop_observations");
+		expect(seen?.system).not.toContain("Default action is KEEP");
+		expect(seen?.user).toContain("Crystallize any missing durable facts or patterns into new reflections.");
+		expect(seen?.user).not.toContain("Maximum drops allowed");
+		expect(result?.droppedObservationIds).toEqual([]);
+		expect(result?.reflections.map((r) => r.content)).toEqual(["User prefers source-backed memory."]);
+	});
+
+	it("returns undefined when no tool call changes memory", async () => {
 		const loop = fakeAgentLoop(() => {});
 		await expect(runReflector({ ...baseArgs, agentLoop: loop })).resolves.toBeUndefined();
 	});
 
-	it("throws on a failed stream with no accepted reflections", async () => {
+	it("throws on a failed stream that changed nothing", async () => {
 		for (const stopReason of ["error", "aborted"]) {
 			const loop = (() => ({
 				async *[Symbol.asyncIterator]() {
@@ -286,16 +369,20 @@ describe("V3 reflector agent", () => {
 		}
 	});
 
-	it("keeps accepted reflections when a later stream turn fails", async () => {
+	it("keeps accepted reflections and drops when a later stream turn fails", async () => {
 		const content = "User prefers source-backed memory.";
-		const loop = ((prompts: any[], context: any) => ({
+		const loop = ((_prompts: any[], context: any) => ({
 			async *[Symbol.asyncIterator]() {
 				yield { type: "message_end", message: { role: "assistant", stopReason: "toolUse" } };
-				await context.tools[0].execute("tool-1", { reflections: [{ content, supportingObservationIds: ["aaaaaaaaaaaa"] }] });
+				await recordTool(context).execute("tool-1", { reflections: [{ content, supportingObservationIds: ["aaaaaaaaaaaa"] }] });
+				await dropTool(context).execute("tool-2", { ids: ["aaaaaaaaaaaa"] });
 				yield { type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "rate limited" } };
 			},
 			result: async () => ({}),
 		})) as any;
-		await expect(runReflector({ ...baseArgs, agentLoop: loop })).resolves.toMatchObject([{ content }]);
+		await expect(runReflector({ ...baseArgs, agentLoop: loop })).resolves.toMatchObject({
+			reflections: [{ content }],
+			droppedObservationIds: ["aaaaaaaaaaaa"],
+		});
 	});
 });

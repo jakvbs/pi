@@ -34,13 +34,13 @@ function pick<T>(records: T[], line: (record: T) => string, budget: number, from
 
 /**
  * Bound the prior memory a worker prompt carries. The ledger grows without
- * limit on long sessions; sending all of it with every observer, reflector,
- * or dropper call eventually exceeds the memory model's context window.
+ * limit on long sessions; sending all of it with every observer or reflector
+ * call eventually exceeds the memory model's context window.
  * Observations get at least half the budget, reflections the rest (newest
  * first), and each side reclaims what the other leaves unused.
  *
- * `observationsFrom: "oldest"` serves the dropper, whose job is pruning old
- * observations. A non-positive or non-finite budget returns everything.
+ * `observationsFrom: "oldest"` serves the reflector, which condenses and drops
+ * old observations first. A non-positive or non-finite budget returns everything.
  */
 export function boundWorkerMemory(
 	reflections: Reflection[],

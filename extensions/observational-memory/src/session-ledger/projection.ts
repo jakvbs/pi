@@ -22,10 +22,6 @@ export type ProjectionDiff = {
 	droppedOnlyInFull: Observation[];
 };
 
-export type CompactionProjectionConfig = {
-	observationsPoolMaxTokens: number;
-};
-
 export type CompactionProjection = Projection & {
 	fullFold: boolean;
 	details: MemoryDetails;
@@ -137,13 +133,10 @@ export function fullProjection(entries: Entry[], upToEntryId?: string): Projecti
 	});
 }
 
-export function visibleProjection(entries: Entry[], upToEntryId?: string): Projection {
-	if (!upToEntryId) {
-		const details = latestV3CompactionDetails(entries);
-		return details ? projectionFromMemoryDetails(details) : { observations: [], reflections: [] };
-	}
-
-	return buildCompactionProjection(entries, upToEntryId, { observationsPoolMaxTokens: Number.POSITIVE_INFINITY });
+/** The memory the latest V3 compaction summary shows. */
+export function visibleProjection(entries: Entry[]): Projection {
+	const details = latestV3CompactionDetails(entries);
+	return details ? projectionFromMemoryDetails(details) : { observations: [], reflections: [] };
 }
 
 export function latestFullFoldBoundaryId(entries: Entry[]): string | undefined {
@@ -165,26 +158,24 @@ export function latestFullFoldBoundaryId(entries: Entry[]): string | undefined {
 	return undefined;
 }
 
-export function buildCompactionProjection(
-	entries: Entry[],
-	firstKeptEntryId: string,
-	config: CompactionProjectionConfig,
-): CompactionProjection {
+/**
+ * The memory a compaction folding the ledger through `foldThroughEntryId` shows.
+ * Observations always fold through it. Reflector results (reflections and drops)
+ * fold through it only when the fold reaches one the latest full fold did not
+ * apply; this is a full fold. Otherwise they stay as the latest full fold applied
+ * them, so the summary changes only by observations appended at its end.
+ */
+export function buildCompactionProjection(entries: Entry[], foldThroughEntryId: string): CompactionProjection {
 	const fullFoldBoundaryId = latestFullFoldBoundaryId(entries);
 	const maintenanceBoundary = fullFoldBoundaryId ? entryBoundary(fullFoldBoundaryId) : noneBoundary();
-	const normalProjection = foldProjection(entries, {
-		observationsBoundary: entryBoundary(firstKeptEntryId),
-		reflectionsBoundary: maintenanceBoundary,
-		dropsBoundary: maintenanceBoundary,
+	const foldBoundary = entryBoundary(foldThroughEntryId);
+	const fullFold = reachesUnappliedReflectorResult(entries, maintenanceBoundary, foldBoundary);
+	const reflectorBoundary = fullFold ? foldBoundary : maintenanceBoundary;
+	const projection = foldProjection(entries, {
+		observationsBoundary: foldBoundary,
+		reflectionsBoundary: reflectorBoundary,
+		dropsBoundary: reflectorBoundary,
 	});
-	const observationTokens = normalProjection.observations.reduce(
-		(total, observation) => total + observation.tokenCount,
-		0,
-	);
-	const fullFold = observationTokens >= config.observationsPoolMaxTokens;
-	const projection = fullFold
-		? fullProjection(entries, firstKeptEntryId)
-		: normalProjection;
 
 	const details: MemoryDetails = {
 		type: OM_FOLDED,
@@ -192,7 +183,7 @@ export function buildCompactionProjection(
 		fullFold,
 		observations: projection.observations,
 		reflections: projection.reflections,
-		foldThroughEntryId: firstKeptEntryId,
+		foldThroughEntryId,
 	};
 
 	return {
@@ -201,6 +192,19 @@ export function buildCompactionProjection(
 		reflections: projection.reflections,
 		details,
 	};
+}
+
+function reachesUnappliedReflectorResult(
+	entries: Entry[],
+	appliedBoundary: ProjectionBoundary,
+	foldBoundary: ProjectionBoundary,
+): boolean {
+	const indexes = entryIndexById(entries);
+	const appliedIndex = boundaryIndex(entries, indexes, appliedBoundary);
+	const foldIndex = boundaryIndex(entries, indexes, foldBoundary);
+	return branchLedger(entries).some(({ entry, coverageIndex }) =>
+		entry.customType !== OM_OBSERVATIONS_RECORDED && coverageIndex > appliedIndex && coverageIndex <= foldIndex
+	);
 }
 
 export function diffProjection(visible: Projection, full: Projection): ProjectionDiff {

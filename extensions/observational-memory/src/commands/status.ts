@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { observationPoolMetrics } from "../agents/dropper/pool.ts";
+import { observationPoolMetrics } from "../agents/reflector/pool.ts";
 import { resolveCompactAfterTokens } from "../config.ts";
 import type { Runtime } from "../runtime.ts";
 import {
@@ -8,8 +8,8 @@ import {
 	fullProjection,
 	measuredObservedTokensSinceLastCompaction,
 	measuredTokensSinceLastCompaction,
+	rawObservedTokensSinceReflectorPass,
 	rawTokensSinceObservationCoverage,
-	rawObservedTokensSinceReflectionCoverage,
 	visibleProjection,
 	type Entry,
 } from "../session-ledger/index.ts";
@@ -61,7 +61,7 @@ export function registerStatusCommand(pi: ExtensionAPI, runtime: Runtime): void 
 				[addedSuffix(drift.reflectionsOnlyInFull.length)],
 			);
 			const obsProgress = rawTokensSinceObservationCoverage(entries);
-			const reflectionProgress = rawObservedTokensSinceReflectionCoverage(entries);
+			const reflectionProgress = rawObservedTokensSinceReflectorPass(entries);
 			const unobservedSinceCompaction = Math.max(
 				0,
 				measuredTokensSinceLastCompaction(entries) - measuredObservedTokensSinceLastCompaction(entries),
@@ -92,9 +92,9 @@ export function registerStatusCommand(pi: ExtensionAPI, runtime: Runtime): void 
 				`Next reflection:  ~${reflectionProgress.toLocaleString()} / ${runtime.config.reflectAfterTokens.toLocaleString()} observed source tokens (${pct(reflectionProgress, runtime.config.reflectAfterTokens)}%)`,
 				activationLine,
 				`Observer backlog: ~${unobservedSinceCompaction.toLocaleString()} unobserved source tokens since the compaction boundary`,
-				`Visible observation pool: ~${visibleObservationTokens.toLocaleString()} / ${runtime.config.observationsPoolMaxTokens.toLocaleString()} tokens (${pct(visibleObservationTokens, runtime.config.observationsPoolMaxTokens)}%)`,
-				`Active observation pool: ~${activeObservationPool.observationTokens.toLocaleString()} / ${runtime.config.observationsPoolTargetTokens.toLocaleString()} target tokens (${pct(activeObservationPool.observationTokens, runtime.config.observationsPoolTargetTokens)}%)`,
-				`Reflection pool:         ~${visibleReflectionTokens.toLocaleString()} tokens`,
+				`Active observation pool: ~${activeObservationPool.observationTokens.toLocaleString()} tokens (reflection at ${runtime.config.observationsPoolMaxTokens.toLocaleString()}, drops above ${runtime.config.observationsPoolTargetTokens.toLocaleString()})`,
+				`Visible observation pool: ~${visibleObservationTokens.toLocaleString()} tokens`,
+				`Visible reflection pool:  ~${visibleReflectionTokens.toLocaleString()} tokens`,
 			];
 
 			if (runtime.consolidationInFlight || runtime.compactHookInFlight) {
@@ -106,11 +106,10 @@ export function registerStatusCommand(pi: ExtensionAPI, runtime: Runtime): void 
 				if (runtime.compactHookInFlight) lines.push("Compaction hook: running");
 			}
 
-			if (runtime.lastObserverError || runtime.lastReflectorError || runtime.lastDropperError) {
+			if (runtime.lastObserverError || runtime.lastReflectorError) {
 				lines.push("", "── Last error ──");
 				if (runtime.lastObserverError) lines.push(`Observer: ${runtime.lastObserverError}`);
 				if (runtime.lastReflectorError) lines.push(`Reflector: ${runtime.lastReflectorError}`);
-				if (runtime.lastDropperError) lines.push(`Dropper: ${runtime.lastDropperError}`);
 			}
 
 			ctx.ui.notify(lines.join("\n"), "info");
