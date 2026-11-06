@@ -28,6 +28,7 @@ export const SETTINGS_DEFAULTS = {
 	hideThinkingBlock: false,
 	foldTurns: true,
 	showCacheMissNotices: false,
+	showTokenUsage: true,
 	quietStartup: false,
 	defaultProjectTrust: "ask",
 	collapseChangelog: false,

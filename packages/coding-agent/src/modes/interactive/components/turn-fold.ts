@@ -11,6 +11,7 @@ import type { RunningTurnHandoff, TurnHandoff } from "../../../core/turn-handoff
 import { theme } from "../theme/theme.ts";
 import { AssistantMessageComponent } from "./assistant-message.ts";
 import { CustomMessageComponent } from "./custom-message.ts";
+import { formatUsage, type StepUsage, sumUsage } from "./step-usage.ts";
 import { ToolExecutionComponent, TranscriptContainer } from "./tool-execution.ts";
 
 /** What a folded turn did, as its row shows it. */
@@ -25,6 +26,8 @@ export interface TurnSummary {
 	 * undefined without a response.
 	 */
 	durationMs: number | undefined;
+	/** What the turn's steps added to the context window and cost, from the usage set on its rows. */
+	usage: StepUsage;
 }
 
 /** Where a turn's rows lie in the transcript: after its opening rows, up to the end of the transcript. */
@@ -287,7 +290,12 @@ function summarizeTurn(
 	let thinking = 0;
 	let errors = 0;
 	let lastEnd: number | undefined;
+	const steps: StepUsage[] = [];
 	for (const row of reply ? [...activity, reply] : activity) {
+		if (row instanceof ToolExecutionComponent || row instanceof AssistantMessageComponent) {
+			const usage = row.getStepUsage();
+			if (usage) steps.push(usage);
+		}
 		if (row instanceof ToolExecutionComponent) {
 			tools++;
 			if (row.isError()) errors++;
@@ -302,15 +310,17 @@ function summarizeTurn(
 		}
 	}
 	const durationMs = lastEnd !== undefined && lastEnd >= startedAt ? lastEnd - startedAt : undefined;
-	return { tools, thinking, errors, durationMs };
+	return { tools, thinking, errors, durationMs, usage: sumUsage(steps) };
 }
 
-/** The row text without its open/closed glyph, for example `12 tools · 9 thinking · 1:40 · 2 errors`. */
+/** The row text without its open/closed glyph, for example `12 tools · 9 thinking · 1:40 · +38k ctx · $1.204 · 2 errors`. */
 function formatTurnSummary(summary: TurnSummary): string {
 	const parts: string[] = [];
 	if (summary.tools > 0) parts.push(`${summary.tools} ${summary.tools === 1 ? "tool" : "tools"}`);
 	if (summary.thinking > 0) parts.push(`${summary.thinking} thinking`);
 	if (summary.durationMs !== undefined) parts.push(formatDuration(summary.durationMs));
+	const usage = formatUsage(summary.usage);
+	if (usage) parts.push(usage);
 	if (summary.errors > 0) parts.push(`${summary.errors} ${summary.errors === 1 ? "error" : "errors"}`);
 	return parts.join(" · ");
 }
@@ -416,7 +426,13 @@ export class TurnFoldComponent extends Container {
 		const summary = summarizeTurn(this.activity.children, this.reply, this.startedAt);
 		const glyph = this.open ? "▾" : "▸";
 		const text = formatTurnSummary({ ...summary, errors: 0 });
-		const errors = formatTurnSummary({ tools: 0, thinking: 0, durationMs: undefined, errors: summary.errors });
+		const errors = formatTurnSummary({
+			tools: 0,
+			thinking: 0,
+			durationMs: undefined,
+			errors: summary.errors,
+			usage: { added: undefined, cost: undefined },
+		});
 		const errorPart = errors ? theme.fg("error", ` · ${errors}`) : "";
 		const summaryPart =
 			this.handoff?.kind === "finished" && !this.open ? theme.fg("dim", ` · ${this.handoff.summary}`) : "";

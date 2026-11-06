@@ -10,6 +10,7 @@ import {
 	type TUI,
 	type TuiMouseEvent,
 	truncateToWidth,
+	visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { ToolDefinition, ToolRenderContext, ToolRenderers } from "../../../core/extensions/types.ts";
 
@@ -22,8 +23,11 @@ import { ensurePngTranscoder } from "../../../utils/image-convert.ts";
 import { sanitizeBinaryOutput } from "../../../utils/shell.ts";
 import { theme } from "../theme/theme.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
+import { formatUsage, type StepUsage } from "./step-usage.ts";
 
 const FALLBACK_PREVIEW_LINES = 10;
+/** The narrowest a compact row gets beside its step usage; a narrower terminal drops the usage instead. */
+const MIN_ROW_WIDTH_BESIDE_USAGE = 20;
 
 export type ToolDisplayMode = "collapsed" | "expanded" | "compact";
 
@@ -83,6 +87,8 @@ export class ToolExecutionComponent extends Container {
 	private hideComponent = false;
 	/** Set by {@link TranscriptContainer}: a compact row that starts a group gets a blank line above it. */
 	private compactGroupStart = true;
+	/** Set on the first tool call of a step: the step's usage, which its compact row shows at the right. */
+	private stepUsage: StepUsage | undefined;
 
 	constructor(
 		toolName: string,
@@ -294,6 +300,16 @@ export class ToolExecutionComponent extends Container {
 		this.compactGroupStart = start;
 	}
 
+	/** Show the usage of the step this call starts; the row reads it at each render, so a later measurement shows. */
+	setStepUsage(usage: StepUsage): void {
+		this.stepUsage = usage;
+	}
+
+	/** The usage of the step this call starts; undefined for the other calls of a step. */
+	getStepUsage(): StepUsage | undefined {
+		return this.stepUsage;
+	}
+
 	override invalidate(): void {
 		super.invalidate();
 		this.updateDisplay();
@@ -309,7 +325,7 @@ export class ToolExecutionComponent extends Container {
 			const { status, name, args } = this.getRowSummary();
 			const statusColor = status === "error" ? "error" : status === "success" ? "success" : "muted";
 			const row = `${" ".repeat(this.outputPad)}${theme.fg(statusColor, STATUS_GLYPHS[status])} ${theme.fg("toolTitle", theme.bold(name))} ${theme.fg("muted", args)}`;
-			const line = truncateToWidth(row.trimEnd(), width);
+			const line = this.withStepUsage(row.trimEnd(), width);
 			return this.compactGroupStart ? ["", line] : [line];
 		}
 
@@ -339,6 +355,15 @@ export class ToolExecutionComponent extends Container {
 		}
 
 		return super.render(width);
+	}
+
+	/** A compact row cut to the width, with the step usage at the right edge of the transcript when it fits. */
+	private withStepUsage(row: string, width: number): string {
+		const usage = this.stepUsage ? formatUsage(this.stepUsage) : "";
+		const rowWidth = width - this.outputPad - visibleWidth(usage) - 1;
+		if (!usage || rowWidth < MIN_ROW_WIDTH_BESIDE_USAGE) return truncateToWidth(row, width);
+		const cut = truncateToWidth(row, rowWidth);
+		return `${cut}${" ".repeat(rowWidth - visibleWidth(cut) + 1)}${theme.fg("dim", usage)}`;
 	}
 
 	override handleMouse(event: TuiMouseEvent): ReturnType<Container["handleMouse"]> {

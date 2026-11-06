@@ -367,6 +367,7 @@ type RenderSessionEntriesContext = {
 	renderer: ReturnType<typeof createInteractiveTui>;
 	pendingTools: Map<string, unknown>;
 	turnFolds: { reset: () => void };
+	stepMeter: { reset: () => void };
 	renderSessionItems: (items: unknown[]) => void;
 };
 
@@ -386,6 +387,7 @@ describe("InteractiveMode transcript rebuild", () => {
 			renderer: ui,
 			pendingTools: new Map(),
 			turnFolds: { reset: vi.fn() },
+			stepMeter: { reset: vi.fn() },
 			renderSessionItems: vi.fn(),
 		};
 		const { renderSessionEntries } = InteractiveMode.prototype as unknown as {

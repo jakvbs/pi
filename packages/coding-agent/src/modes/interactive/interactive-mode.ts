@@ -154,7 +154,7 @@ import { playArmin3d, playPiLogo3d } from "./components/easter-egg-3d.lazy.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
-import { FooterComponent, formatTokens } from "./components/footer.ts";
+import { billsSubscription, FooterComponent, formatTokens } from "./components/footer.ts";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { createMarkdownTransform } from "./components/markdown-transform.ts";
@@ -180,6 +180,7 @@ import {
 	type StatusIndicator,
 	WorkingStatusIndicator,
 } from "./components/status-indicator.ts";
+import { StepMeter, type StepUsage } from "./components/step-usage.ts";
 import { ThemedText } from "./components/themed-text.ts";
 import { ThinkingSelectorComponent } from "./components/thinking-selector.ts";
 import { type ToolDisplayMode, ToolExecutionComponent, TranscriptContainer } from "./components/tool-execution.ts";
@@ -551,6 +552,10 @@ export class InteractiveMode {
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
+	/** Measures what each step of the transcript added to the context window, in the order the transcript shows them. */
+	private readonly stepMeter = new StepMeter();
+	/** The usage of a live step whose first tool call had no row yet when the call ended; its row takes it on creation. */
+	private unplacedStepUsage: { toolCallId: string; usage: StepUsage } | undefined;
 	private viewFollowTimer: NodeJS.Timeout | undefined;
 
 	// Tool output expansion state
@@ -3796,6 +3801,7 @@ export class InteractiveMode {
 						this.streamingMessage.errorMessage = errorMessage;
 					}
 					this.streamingComponent.updateContent(this.streamingMessage, false);
+					this.placeLiveStepUsage(this.streamingMessage, this.streamingComponent);
 
 					if (this.streamingMessage.stopReason === "aborted" || this.streamingMessage.stopReason === "error") {
 						if (!errorMessage) {
@@ -3849,6 +3855,10 @@ export class InteractiveMode {
 						this.sessionManager.getCwd(),
 					);
 					component.setDisplayMode(this.toolDisplayMode);
+					if (this.unplacedStepUsage?.toolCallId === event.toolCallId) {
+						component.setStepUsage(this.unplacedStepUsage.usage);
+						this.unplacedStepUsage = undefined;
+					}
 					this.chatContainer.addChild(component);
 					this.pendingTools.set(event.toolCallId, component);
 				}
@@ -4099,7 +4109,7 @@ export class InteractiveMode {
 
 	private addMessageToChat(
 		message: AgentMessage,
-		options?: { populateHistory?: boolean; messageId?: string; timestamp?: string },
+		options?: { populateHistory?: boolean; messageId?: string; timestamp?: string; stepUsage?: StepUsage },
 	): void {
 		// The owner's own messages, `!` commands and summary markers fold the open turn and start the next one. A displayed
 		// extension message does the same only when no run waits for its reply; inside a run it is a notice that stays
@@ -4112,13 +4122,15 @@ export class InteractiveMode {
 			(message.role === "custom" && message.display && !this.turnFolds.awaitsReply());
 		if (startsTurn) this.turnFolds.end();
 		else if (message.role === "assistant") this.turnFolds.resume(message.timestamp);
+		// The context shrinks at a summary, so no call before it measures a step after it.
+		if (message.role === "compactionSummary" || message.role === "branchSummary") this.stepMeter.reset();
 		this.renderMessage(message, options);
 		if (startsTurn) this.turnFolds.start(message.timestamp);
 	}
 
 	private renderMessage(
 		message: AgentMessage,
-		options?: { populateHistory?: boolean; messageId?: string; timestamp?: string },
+		options?: { populateHistory?: boolean; messageId?: string; timestamp?: string; stepUsage?: StepUsage },
 	): void {
 		switch (message.role) {
 			case "bashExecution": {
@@ -4247,6 +4259,7 @@ export class InteractiveMode {
 					options?.messageId,
 					options?.timestamp,
 				);
+				if (options?.stepUsage) assistantComponent.setStepUsage(options.stepUsage);
 				this.chatContainer.addChild(assistantComponent);
 				break;
 			}
@@ -4294,10 +4307,17 @@ export class InteractiveMode {
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
 				const meta = messageMeta?.get(message);
+				// A call that used tools shows its step usage on its first tool call's row, any other call on its reply.
+				const stepUsage = this.measureStep(message);
+				const usesTools = message.stopReason === "toolUse";
 				this.addMessageToChat(message, {
 					messageId: meta?.id,
 					timestamp: meta?.timestamp,
+					stepUsage: usesTools ? undefined : stepUsage,
 				});
+				const firstToolCall = usesTools
+					? message.content.find((content) => content.type === "toolCall")
+					: undefined;
 				// Render tool call components
 				for (const content of message.content) {
 					if (content.type === "toolCall") {
@@ -4315,6 +4335,7 @@ export class InteractiveMode {
 							this.sessionManager.getCwd(),
 						);
 						component.setDisplayMode(this.toolDisplayMode);
+						if (stepUsage && content === firstToolCall) component.setStepUsage(stepUsage);
 						this.chatContainer.addChild(component);
 
 						if (message.stopReason === "aborted" || message.stopReason === "error") {
@@ -4378,6 +4399,7 @@ export class InteractiveMode {
 		if (this.renderer instanceof TuiAltScreen) this.renderer.resetTextSelection();
 		this.pendingTools.clear();
 		this.turnFolds.reset();
+		this.stepMeter.reset();
 		const { items, messageMeta } = toRenderSessionItems(entries);
 		this.renderSessionItems(items, messageMeta, options);
 	}
@@ -4392,6 +4414,29 @@ export class InteractiveMode {
 	): void {
 		const { items, messageMeta } = toRenderSessionItems(entries);
 		this.renderSessionItems(items, messageMeta, options);
+	}
+
+	/** Measure a finished model call while token usage is shown; undefined otherwise or without usage. */
+	private measureStep(message: AssistantMessage): StepUsage | undefined {
+		if (!this.settingsManager.getShowTokenUsage()) return undefined;
+		return this.stepMeter.measure(message, !billsSubscription(message.provider, this.session.modelRuntime));
+	}
+
+	/**
+	 * Show a finished live call's step usage: on its first tool call's row, which a streamed call already has, or on the
+	 * reply. A call whose tool call had no update before it ended gets the row when the call starts running.
+	 */
+	private placeLiveStepUsage(message: AssistantMessage, component: AssistantMessageComponent): void {
+		const usage = this.measureStep(message);
+		if (!usage) return;
+		const firstToolCall = message.content.find((content) => content.type === "toolCall");
+		if (message.stopReason !== "toolUse" || !firstToolCall) {
+			component.setStepUsage(usage);
+			return;
+		}
+		const row = this.pendingTools.get(firstToolCall.id);
+		if (row) row.setStepUsage(usage);
+		else this.unplacedStepUsage = { toolCallId: firstToolCall.id, usage };
 	}
 
 	private addCacheWarmingUsage(entry: UsageEntry): void {
@@ -5291,6 +5336,7 @@ export class InteractiveMode {
 					treeFilterMode: this.settingsManager.getTreeFilterMode(),
 					showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 					showCacheMissNotices: this.settingsManager.getShowCacheMissNotices(),
+					showTokenUsage: this.settingsManager.getShowTokenUsage(),
 					defaultProjectTrust: this.settingsManager.getDefaultProjectTrust(),
 					editorPaddingX: this.settingsManager.getEditorPaddingX(),
 					outputPad: this.settingsManager.getOutputPad(),
@@ -5396,6 +5442,10 @@ export class InteractiveMode {
 					},
 					onShowCacheMissNoticesChange: (shown) => {
 						this.settingsManager.setShowCacheMissNotices(shown);
+						this.rebuildChatFromMessages();
+					},
+					onShowTokenUsageChange: (shown) => {
+						this.settingsManager.setShowTokenUsage(shown);
 						this.rebuildChatFromMessages();
 					},
 					onCollapseChangelogChange: (collapsed) => {

@@ -83,6 +83,7 @@ export interface SettingsConfig {
 	hideThinkingBlock: boolean;
 	mermaidRenderingMode: MermaidRenderingMode;
 	showCacheMissNotices: boolean;
+	showTokenUsage: boolean;
 	collapseChangelog: boolean;
 	enableInstallTelemetry: boolean;
 	doubleEscapeAction: "fork" | "tree" | "none";
@@ -123,6 +124,7 @@ export interface SettingsCallbacks {
 	onHideThinkingBlockChange: (hidden: boolean) => void;
 	onMermaidRenderingModeChange: (mode: MermaidRenderingMode) => void;
 	onShowCacheMissNoticesChange: (shown: boolean) => void;
+	onShowTokenUsageChange: (shown: boolean) => void;
 	onCollapseChangelogChange: (collapsed: boolean) => void;
 	onEnableInstallTelemetryChange: (enabled: boolean) => void;
 	onDoubleEscapeActionChange: (action: "fork" | "tree" | "none") => void;
@@ -560,6 +562,13 @@ export class SettingsSelectorComponent extends Container {
 				values: ["true", "false"],
 			},
 			{
+				id: "token-usage",
+				label: "Token usage",
+				description: "Show what each step added to the context window and what it cost, also summed per turn",
+				currentValue: config.showTokenUsage ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
 				id: "collapse-changelog",
 				label: "Collapse changelog",
 				description: "Show condensed changelog after updates",
@@ -934,6 +943,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "cache-miss-notices":
 						callbacks.onShowCacheMissNoticesChange(newValue === "true");
+						break;
+					case "token-usage":
+						callbacks.onShowTokenUsageChange(newValue === "true");
 						break;
 					case "collapse-changelog":
 						callbacks.onCollapseChangelogChange(newValue === "true");

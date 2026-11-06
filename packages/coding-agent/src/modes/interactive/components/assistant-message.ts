@@ -8,10 +8,12 @@ import {
 	MouseRegion,
 	Spacer,
 	Text,
+	visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { MarkdownMessageType, MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
+import { formatUsage, type StepUsage } from "./step-usage.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -53,6 +55,8 @@ export class AssistantMessageComponent extends Container {
 	private activityFolded = false;
 	/** Set while this message runs in a folded turn: each thinking run shows as its label line. */
 	private thinkingCollapsed = false;
+	/** Set on a reply: its step usage, shown at the right below it unless its turn is folded, whose row sums it. */
+	private stepUsage: StepUsage | undefined;
 
 	constructor(
 		message?: AssistantMessage,
@@ -134,6 +138,19 @@ export class AssistantMessageComponent extends Container {
 		if (this.lastMessage) {
 			this.updateContent(this.lastMessage);
 		}
+	}
+
+	/** Show the usage of this reply's step below it. */
+	setStepUsage(usage: StepUsage): void {
+		this.stepUsage = usage;
+		if (this.lastMessage) {
+			this.updateContent(this.lastMessage);
+		}
+	}
+
+	/** The usage of this reply's step; undefined for a message that used tools, whose first tool row has it. */
+	getStepUsage(): StepUsage | undefined {
+		return this.stepUsage;
 	}
 
 	setHiddenThinkingLabel(label: string): void {
@@ -321,6 +338,18 @@ export class AssistantMessageComponent extends Container {
 				this.contentContainer.addChild(new Spacer(1));
 				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), this.outputPad, 0));
 			}
+		}
+
+		const usage = this.stepUsage;
+		if (usage && !this.activityFolded) {
+			this.contentContainer.addChild({
+				render: (width) => {
+					const text = formatUsage(usage);
+					const room = width - this.outputPad - visibleWidth(text);
+					return text && room >= 0 ? [`${" ".repeat(room)}${theme.fg("dim", text)}`] : [];
+				},
+				invalidate: () => {},
+			});
 		}
 	}
 

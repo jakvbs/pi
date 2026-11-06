@@ -975,6 +975,10 @@ export class SettingsManager {
 		return this.settings.showCacheMissNotices ?? SETTINGS_DEFAULTS.showCacheMissNotices;
 	}
 
+	getShowTokenUsage(): boolean {
+		return this.settings.showTokenUsage ?? SETTINGS_DEFAULTS.showTokenUsage;
+	}
+
 	getExternalEditorCommand(): string {
 		const configuredEditor = this.settings.externalEditor;
 		if (typeof configuredEditor === "string" && configuredEditor.trim() !== "") {
@@ -1002,6 +1006,12 @@ export class SettingsManager {
 	setShowCacheMissNotices(show: boolean): void {
 		this.globalSettings.showCacheMissNotices = show;
 		this.markModified("showCacheMissNotices");
+		this.save();
+	}
+
+	setShowTokenUsage(show: boolean): void {
+		this.globalSettings.showTokenUsage = show;
+		this.markModified("showTokenUsage");
 		this.save();
 	}
 
