@@ -565,8 +565,12 @@ describe("generation", () => {
 			documentRetentionMs: expect.any(Number),
 			afterFailedRun: "keep",
 			restartLimit: 5,
+			toolOutputMaxTokens: 5000,
 		});
 		expect(resolveSettings({ restartLimit: 0 }).restartLimit).toBe(5);
+		// A finite number of tokens, 1 or more, rounded down; anything else: the default.
+		expect(resolveSettings({ toolOutputMaxTokens: 200.7 }).toolOutputMaxTokens).toBe(200);
+		expect(resolveSettings({ toolOutputMaxTokens: 0 }).toolOutputMaxTokens).toBe(5000);
 		expect(resolveSettings({ restartLimit: Number.POSITIVE_INFINITY }).restartLimit).toBe(Number.POSITIVE_INFINITY);
 		expect(resolveSettings({ retry: { enabled: false }, compaction: { backgroundTokens: 0 } })).toMatchObject({
 			retry: { enabled: false, maxRetries: 3, baseDelayMs: 2000 },
