@@ -16,7 +16,7 @@ import type { ToolExecutionComponent } from "../src/modes/interactive/components
 import { TranscriptContainer } from "../src/modes/interactive/components/tool-execution.ts";
 import { TurnFolds } from "../src/modes/interactive/components/turn-fold.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
-import { getMarkdownTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { getMarkdownTheme, initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
 const START = Date.UTC(2026, 10, 5, 12, 0, 0);
@@ -247,11 +247,48 @@ describe("TurnFolds", () => {
 		expect(visibleLines(mode)).toEqual([
 			"fix the bug",
 			"▸ 2 tools · 2 thinking · 1:40 · 1 error",
-			"running the tests",
+			"• running the tests",
 			"Fixed it.",
 			"thanks",
 			"You are welcome.",
 		]);
+	});
+
+	test("commentary shows as muted notes under the row's text, a bullet on each first line; the reply stays as written", () => {
+		const mode = createMode();
+		renderBranch(mode, [
+			user("check", 0),
+			assistant([fauxText("First note."), fauxToolCall("bash", { command: "ls" }, { id: "t1" })], 0, 1_000),
+			toolResult("t1", "ok", false),
+			assistant(
+				[
+					fauxText("A second note that is long enough to wrap."),
+					fauxToolCall("bash", { command: "pwd" }, { id: "t2" }),
+				],
+				2_000,
+				1_000,
+			),
+			toolResult("t2", "ok", false),
+			assistant("Done.", 4_000, 1_000, "stop"),
+		]);
+
+		const raw = mode.chatContainer.render(40);
+		const lines = raw.map((line) => stripAnsi(line).trimEnd());
+		const row = lines.indexOf(" ▸ 2 tools · 0:05");
+		expect(lines.slice(row)).toEqual([
+			" ▸ 2 tools · 0:05",
+			"   • First note.",
+			"   • A second note that is long",
+			"     enough to wrap.",
+			"",
+			" Done.",
+		]);
+		const muted = theme.getFgAnsi("muted");
+		expect(raw[row + 1]).toContain(`${muted}First note.`);
+		expect(raw[row + 5]).not.toContain(muted);
+
+		mode.turnFolds.toggleLast();
+		expect(visibleLines(mode)).toContain("First note.");
 	});
 
 	test("a click opens one row with the whole activity and the reply's thinking, a second click folds it", () => {
@@ -352,18 +389,18 @@ describe("TurnFolds", () => {
 		await emit(mode, { type: "message_start", message: user("check", 0) });
 		await respond(mode, step);
 		await emit(mode, { type: "tool_execution_start", toolCallId: "t1", toolName: "bash", args: { command: "ls" } });
-		expect(visibleLines(mode)).toEqual(["check", "▸ 1 thinking · 0:02", "Listing.", "… bash ls"]);
+		expect(visibleLines(mode)).toEqual(["check", "▸ 1 thinking · 0:02", "• Listing.", "… bash ls"]);
 
 		await runTool(mode, "t1", "ls", 3_000);
 		const writing = assistant([fauxThinking("all files are there"), fauxText("All")], 4_000, 0, "stop");
 		await emit(mode, { type: "message_start", message: writing });
-		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 1 thinking · 0:03", "Listing.", "Thinking...", "All"]);
+		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 1 thinking · 0:03", "• Listing.", "Thinking...", "All"]);
 
 		await emit(mode, {
 			type: "message_end",
 			message: assistant([fauxThinking("all files are there"), fauxText("All good.")], 4_000, 1_000, "stop"),
 		});
-		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 2 thinking · 0:05", "Listing.", "All good."]);
+		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 2 thinking · 0:05", "• Listing.", "All good."]);
 
 		mode.turnFolds.toggleLast();
 		expect(visibleLines(mode)).toEqual([
@@ -538,7 +575,7 @@ describe("TurnFolds", () => {
 		expect(visibleLines(mode)).toEqual([
 			"fix the bug",
 			"▸ 2 tools · 2 thinking · 1:40 · 1 error",
-			"running the tests",
+			"• running the tests",
 			"Fixed it.",
 			"thanks",
 			"You are welcome.",
@@ -708,7 +745,7 @@ describe("TurnFolds in a read-only view", () => {
 		expect(visibleLines(view)).toEqual([
 			"fix the bug",
 			"▸ 2 tools · 2 thinking · 1:40 · 1 error",
-			"running the tests",
+			"• running the tests",
 			"Fixed it.",
 		]);
 

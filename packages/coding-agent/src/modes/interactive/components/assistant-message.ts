@@ -3,12 +3,13 @@ import {
 	type Component,
 	Container,
 	Markdown,
+	type MarkdownOptions,
 	type MarkdownTheme,
 	MouseRegion,
 	Spacer,
 	Text,
 } from "@earendil-works/pi-tui";
-import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
+import type { MarkdownMessageType, MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 
@@ -21,9 +22,12 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
  * a streamed answer keeps the blocks it already rendered, also once the stream ends.
  */
 interface MarkdownSlot {
-	kind: "text" | "thinking";
+	kind: "text" | "note" | "thinking";
 	markdown: Markdown;
 }
+
+/** How far a note of a folded turn is indented past the transcript padding: its bullet under the text of the row. */
+const NOTE_BULLET_INDENT = 2;
 
 /**
  * Component that renders a complete assistant message
@@ -44,7 +48,7 @@ export class AssistantMessageComponent extends Container {
 	private markdownSlots: MarkdownSlot[] = [];
 	/**
 	 * Set while this message is the reply or the commentary of a folded turn: thinking folds with the turn, the text and
-	 * the stop notice stay.
+	 * the stop notice stay. Commentary shows its text as a note of the turn's row.
 	 */
 	private activityFolded = false;
 	/** Set while this message runs in a folded turn: each thinking run shows as its label line. */
@@ -120,7 +124,9 @@ export class AssistantMessageComponent extends Container {
 
 	/**
 	 * Fold or show this message's thinking with its turn. While folded, an abort or error notice shows here even when the
-	 * message has tool calls, because their rows, which show it otherwise, are folded too.
+	 * message has tool calls, because their rows, which show it otherwise, are folded too. A message that called tools
+	 * then shows as a note below the row, so it does not read as the reply: muted, indented under the row's text, with a
+	 * bullet on its first line and no blank line before it.
 	 */
 	setActivityFolded(folded: boolean): void {
 		if (folded === this.activityFolded) return;
@@ -173,10 +179,13 @@ export class AssistantMessageComponent extends Container {
 			return markdown;
 		};
 
+		const asNote = this.activityFolded && message.stopReason === "toolUse";
+		let bulleted = false;
+
 		// Spacers are added lazily, right before the next visible content block. This puts a blank
 		// line before the first visible block and after each visible thinking run that is followed
 		// by more visible content, while hidden thinking runs without a label contribute nothing.
-		let needsSpacer = true;
+		let needsSpacer = !asNote;
 		const addVisibleChild = (child: Component) => {
 			if (needsSpacer) {
 				this.contentContainer.addChild(new Spacer(1));
@@ -193,22 +202,40 @@ export class AssistantMessageComponent extends Container {
 				// Assistant text messages with no background - trim the text
 				// Set paddingY=0 to avoid extra spacing before tool executions
 				const text = content.text.trim();
-				addVisibleChild(
-					markdownBlock(
-						"text",
+				if (asNote) {
+					const bulletColumn = this.outputPad + NOTE_BULLET_INDENT;
+					const note = markdownBlock(
+						"note",
 						text,
 						() =>
-							new Markdown(text, this.outputPad, 0, this.markdownTheme, undefined, {
-								transform: createMarkdownTransform(
-									"assistant",
-									() => this.isStreaming,
-									this.markdownTransformers,
-									this.messageId,
-									this.timestamp,
+							new Markdown(
+								text,
+								bulletColumn + 2,
+								0,
+								this.markdownTheme,
+								{ color: (line: string) => theme.fg("muted", line) },
+								this.markdownOptions("assistant"),
+							),
+					);
+					addVisibleChild(bulleted ? note : withBullet(note, bulletColumn));
+					bulleted = true;
+				} else {
+					addVisibleChild(
+						markdownBlock(
+							"text",
+							text,
+							() =>
+								new Markdown(
+									text,
+									this.outputPad,
+									0,
+									this.markdownTheme,
+									undefined,
+									this.markdownOptions("assistant"),
 								),
-							}),
-					),
-				);
+						),
+					);
+				}
 			} else if (content.type === "thinking") {
 				const thinkingBlocks: string[] = [];
 				for (; i < message.content.length; i++) {
@@ -253,15 +280,7 @@ export class AssistantMessageComponent extends Container {
 										color: (text: string) => theme.fg("thinkingText", text),
 										italic: true,
 									},
-									{
-										transform: createMarkdownTransform(
-											"assistant-thinking",
-											() => this.isStreaming,
-											this.markdownTransformers,
-											this.messageId,
-											this.timestamp,
-										),
-									},
+									this.markdownOptions("assistant-thinking"),
 								),
 						);
 				addVisibleChild(
@@ -304,4 +323,27 @@ export class AssistantMessageComponent extends Container {
 			}
 		}
 	}
+
+	private markdownOptions(messageType: MarkdownMessageType): MarkdownOptions {
+		return {
+			transform: createMarkdownTransform(
+				messageType,
+				() => this.isStreaming,
+				this.markdownTransformers,
+				this.messageId,
+				this.timestamp,
+			),
+		};
+	}
+}
+
+/** Put a bullet at `column` of a block's first line, which the block's padding keeps blank. */
+function withBullet(block: Component, column: number): Component {
+	return {
+		render: (width) => {
+			const [first = "", ...rest] = block.render(width);
+			return [`${first.slice(0, column)}${theme.fg("muted", "•")}${first.slice(column + 1)}`, ...rest];
+		},
+		invalidate: () => block.invalidate(),
+	};
 }
