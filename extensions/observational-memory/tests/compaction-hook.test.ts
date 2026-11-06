@@ -15,7 +15,7 @@ import {
 	type TestEntry,
 } from "./fixtures/session.ts";
 
-function setup(args: { entries: TestEntry[]; observationsPoolMaxTokens?: number; compactHookInFlight?: boolean }) {
+function setup(args: { entries: TestEntry[]; compactHookInFlight?: boolean }) {
 	let handler: ((event: unknown, ctx: unknown) => Promise<unknown>) | undefined;
 	const pi = {
 		on: vi.fn((eventName: string, cb: typeof handler) => {
@@ -25,9 +25,7 @@ function setup(args: { entries: TestEntry[]; observationsPoolMaxTokens?: number;
 		appendEntry: vi.fn(),
 	};
 	const runtime = {
-		config: {
-			observationsPoolMaxTokens: args.observationsPoolMaxTokens ?? 20_000,
-		},
+		config: {},
 		compactHookInFlight: args.compactHookInFlight ?? false,
 		observerPromise: new Promise(() => {}),
 		resolveModel: vi.fn(() => {
@@ -65,15 +63,13 @@ describe("V3 compaction hook", () => {
 		expect(runtime.compactHookInFlight).toBe(false);
 	});
 
-	it("first normal compaction writes covered observations without orphan reflections", async () => {
+	it("first compaction writes covered observations", async () => {
 		const obs1 = observation("aaaaaaaaaaaa", { sourceEntryIds: ["raw-1"], tokenCount: 10 });
-		const ref1 = reflection("eeeeeeeeeeee", ["aaaaaaaaaaaa"]);
 		const entries = [
 			textCustomMessage("raw-1", "aaaa"),
 			observationsRecordedEntry("om-aaaaaaaaaaaa", { observations: [obs1], coversUpToId: "raw-1" }),
-			reflectionsRecordedEntry("om-eeeeeeeeeeee", { reflections: [ref1], coversUpToId: "raw-1" }),
 		];
-		const { run } = setup({ entries, observationsPoolMaxTokens: 100 });
+		const { run } = setup({ entries });
 
 		const result = await run("raw-1") as any;
 
@@ -84,11 +80,10 @@ describe("V3 compaction hook", () => {
 		expect(result.compaction.summary).not.toContain("## Reflections");
 	});
 
-	it("writes a normal V3 projection without applying new reflections or drops", async () => {
+	it("appends new observations to the last full fold when no reflector result is new", async () => {
 		const obs1 = observation("aaaaaaaaaaaa", { tokenCount: 5 });
 		const obs2 = observation("bbbbbbbbbbbb", { tokenCount: 5 });
 		const ref1 = reflection("eeeeeeeeeeee", ["aaaaaaaaaaaa"]);
-		const ref2 = reflection("ffffffffffff", ["bbbbbbbbbbbb"]);
 		const entries = [
 			textCustomMessage("raw-1", "aaaa"),
 			observationsRecordedEntry("om-aaaaaaaaaaaa", { observations: [obs1], coversUpToId: "raw-1" }),
@@ -96,10 +91,8 @@ describe("V3 compaction hook", () => {
 			compactionEntry("cmp-full", { firstKeptEntryId: "raw-1", details: memoryDetails({ fullFold: true, observations: [obs1], reflections: [ref1] }) }),
 			textCustomMessage("raw-2", "bbbb"),
 			observationsRecordedEntry("om-bbbbbbbbbbbb", { observations: [obs2], coversUpToId: "raw-2" }),
-			reflectionsRecordedEntry("om-ffffffffffff", { reflections: [ref2], coversUpToId: "raw-2" }),
-			observationsDroppedEntry("om-drop-2", { observationIds: ["aaaaaaaaaaaa"], coversUpToId: "raw-2" }),
 		];
-		const { run } = setup({ entries, observationsPoolMaxTokens: 100 });
+		const { run } = setup({ entries });
 
 		const result = await run("raw-2") as any;
 
@@ -110,7 +103,7 @@ describe("V3 compaction hook", () => {
 		expect(result.compaction.summary).toContain("## Observations");
 	});
 
-	it("writes a full V3 projection when observation pool pressure reaches the threshold", async () => {
+	it("writes a full V3 projection when a reflector result is new since the last full fold", async () => {
 		const obs1 = observation("aaaaaaaaaaaa", { tokenCount: 80 });
 		const obs2 = observation("bbbbbbbbbbbb", { tokenCount: 30 });
 		const ref1 = reflection("eeeeeeeeeeee", ["aaaaaaaaaaaa"]);
@@ -125,7 +118,7 @@ describe("V3 compaction hook", () => {
 			reflectionsRecordedEntry("om-ffffffffffff", { reflections: [ref2], coversUpToId: "raw-2" }),
 			observationsDroppedEntry("om-drop-2", { observationIds: ["aaaaaaaaaaaa"], coversUpToId: "raw-2" }),
 		];
-		const { run } = setup({ entries, observationsPoolMaxTokens: 100 });
+		const { run } = setup({ entries });
 
 		const result = await run("raw-2") as any;
 

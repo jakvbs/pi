@@ -32,6 +32,7 @@ export type CompactAfterTokensMode = "calibrated" | "ratio";
 
 export interface Config {
 	observeAfterTokens: number;
+	/** Observed source tokens since the last reflector pass at which the reflector runs again. */
 	reflectAfterTokens: number;
 	/**
 	 * Maximum estimated source tokens serialized into a single observer chunk.
@@ -71,16 +72,24 @@ export interface Config {
 	compactionCatchUpMaxChunks: number;
 	/**
 	 * Estimated token budget for the prior memory (reflections and observations)
-	 * carried by each observer, reflector, and dropper request. Unset derives it
+	 * carried by each observer and reflector request. Unset derives it
 	 * from the memory model's context window; see {@link resolveWorkerMemoryMaxTokens}.
 	 */
 	workerMemoryMaxTokens?: number;
+	/**
+	 * Active observation tokens (rendered lines) at which the reflector runs before
+	 * `reflectAfterTokens` arrived.
+	 */
 	observationsPoolMaxTokens: number;
+	/**
+	 * Active observation tokens the reflector drops toward; a pass drops nothing
+	 * while the pool is within it. Below `observationsPoolMaxTokens`.
+	 */
 	observationsPoolTargetTokens: number;
 	agentMaxTurns: number;
 	/**
 	 * Maximum output tokens requested for background memory-agent loops
-	 * (observer/reflector/dropper). Always clamped to the model's own
+	 * (observer/reflector). Always clamped to the model's own
 	 * `maxTokens` when available. Lower it for local servers with a modest
 	 * context window, where concurrent sub-agent requests share KV with the
 	 * main session and the default 32K response budget can overflow the slot.
@@ -88,7 +97,7 @@ export interface Config {
 	agentMaxTokens: number;
 	model?: ConfiguredModel;
 	/**
-	 * Run memory workers (observer, reflector, dropper) only while the agent is
+	 * Run memory workers (observer, reflector) only while the agent is
 	 * idle: launch them from `agent_settled` instead of `agent_start`/`turn_end`,
 	 * and abort an in-flight run when a new agent run starts. For hosts where
 	 * the session model and the memory model share one context budget (a single
@@ -103,7 +112,7 @@ export interface Config {
 	 * - Resolution: when the primary memory model (this `model` when set,
 	 *   otherwise the session model) cannot be resolved — absent from Pi's
 	 *   registry, or carrying no usable credentials.
-	 * - Runtime: when a worker stage (observer/reflector/dropper) fails its
+	 * - Runtime: when a worker stage (observer/reflector) fails its
 	 *   model call, that one stage is retried once with this model.
 	 *
 	 * Once the fallback resolves, it is reused for the rest of the consolidation

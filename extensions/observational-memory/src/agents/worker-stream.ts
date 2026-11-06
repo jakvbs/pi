@@ -15,7 +15,7 @@ export interface WorkerStreamError {
 }
 
 interface WorkerConversation {
-	stage: "observer" | "reflector" | "dropper";
+	stage: "observer" | "reflector";
 	registry: WorkerModelRegistry;
 	loop: typeof agentLoop;
 	prompts: AgentMessage[];

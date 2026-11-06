@@ -143,9 +143,7 @@ async function activate(
 	}
 
 	const foldThroughEntryId = resolution.cut.foldThroughEntryId;
-	const projection = buildCompactionProjection(entries, foldThroughEntryId, {
-		observationsPoolMaxTokens: runtime.config.observationsPoolMaxTokens,
-	});
+	const projection = buildCompactionProjection(entries, foldThroughEntryId);
 	const rendered = renderSummaryWithBudget(projection.reflections, projection.observations, {
 		maxTokens: resolveCompactionSummaryMaxTokens(runtime.config, contextWindow),
 	});

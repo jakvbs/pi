@@ -48,18 +48,6 @@ export function latestCoverageMarkerId(entries: Entry[], customType: V3MemoryCus
 	return furthestCoverage(entries, customType)?.entry.data.coversUpToId;
 }
 
-export function earlierCoverageMarkerId(entries: Entry[], firstId: string | undefined, secondId: string | undefined): string | undefined {
-	if (!firstId) return secondId;
-	if (!secondId) return firstId;
-
-	const idToIndex = entryIndexById(entries);
-	const firstIndex = idToIndex.get(firstId);
-	const secondIndex = idToIndex.get(secondId);
-	if (firstIndex === undefined) return secondIndex === undefined ? undefined : secondId;
-	if (secondIndex === undefined) return firstId;
-	return firstIndex <= secondIndex ? firstId : secondId;
-}
-
 export function rawTokensAfterIndex(entries: Entry[], index: number): number {
 	let total = 0;
 	for (let i = Math.max(0, index + 1); i < entries.length; i++) {
@@ -76,31 +64,42 @@ export function rawTokensSinceObservationCoverage(entries: Entry[]): number {
 	return rawTokensSinceCoverage(entries, OM_OBSERVATIONS_RECORDED);
 }
 
-export function rawTokensSinceReflectionCoverage(entries: Entry[]): number {
-	return rawTokensSinceCoverage(entries, OM_REFLECTIONS_RECORDED);
+/**
+ * Coverage marker of the latest reflector pass. A pass appends its reflections
+ * and its drops under one marker and may append only one of them, so the
+ * furthest of both streams marks it.
+ */
+function latestReflectorPass(entries: Entry[]): BranchLedgerEntry | undefined {
+	const reflections = furthestCoverage(entries, OM_REFLECTIONS_RECORDED);
+	const drops = furthestCoverage(entries, OM_OBSERVATIONS_DROPPED);
+	if (!reflections || !drops) return reflections ?? drops;
+	return drops.coverageIndex > reflections.coverageIndex ? drops : reflections;
+}
+
+/** Branch index of the latest reflector pass's coverage marker; -1 before any pass. */
+export function latestReflectorPassIndex(entries: Entry[]): number {
+	return latestReflectorPass(entries)?.coverageIndex ?? -1;
+}
+
+/** Coverage marker id of the latest reflector pass; undefined before any pass. */
+export function latestReflectorPassMarkerId(entries: Entry[]): string | undefined {
+	return latestReflectorPass(entries)?.entry.data.coversUpToId;
 }
 
 /**
- * Estimated source tokens the observer has covered since the latest reflection
- * coverage marker: the material new reflections could draw on. Unlike
- * {@link rawTokensSinceReflectionCoverage} it excludes source the observer has
- * not reached yet, so a large unobserved backlog does not make the reflector
- * due after every small observer chunk.
+ * Estimated source tokens the observer has covered since the latest reflector
+ * pass: the material a new pass could draw on. It excludes source the observer
+ * has not reached yet, so a large unobserved backlog does not make the
+ * reflector due after every small observer chunk.
  */
-export function rawObservedTokensSinceReflectionCoverage(entries: Entry[]): number {
-	const reflectionIndex = latestCoverageIndex(entries, OM_REFLECTIONS_RECORDED);
+export function rawObservedTokensSinceReflectorPass(entries: Entry[]): number {
+	const passIndex = latestReflectorPassIndex(entries);
 	const observationIndex = latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED);
-	if (observationIndex <= reflectionIndex) return 0;
-
 	let total = 0;
-	for (let i = reflectionIndex + 1; i <= observationIndex; i++) {
+	for (let i = passIndex + 1; i <= observationIndex; i++) {
 		if (isSourceEntry(entries[i])) total += estimateEntryTokens(entries[i]);
 	}
 	return total;
-}
-
-export function rawTokensSinceDropCoverage(entries: Entry[]): number {
-	return rawTokensSinceCoverage(entries, OM_OBSERVATIONS_DROPPED);
 }
 
 export function findLastCompactionIndex(entries: Entry[]): number {
@@ -113,8 +112,8 @@ export function findLastCompactionIndex(entries: Entry[]): number {
 // ==== Real (provider-reported) token accounting ====
 //
 // These helpers measure context growth from provider-reported usage: the
-// observation and reflection coverage clocks take a context delta, and memory
-// activation counts source entries weighted by `measuredSourceTokens`.
+// observation coverage clock takes a context delta, and memory activation
+// counts source entries weighted by `measuredSourceTokens`.
 
 type UsageLike = {
 	totalTokens?: number;
@@ -225,8 +224,9 @@ export function realContextTokensAtCoverage(entries: Entry[], coverageIdx: numbe
 }
 
 /**
- * Real context growth since the most recent anchor (a compaction, or the given
- * coverage marker), measured from provider-reported usage.
+ * Real context growth since the most recent anchor (a compaction, or the
+ * coverage marker at `coverageIdx`, -1 for none), measured from
+ * provider-reported usage.
  *
  * Returns undefined when the baseline cannot be measured reliably — no usage
  * at/after the anchor, or the current context is SMALLER than the baseline
@@ -237,10 +237,9 @@ export function realContextTokensAtCoverage(entries: Entry[], coverageIdx: numbe
  */
 export function realTokensSinceAnchor(
 	entries: Entry[],
-	customType: V3MemoryCustomType | undefined,
+	coverageIdx: number,
 	currentContextTokens: number,
 ): number | undefined {
-	const coverageIdx = customType ? latestCoverageIndex(entries, customType) : -1;
 	const compactionIdx = findLastCompactionIndex(entries);
 	if (compactionIdx > coverageIdx) {
 		const baseline = realContextTokensAfterCompaction(entries, compactionIdx);

@@ -1,17 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
-	earlierCoverageMarkerId,
 	entryIndexById,
 	isSourceEntry,
 	latestCoverageIndex,
 	latestCoverageMarkerId,
 	measuredSourceTokens,
 	rawTokensAfterIndex,
-	rawTokensSinceDropCoverage,
 	measuredTokensSinceLastCompaction,
 	rawTokensSinceObservationCoverage,
-	rawTokensSinceReflectionCoverage,
 } from "../src/session-ledger/index.ts";
 import {
 	V3_OBSERVATIONS_DROPPED,
@@ -75,7 +72,7 @@ describe("session-ledger V3 progress helpers", () => {
 		expect(rawTokensAfterIndex(entries, 2)).toBe(3);
 	});
 
-	it("uses independent coverage clocks for observations, reflections, and drops", () => {
+	it("keeps independent coverage markers for observations, reflections, and drops", () => {
 		const entries = [
 			textCustomMessage("raw-1", "aaaa"),
 			observationsRecordedEntry("om-aaaaaaaaaaaa", { observations: [observation("aaaaaaaaaaaa")], coversUpToId: "raw-1" }),
@@ -87,8 +84,9 @@ describe("session-ledger V3 progress helpers", () => {
 		];
 
 		expect(rawTokensSinceObservationCoverage(entries)).toBe(9); // raw-2 + raw-3 + raw-4
-		expect(rawTokensSinceReflectionCoverage(entries)).toBe(7); // raw-3 + raw-4
-		expect(rawTokensSinceDropCoverage(entries)).toBe(7); // covers ledger entry om-eeeeeeeeeeee, raw after it
+		expect(latestCoverageMarkerId(entries, V3_REFLECTIONS_RECORDED)).toBe("raw-2");
+		// Drop coverage may name a ledger entry: it then sits at that entry's index.
+		expect(latestCoverageIndex(entries, V3_OBSERVATIONS_DROPPED)).toBe(3);
 	});
 
 	it("lets coversUpToId point to a memory ledger entry", () => {
@@ -100,7 +98,6 @@ describe("session-ledger V3 progress helpers", () => {
 		];
 
 		expect(latestCoverageIndex(entries, V3_OBSERVATIONS_DROPPED)).toBe(1);
-		expect(rawTokensSinceDropCoverage(entries)).toBe(2);
 	});
 
 	it("chooses the max covered branch position, not merely latest ledger entry order", () => {
@@ -117,7 +114,7 @@ describe("session-ledger V3 progress helpers", () => {
 		expect(rawTokensSinceObservationCoverage(entries)).toBe(3);
 	});
 
-	it("returns latest inner coverage marker and earlier marker by branch index", () => {
+	it("returns the latest coverage marker of each stream", () => {
 		const entries = [
 			textCustomMessage("raw-1", "aaaa"),
 			textCustomMessage("raw-2", "bbbbbbbb"),
@@ -128,10 +125,6 @@ describe("session-ledger V3 progress helpers", () => {
 
 		expect(latestCoverageMarkerId(entries, V3_OBSERVATIONS_RECORDED)).toBe("raw-3");
 		expect(latestCoverageMarkerId(entries, V3_REFLECTIONS_RECORDED)).toBe("raw-2");
-		expect(earlierCoverageMarkerId(entries, "raw-3", "raw-2")).toBe("raw-2");
-		expect(earlierCoverageMarkerId(entries, "raw-1", undefined)).toBe("raw-1");
-		expect(earlierCoverageMarkerId(entries, "missing", "raw-2")).toBe("raw-2");
-		expect(earlierCoverageMarkerId(entries, "missing-a", "missing-b")).toBeUndefined();
 	});
 
 	it("ignores invalid coverage markers and old V2 markers without throwing", () => {

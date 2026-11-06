@@ -27,8 +27,7 @@ function setup(args: { entries: TestEntry[]; runtime?: Partial<any>; model?: unk
 	const runtime = {
 		ensureConfig: vi.fn(),
 		config: {
-			observeAfterTokens: 10,
-			reflectAfterTokens: 20,
+			observeAfterTokens: 10, reflectAfterTokens: 30,
 			compactAfterTokens: 30,
 			observationsPoolMaxTokens: 40,
 			observationsPoolTargetTokens: 20,
@@ -39,7 +38,6 @@ function setup(args: { entries: TestEntry[]; runtime?: Partial<any>; model?: unk
 		compactHookInFlight: false,
 		lastObserverError: undefined,
 		lastReflectorError: undefined,
-		lastDropperError: undefined,
 		...args.runtime,
 	};
 	registerStatusCommand(pi as any, runtime as any);
@@ -92,9 +90,10 @@ describe("V3 /om:status", () => {
 
 		expect(output).toContain("Observations: 2 recorded / 1 dropped / 1 active / 1 visible +1 -1");
 		expect(output).toContain("Reflections:  1 recorded / 0 visible +1");
-		expect(output).toContain("Visible observation pool: ~5 / 40 tokens (13%)");
-		// Active pool counts the full rendered line (id + timestamp + relevance + content).
-		expect(output).toContain("Active observation pool: ~19 / 20 target tokens (95%)");
+		expect(output).toContain("Visible observation pool: ~5 tokens");
+		// The reflector's pool counts the full rendered line (id + timestamp + relevance + content).
+		expect(output).toContain("Next reflection:  ~0 / 30 observed source tokens (0%)");
+		expect(output).toContain("Active observation pool: ~19 tokens (reflection at 40, drops above 20)");
 		expect(output).not.toContain("Visible:");
 		expect(output).not.toContain("Drift:");
 		expect(output).not.toContain("full truth");
@@ -102,7 +101,7 @@ describe("V3 /om:status", () => {
 		expect(output).not.toContain("observational-memory");
 	});
 
-	it("shows separate progress clocks, visible pool, active observation pool, and reflection pool", async () => {
+	it("shows separate progress clocks and the visible pools", async () => {
 		const obs = observation("aaaaaaaaaaaa", { tokenCount: 5 });
 		const ref = reflection("eeeeeeeeeeee", ["aaaaaaaaaaaa"], { tokenCount: 3 });
 		const entries = [
@@ -117,14 +116,12 @@ describe("V3 /om:status", () => {
 
 		expect(output).toContain("Next observation:");
 		expect(output).toContain("/ 10 tokens");
-		expect(output).toContain("Next reflection:");
-		expect(output).toContain("/ 20 observed source tokens");
+		expect(output).toContain("Next reflection:  ~0 / 30 observed source tokens");
 		expect(output).toContain("Next activation:");
 		expect(output).toContain("/ 30 context tokens");
-		expect(output).toContain("Visible observation pool: ~5 / 40 tokens (13%)");
-		// Active pool counts the full rendered line, unlike the visible pool's stored tokenCount.
-		expect(output).toContain("Active observation pool: ~19 / 20 target tokens (95%)");
-		expect(output).toContain("Reflection pool:         ~3 tokens");
+		// The visible pool counts stored tokenCount, unlike the reflector's rendered lines.
+		expect(output).toContain("Visible observation pool: ~5 tokens");
+		expect(output).toContain("Visible reflection pool:  ~3 tokens");
 		expect(output).not.toContain("Observation pool:");
 		expect(output).not.toContain("Full fold pool:");
 		expect(output).not.toContain("visible observation tokens");
@@ -139,7 +136,7 @@ describe("V3 /om:status", () => {
 			textCustomMessage("raw-1", "aaaaaaaaaaaa"),
 			observationsRecordedEntry("om-cov", { observations: [observation("aaaaaaaaaaaa")], coversUpToId: "raw-1" }),
 		];
-		const runtime = { config: { observeAfterTokens: 10, reflectAfterTokens: 20, compactAfterTokens: 400_000, observationsPoolMaxTokens: 40, observationsPoolTargetTokens: 20, passive: false } };
+		const runtime = { config: { observeAfterTokens: 10, reflectAfterTokens: 30, compactAfterTokens: 400_000, observationsPoolMaxTokens: 40, observationsPoolTargetTokens: 20, passive: false } };
 
 		const known = await setup({ entries, runtime, contextUsage: { tokens: 135636, contextWindow: 1_000_000 } }).run();
 		const unknown = await setup({ entries, runtime, contextUsage: { tokens: null, contextWindow: 1_000_000 } }).run();
@@ -162,7 +159,7 @@ describe("V3 /om:status", () => {
 		expect(output).toContain("Observer backlog: ~4 unobserved source tokens since the compaction boundary");
 	});
 
-	it("shows over-target active observation pool in the Activity section", async () => {
+	it("shows observed source since the last reflector pass and an active pool over the reflector limit", async () => {
 		// Pad content so the rendered line is exactly 25 tokens (100 chars).
 		const obs = observation("aaaaaaaaaaaa", { content: "x".repeat(51) });
 		const entries = [
@@ -170,22 +167,22 @@ describe("V3 /om:status", () => {
 			observationsRecordedEntry("om-obs", { observations: [obs], coversUpToId: "raw-1" }),
 		];
 
-		const output = await setup({ entries }).run();
+		const output = await setup({ entries, runtime: { config: { observeAfterTokens: 10, reflectAfterTokens: 30, compactAfterTokens: 30, observationsPoolMaxTokens: 20, observationsPoolTargetTokens: 10 } } }).run();
 
-		expect(output).toContain("Active observation pool: ~25 / 20 target tokens (125%)");
+		expect(output).toContain("Next reflection:  ~2 / 30 observed source tokens (7%)");
+		expect(output).toContain("Active observation pool: ~25 tokens (reflection at 20, drops above 10)");
 	});
 
 	it("shows passive mode, consolidation in flight, compaction hook in flight, and stage-specific last errors", async () => {
 		const output = await setup({
 			entries: [],
 			runtime: {
-				config: { observeAfterTokens: 10, reflectAfterTokens: 20, compactAfterTokens: 30, observationsPoolMaxTokens: 40, observationsPoolTargetTokens: 20, passive: true },
+				config: { observeAfterTokens: 10, reflectAfterTokens: 30, compactAfterTokens: 30, observationsPoolMaxTokens: 40, observationsPoolTargetTokens: 20, passive: true },
 				consolidationInFlight: true,
 				consolidationPhase: "reflector",
 				compactHookInFlight: true,
 				lastObserverError: "observer failed",
 				lastReflectorError: "reflect failed",
-				lastDropperError: "drop failed",
 			},
 		}).run();
 
@@ -197,7 +194,7 @@ describe("V3 /om:status", () => {
 		expect(output).toContain("Compaction hook: running");
 		expect(output).toContain("Observer: observer failed");
 		expect(output).toContain("Reflector: reflect failed");
-		expect(output).toContain("Dropper: drop failed");
+		expect(output).not.toContain("Dropper");
 	});
 
 	it("shows consolidation in flight without phase when phase is unavailable", async () => {
@@ -213,9 +210,8 @@ describe("V3 /om:status", () => {
 				entries: [],
 				runtime: {
 					config: {
-						observeAfterTokens: 10,
-						reflectAfterTokens: 20,
-						compactAfterTokens: 30,
+						observeAfterTokens: 10, reflectAfterTokens: 30,
+									compactAfterTokens: 30,
 						compactAfterTokensMode: "ratio",
 						compactAfterTokensRatio: 0.5,
 						observationsPoolMaxTokens: 40,
@@ -235,9 +231,8 @@ describe("V3 /om:status", () => {
 				entries: [],
 				runtime: {
 					config: {
-						observeAfterTokens: 10,
-						reflectAfterTokens: 20,
-						compactAfterTokens: 30,
+						observeAfterTokens: 10, reflectAfterTokens: 30,
+									compactAfterTokens: 30,
 						compactAfterTokensMode: "ratio",
 						compactAfterTokensRatio: 0.5,
 						observationsPoolMaxTokens: 40,
@@ -257,9 +252,8 @@ describe("V3 /om:status", () => {
 				entries: [],
 				runtime: {
 					config: {
-						observeAfterTokens: 10,
-						reflectAfterTokens: 20,
-						compactAfterTokens: 30,
+						observeAfterTokens: 10, reflectAfterTokens: 30,
+									compactAfterTokens: 30,
 						compactAfterTokensMode: "ratio",
 						compactAfterTokensRatio: 0.5,
 						observationsPoolMaxTokens: 40,
@@ -278,9 +272,8 @@ describe("V3 /om:status", () => {
 				entries: [],
 				runtime: {
 					config: {
-						observeAfterTokens: 10,
-						reflectAfterTokens: 20,
-						compactAfterTokens: 30,
+						observeAfterTokens: 10, reflectAfterTokens: 30,
+									compactAfterTokens: 30,
 						compactAfterTokensMode: "ratio",
 						compactAfterTokensRatio: 0.5,
 						observationsPoolMaxTokens: 40,

@@ -1,8 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { runDropper } from "../agents/dropper/agent.ts";
-import { observationPoolMetrics } from "../agents/dropper/pool.ts";
 import { ObserverStreamError, runObserver } from "../agents/observer/agent.ts";
 import { runReflector } from "../agents/reflector/agent.ts";
+import { observationPoolMetrics, observationTokenSum } from "../agents/reflector/pool.ts";
 import { debugLog, withDebugLogContext } from "../debug-log.ts";
 import { resolveObserverChunkMaxTokens, resolveWorkerMemoryMaxTokens } from "../config.ts";
 import { recordMemoryEntry } from "../memory-journal.ts";
@@ -24,21 +23,20 @@ import {
 	buildObservationsRecordedData,
 	boundWorkerMemory,
 	buildReflectionsRecordedData,
-	earlierCoverageMarkerId,
 	foldLedger,
 	fullProjection,
 	isSourceEntry,
 	latestCoverageIndex,
 	latestCoverageMarkerId,
+	latestReflectorPassIndex,
+	latestReflectorPassMarkerId,
 	observationToSummaryLine,
 	realTokensSinceAnchor,
+	rawObservedTokensSinceReflectorPass,
 	rawTokensSinceObservationCoverage,
-	rawObservedTokensSinceReflectionCoverage,
 	reflectionToSummaryLine,
 	type Entry,
 	type Observation,
-	type Reflection,
-	type V3MemoryCustomType,
 } from "../session-ledger/index.ts";
 
 type ConsolidationCtx = WorkerModelCtx & {
@@ -53,25 +51,8 @@ type ConsolidationCtx = WorkerModelCtx & {
 
 type StageOutcome = "continue" | "abort";
 
-type ReflectorStageResult = {
-	outcome: StageOutcome;
-	sameRunReflections: Reflection[];
-	effectiveReflectionCoverageId?: string;
-};
-
 function sourceEntriesAfter(entries: Entry[], index: number): Entry[] {
 	return entries.slice(index + 1).filter(isSourceEntry);
-}
-
-function mergeReflections(existing: Reflection[], additional: Reflection[]): Reflection[] {
-	const seen = new Set(existing.map((reflection) => reflection.id));
-	const merged = [...existing];
-	for (const reflection of additional) {
-		if (seen.has(reflection.id)) continue;
-		seen.add(reflection.id);
-		merged.push(reflection);
-	}
-	return merged;
 }
 
 /**
@@ -86,41 +67,60 @@ function realContextTokens(ctx: ConsolidationCtx): number | undefined {
 	return typeof tokens === "number" && Number.isFinite(tokens) ? tokens : undefined;
 }
 
-function stageDue(
-	entries: Entry[],
-	runtime: Runtime,
-	currentTokens: number | undefined,
-	customType: V3MemoryCustomType,
-	rawEstimateFn: (entries: Entry[]) => number,
-	threshold: number,
-): boolean {
-	// The raw estimate counts every source entry this stage has not covered yet,
-	// including entries a compaction has already removed from context. When coverage lags behind
-	// the latest compaction, the provider delta only measures growth since that
-	// compaction and would starve the stage forever (a small window that Pi
-	// compacts every few thousand tokens never accumulates a threshold's worth
-	// of growth), so a due raw backlog always counts.
-	if (rawEstimateFn(entries) >= threshold) return true;
-	if (currentTokens !== undefined) {
-		const real = realTokensSinceAnchor(entries, customType, currentTokens);
-		if (real !== undefined) return real >= threshold;
-	}
-	// Real delta unmeasurable (no usage baseline, or accounting basis changed) or
-	// old pi host without getContextUsage — the raw estimate above already
-	// decided, and it cannot over-fire or starve.
-	return false;
-}
-
-/** Stage progress: the larger of the raw uncovered backlog and the provider-reported growth. */
-function stageTokens(entries: Entry[], customType: V3MemoryCustomType, currentTokens: number | undefined, rawEstimateFn: (entries: Entry[]) => number): number {
-	const raw = rawEstimateFn(entries);
-	const real = currentTokens !== undefined ? realTokensSinceAnchor(entries, customType, currentTokens) : undefined;
+/**
+ * A stage's progress: the larger of its raw estimate and the provider-reported
+ * context growth since its coverage marker at `anchorIndex`. The raw estimate
+ * counts source entries a compaction has already removed from context. When
+ * coverage lags behind the latest compaction, the provider delta only measures
+ * growth since that compaction and would starve the stage forever (a small
+ * window that Pi compacts every few thousand tokens never accumulates a
+ * threshold's worth of growth), so the raw estimate always counts. When the
+ * delta is unmeasurable (no usage baseline, a changed accounting basis, or an
+ * old pi host without getContextUsage) the raw estimate decides alone.
+ */
+function stageTokens(entries: Entry[], raw: number, anchorIndex: number, currentTokens: number | undefined): number {
+	const real = currentTokens !== undefined ? realTokensSinceAnchor(entries, anchorIndex, currentTokens) : undefined;
 	return real !== undefined ? Math.max(raw, real) : raw;
 }
 
-function anyStageDue(entries: Entry[], runtime: Runtime, currentTokens: number | undefined): boolean {
-	return stageDue(entries, runtime, currentTokens, OM_OBSERVATIONS_RECORDED, rawTokensSinceObservationCoverage, runtime.config.observeAfterTokens)
-		|| stageDue(entries, runtime, currentTokens, OM_REFLECTIONS_RECORDED, rawObservedTokensSinceReflectionCoverage, runtime.config.reflectAfterTokens);
+function observerTokens(entries: Entry[], currentTokens: number | undefined): number {
+	return stageTokens(entries, rawTokensSinceObservationCoverage(entries), latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED), currentTokens);
+}
+
+function reflectorTokens(entries: Entry[], currentTokens: number | undefined): number {
+	return stageTokens(entries, rawObservedTokensSinceReflectorPass(entries), latestReflectorPassIndex(entries), currentTokens);
+}
+
+/**
+ * The reflector is due when the observer recorded observations no reflector
+ * pass has read, and either `reflectAfterTokens` of observed source arrived
+ * since the last pass or the active observation pool reached
+ * `observationsPoolMaxTokens`. After a pass that changed nothing it waits for
+ * another `reflectAfterTokens` in that session.
+ */
+function reflectorDue(
+	entries: Entry[],
+	runtime: Runtime,
+	currentTokens: number | undefined,
+	sessionIdentity: string | undefined,
+): boolean {
+	if (latestCoverageIndex(entries, OM_OBSERVATIONS_RECORDED) <= latestReflectorPassIndex(entries)) return false;
+	const tokens = reflectorTokens(entries, currentTokens);
+	const backoff = runtime.reflectorEmptyBackoff;
+	if (
+		backoff
+		&& backoff.sessionIdentity === sessionIdentity
+		&& backoff.passMarkerId === latestReflectorPassMarkerId(entries)
+		&& tokens < backoff.tokensAtEmpty + runtime.config.reflectAfterTokens
+	) return false;
+	return tokens >= runtime.config.reflectAfterTokens
+		|| observationTokenSum(foldLedger(entries).activeObservations) >= runtime.config.observationsPoolMaxTokens;
+}
+
+function anyStageDue(entries: Entry[], runtime: Runtime, ctx: ConsolidationCtx): boolean {
+	const currentTokens = realContextTokens(ctx);
+	return observerTokens(entries, currentTokens) >= runtime.config.observeAfterTokens
+		|| reflectorDue(entries, runtime, currentTokens, sessionIdentity(ctx));
 }
 
 function shouldNotifyWorker(runtime: Runtime, ctx: ConsolidationCtx): boolean {
@@ -170,6 +170,12 @@ function debugSessionMetadata(ctx: ConsolidationCtx): { sessionId?: string; sess
 	}
 }
 
+/** The session a backoff belongs to, so a backoff never carries over to another session. */
+function sessionIdentity(ctx: ConsolidationCtx): string | undefined {
+	const metadata = debugSessionMetadata(ctx);
+	return metadata.sessionId ?? metadata.sessionFile;
+}
+
 /** Launch a consolidation run when any stage is due. Returns its promise, or undefined when nothing launched. */
 function maybeLaunchConsolidation(pi: ExtensionAPI, runtime: Runtime, ctx: ConsolidationCtx): Promise<void> | undefined {
 	runtime.ensureConfig(ctx.cwd);
@@ -177,7 +183,7 @@ function maybeLaunchConsolidation(pi: ExtensionAPI, runtime: Runtime, ctx: Conso
 	if (runtime.consolidationInFlight) return undefined;
 
 	const entries = ctx.sessionManager.getBranch() as Entry[];
-	if (!anyStageDue(entries, runtime, realContextTokens(ctx))) return undefined;
+	if (!anyStageDue(entries, runtime, ctx)) return undefined;
 
 	const runId = `consolidation-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
 	const consolidationCtx: ConsolidationCtx = {
@@ -228,23 +234,11 @@ export async function runConsolidationPipeline(
 	if (wasAborted(runtime)) return;
 
 	runtime.consolidationPhase = "reflector";
-	let reflectorResult: ReflectorStageResult;
 	try {
-		reflectorResult = await runReflectorStage(pi, runtime, ctx, resolver);
-		if (reflectorResult.outcome === "abort") return;
+		await runReflectorStage(pi, runtime, ctx, resolver);
 	} catch (error) {
 		if (wasAborted(runtime)) return;
 		debugLog("reflector.error", { errorMessage: runtime.recordConsolidationStageError(ctx, "reflector", error) });
-		return;
-	}
-	if (wasAborted(runtime)) return;
-
-	runtime.consolidationPhase = "dropper";
-	try {
-		await runDropperStage(pi, runtime, ctx, resolver, reflectorResult.sameRunReflections, reflectorResult.effectiveReflectionCoverageId);
-	} catch (error) {
-		if (wasAborted(runtime)) return;
-		debugLog("dropper.error", { errorMessage: runtime.recordConsolidationStageError(ctx, "dropper", error) });
 	}
 }
 
@@ -255,11 +249,10 @@ async function runObserverStage(
 	resolver: ModelResolver,
 ): Promise<StageOutcome> {
 	const entries = ctx.sessionManager.getBranch() as Entry[];
-	const tokens = stageTokens(entries, OM_OBSERVATIONS_RECORDED, realContextTokens(ctx), rawTokensSinceObservationCoverage);
+	const tokens = observerTokens(entries, realContextTokens(ctx));
 	if (tokens < runtime.config.observeAfterTokens) return "continue";
 
-	const sessionMetadata = debugSessionMetadata(ctx);
-	const sessionIdentity = sessionMetadata.sessionId ?? sessionMetadata.sessionFile;
+	const identity = sessionIdentity(ctx);
 	const coverageId = latestCoverageMarkerId(entries, OM_OBSERVATIONS_RECORDED);
 
 	// Deliberate-empty backoff (#23): an intentional "nothing to record" verdict
@@ -269,7 +262,7 @@ async function runObserverStage(
 	const backoff = runtime.observerEmptyBackoff;
 	if (backoff) {
 		if (
-			sessionIdentity !== backoff.sessionIdentity
+			identity !== backoff.sessionIdentity
 			|| coverageId !== backoff.coverageId
 			|| tokens >= backoff.tokensAtEmpty + runtime.config.observeAfterTokens
 		) {
@@ -375,7 +368,7 @@ async function runObserverStage(
 		// Deliberate empty: routine info, not a warning, and back off re-fires
 		// over the same span (#23).
 		debugLog("observer.empty", { coversUpToId });
-		runtime.observerEmptyBackoff = { sessionIdentity, coverageId, tokensAtEmpty: tokens };
+		runtime.observerEmptyBackoff = { sessionIdentity: identity, coverageId, tokensAtEmpty: tokens };
 		if (shouldNotifyWorker(runtime, ctx)) ctx.ui?.notify(
 			"Observational memory: observer found nothing new in this chunk (coverage unchanged; will retry later)",
 			"info",
@@ -401,129 +394,50 @@ async function runReflectorStage(
 	runtime: Runtime,
 	ctx: ConsolidationCtx,
 	resolver: ModelResolver,
-): Promise<ReflectorStageResult> {
-	const entries = ctx.sessionManager.getBranch() as Entry[];
-	const reflectionTokens = stageTokens(entries, OM_REFLECTIONS_RECORDED, realContextTokens(ctx), rawObservedTokensSinceReflectionCoverage);
-	if (reflectionTokens < runtime.config.reflectAfterTokens) return { outcome: "continue", sameRunReflections: [] };
-
-	const observationCoverageId = latestCoverageMarkerId(entries, OM_OBSERVATIONS_RECORDED);
-	if (!observationCoverageId) return { outcome: "continue", sameRunReflections: [] };
-
-	if (shouldNotifyWorker(runtime, ctx)) ctx.ui?.notify(
-		`Observational memory: reflector running (~${reflectionTokens.toLocaleString()} tokens)`,
-		"info",
-	);
-	const resolved = await resolver.resolve("reflector");
-	if (!resolved) return { outcome: "abort", sameRunReflections: [] };
-	if (wasAborted(runtime)) {
-		debugLog("reflector.aborted", {});
-		return { outcome: "abort", sameRunReflections: [] };
-	}
-
-	const folded = foldLedger(entries);
-	const reflections = await resolver.runStage("reflector", resolved, (worker) => {
-		const reflectorMemory = boundWorkerMemory(
-			folded.reflections,
-			folded.activeObservations,
-			resolveWorkerMemoryMaxTokens(runtime.config, (worker.model as { contextWindow?: number }).contextWindow),
-		);
-		return runReflector({
-			model: worker.model as any,
-			reflections: reflectorMemory.reflections,
-			observations: reflectorMemory.observations,
-			maxTurns: runtime.config.agentMaxTurns,
-			maxOutputTokens: runtime.config.agentMaxTokens,
-			signal: consolidationSignal(runtime),
-			thinkingLevel: workerThinkingLevel(runtime, worker),
-			modelRegistry: ctx.modelRegistry,
-		});
-	}, consolidationSignal(runtime));
-	if (wasAborted(runtime)) {
-		debugLog("reflector.aborted", {});
-		return { outcome: "abort", sameRunReflections: [] };
-	}
-	if (!reflections) return { outcome: "continue", sameRunReflections: [] };
-
-	const data = buildReflectionsRecordedData(reflections, observationCoverageId);
-	if (!data) return { outcome: "continue", sameRunReflections: [] };
-	if (!recordMemoryEntry(pi, runtime.config, ctx, entries, OM_REFLECTIONS_RECORDED, data)) {
-		return { outcome: "abort", sameRunReflections: [] };
-	}
-	return {
-		outcome: "continue",
-		sameRunReflections: reflections,
-		effectiveReflectionCoverageId: data.coversUpToId,
-	};
-}
-
-async function runDropperStage(
-	pi: ExtensionAPI,
-	runtime: Runtime,
-	ctx: ConsolidationCtx,
-	resolver: ModelResolver,
-	sameRunReflections: Reflection[],
-	sameRunReflectionCoverageId: string | undefined,
 ): Promise<StageOutcome> {
-	if (!sameRunReflectionCoverageId || sameRunReflections.length === 0) {
-		debugLog("dropper.waiting_for_reflection", { sameRunReflections: sameRunReflections.length });
-		return "continue";
-	}
-
 	const entries = ctx.sessionManager.getBranch() as Entry[];
+	const identity = sessionIdentity(ctx);
+	const currentTokens = realContextTokens(ctx);
+	if (!reflectorDue(entries, runtime, currentTokens, identity)) return "continue";
 	const observationCoverageId = latestCoverageMarkerId(entries, OM_OBSERVATIONS_RECORDED);
 	if (!observationCoverageId) return "continue";
 
 	const folded = foldLedger(entries);
-	const metrics = observationPoolMetrics(folded.activeObservations, runtime.config.observationsPoolTargetTokens);
-	if (!metrics.ready) {
-		debugLog("dropper.not_ready", {
-			observationTokens: metrics.observationTokens,
-			targetTokens: metrics.targetTokens,
-			tokensOverTarget: metrics.tokensOverTarget,
-			fullness: metrics.fullness,
-			activeObservationCount: metrics.activeObservationCount,
-			droppableCount: metrics.droppableCount,
-			maxDropsAllowed: metrics.maxDropsAllowed,
-		});
-		return "continue";
-	}
-	debugLog("dropper.stage_start", {
+	const pool = observationPoolMetrics(folded.activeObservations, runtime.config.observationsPoolTargetTokens);
+	const tokens = reflectorTokens(entries, currentTokens);
+	debugLog("reflector.stage_start", {
 		observationCoverageId,
-		sameRunReflectionCoverageId,
-		sameRunReflectionCount: sameRunReflections.length,
-		activeObservationCount: metrics.activeObservationCount,
-		observationTokens: metrics.observationTokens,
-		targetTokens: metrics.targetTokens,
-		tokensOverTarget: metrics.tokensOverTarget,
-		fullness: metrics.fullness,
-		maxDropsAllowed: metrics.maxDropsAllowed,
+		tokens,
+		activeObservationCount: pool.activeObservationCount,
+		observationTokens: pool.observationTokens,
+		maxTokens: runtime.config.observationsPoolMaxTokens,
+		targetTokens: pool.targetTokens,
+		maxDropsAllowed: pool.maxDropsAllowed,
 	});
-
 	if (shouldNotifyWorker(runtime, ctx)) ctx.ui?.notify(
-		`Observational memory: dropper running after reflection — active observation pool ~${metrics.observationTokens.toLocaleString()} / ${metrics.targetTokens.toLocaleString()} target tokens (${Math.round(metrics.fullness * 100).toLocaleString()}%)`,
+		`Observational memory: reflector running (~${tokens.toLocaleString()} tokens) — active observation pool ~${pool.observationTokens.toLocaleString()} / ${pool.targetTokens.toLocaleString()} target tokens`,
 		"info",
 	);
-	const resolved = await resolver.resolve("dropper");
+	const resolved = await resolver.resolve("reflector");
 	if (!resolved) return "abort";
 	if (wasAborted(runtime)) {
-		debugLog("dropper.aborted", {});
+		debugLog("reflector.aborted", {});
 		return "abort";
 	}
 
-	const reflectionsForDropper = mergeReflections(folded.reflections, sameRunReflections);
-	const droppedIds = await resolver.runStage("dropper", resolved, (worker) => {
-		// The dropper prunes old observations, so it sees the oldest ones that fit.
-		const dropperMemory = boundWorkerMemory(
-			reflectionsForDropper,
+	const result = await resolver.runStage("reflector", resolved, (worker) => {
+		// Consolidation condenses and drops older observations first, so the pass sees the oldest that fit.
+		const memory = boundWorkerMemory(
+			folded.reflections,
 			folded.activeObservations,
 			resolveWorkerMemoryMaxTokens(runtime.config, (worker.model as { contextWindow?: number }).contextWindow),
 			{ observationsFrom: "oldest" },
 		);
-		return runDropper({
+		return runReflector({
 			model: worker.model as any,
-			reflections: dropperMemory.reflections,
-			observations: dropperMemory.observations,
-			targetTokens: runtime.config.observationsPoolTargetTokens,
+			reflections: memory.reflections,
+			observations: memory.observations,
+			pool,
 			maxTurns: runtime.config.agentMaxTurns,
 			maxOutputTokens: runtime.config.agentMaxTokens,
 			signal: consolidationSignal(runtime),
@@ -532,17 +446,20 @@ async function runDropperStage(
 		});
 	}, consolidationSignal(runtime));
 	if (wasAborted(runtime)) {
-		debugLog("dropper.aborted", {});
+		debugLog("reflector.aborted", {});
 		return "abort";
 	}
-	const coversUpToId = earlierCoverageMarkerId(entries, observationCoverageId, sameRunReflectionCoverageId);
-	const data = coversUpToId && droppedIds ? buildObservationsDroppedData(droppedIds, coversUpToId) : undefined;
-	debugLog("dropper.append", {
-		droppedIdsCount: droppedIds?.length ?? 0,
-		coversUpToId,
-		dataBuilt: data !== undefined,
-		appended: data !== undefined,
-	});
-	if (data) recordMemoryEntry(pi, runtime.config, ctx, entries, OM_OBSERVATIONS_DROPPED, data);
+	if (!result) {
+		runtime.reflectorEmptyBackoff = { sessionIdentity: identity, passMarkerId: latestReflectorPassMarkerId(entries), tokensAtEmpty: tokens };
+		debugLog("reflector.empty", { observationCoverageId, tokens });
+		return "continue";
+	}
+	runtime.reflectorEmptyBackoff = undefined;
+
+	// Both entries claim the same coverage: the pass read every observation recorded up to it.
+	const reflectionsData = buildReflectionsRecordedData(result.reflections, observationCoverageId);
+	if (reflectionsData && !recordMemoryEntry(pi, runtime.config, ctx, entries, OM_REFLECTIONS_RECORDED, reflectionsData)) return "abort";
+	const dropsData = buildObservationsDroppedData(result.droppedObservationIds, observationCoverageId);
+	if (dropsData && !recordMemoryEntry(pi, runtime.config, ctx, entries, OM_OBSERVATIONS_DROPPED, dropsData)) return "abort";
 	return "continue";
 }

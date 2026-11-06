@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { observationPoolMetrics } from "../src/agents/dropper/pool.ts";
+import { observationPoolMetrics } from "../src/agents/reflector/pool.ts";
 import { observationLineTokenCount } from "../src/tokens.ts";
 import { foldLedger } from "../src/session-ledger/index.ts";
 import { observation, observationsDroppedEntry, observationsRecordedEntry, textCustomMessage } from "./fixtures/session.ts";
 
-describe("V3 dropper active observation pool metrics", () => {
+describe("V3 reflector active observation pool metrics", () => {
 	it("reports below-target pools as not ready", () => {
 		const observations = [observation("aaaaaaaaaaaa", { relevance: "low" })];
 

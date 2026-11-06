@@ -7,16 +7,19 @@ import { hashId } from "../../ids.ts";
 import { runWorkerConversation, type WorkerModelRegistry } from "../worker-stream.ts";
 import { AGENT_LOOP_MAX_TOKENS, boundedMaxTokens } from "../../model-budget.ts";
 import { truncateRecordContent } from "../../serialize.ts";
-import { REFLECTOR_SYSTEM } from "./prompts.ts";
+import { REFLECTOR_DROP_SYSTEM, REFLECTOR_SYSTEM } from "./prompts.ts";
 import { estimateStringTokens } from "../../tokens.ts";
 import { reflectionToSummaryLine, type Observation, type Reflection } from "../../session-ledger/index.ts";
 import {
+	REFLECTION_COVERAGE_DROP_RANK,
 	coverageTierForObservation,
 	reflectionCoverageMap,
 	summarizeCoverageByRelevance,
+	summarizeCoverageByRelevanceForIds,
 	summarizeCoverageTransitionsByRelevance,
 	type ReflectionCoverageTier,
-} from "../dropper/coverage.ts";
+} from "./coverage.ts";
+import type { ObservationPoolMetrics } from "./pool.ts";
 
 export class ReflectorStreamError extends Error {
 	readonly stopReason: string;
@@ -27,10 +30,19 @@ export class ReflectorStreamError extends Error {
 	}
 }
 
+/** What one reflector pass changes: new reflections and the observation ids it drops. Never both empty. */
+export type ReflectorResult = {
+	reflections: Reflection[];
+	droppedObservationIds: string[];
+};
+
 interface RunReflectorArgs {
 	model: Model<any>;
 	reflections: Reflection[];
+	/** Active observations the pass may reflect on and drop. */
 	observations: Observation[];
+	/** Metrics of the whole active pool; `maxDropsAllowed` caps the drops of this pass, and 0 makes it reflect only. */
+	pool: ObservationPoolMetrics;
 	signal?: AbortSignal;
 	agentLoop?: typeof agentLoop;
 	maxTurns?: number;
@@ -51,6 +63,20 @@ const RecordReflectionsSchema = Type.Object({
 });
 
 type RecordReflectionsArgs = Static<typeof RecordReflectionsSchema>;
+
+const DropObservationsSchema = Type.Object({
+	ids: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+	reason: Type.Optional(Type.String()),
+});
+
+type DropObservationsArgs = Static<typeof DropObservationsSchema>;
+
+const RELEVANCE_DROP_RANK: Record<Observation["relevance"], number> = {
+	low: 0,
+	medium: 1,
+	high: 2,
+	critical: 3,
+};
 
 function joinOrEmpty(items: string[]): string {
 	return items.length ? items.join("\n") : "(none yet)";
@@ -113,25 +139,76 @@ function normalizeReflectionContent(content: string): string | undefined {
 	return normalized;
 }
 
-export async function runReflector(args: RunReflectorArgs): Promise<Reflection[] | undefined> {
-	const { model, reflections, observations, signal } = args;
+function timestampRank(timestamp: string): number {
+	const parsed = Date.parse(timestamp);
+	return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Keep at most `maxDrops` of the proposed ids, preferring stronger reflection
+ * coverage, then lower relevance, then older observations, then proposal order.
+ */
+export function selectDropCandidates(
+	ids: readonly string[],
+	observations: readonly Observation[],
+	maxDrops: number,
+	reflections: readonly Reflection[] = [],
+): string[] {
+	if (maxDrops <= 0 || ids.length === 0) return [];
+
+	const byId = new Map(observations.map((observation) => [observation.id, observation]));
+	const coverageById = reflectionCoverageMap(observations, reflections);
+	const firstProposalIndex = new Map<string, number>();
+	for (let i = 0; i < ids.length; i++) {
+		const id = ids[i];
+		if (!firstProposalIndex.has(id)) firstProposalIndex.set(id, i);
+	}
+
+	return Array.from(firstProposalIndex.entries())
+		.map(([id, index]) => ({ id, index, observation: byId.get(id) }))
+		.filter((candidate): candidate is { id: string; index: number; observation: Observation } =>
+			candidate.observation !== undefined
+		)
+		.sort((a, b) => {
+			const coverageDelta = REFLECTION_COVERAGE_DROP_RANK[coverageTierForObservation(a.observation, coverageById)]
+				- REFLECTION_COVERAGE_DROP_RANK[coverageTierForObservation(b.observation, coverageById)];
+			const relevanceDelta = RELEVANCE_DROP_RANK[a.observation.relevance] - RELEVANCE_DROP_RANK[b.observation.relevance];
+			const ageDelta = timestampRank(a.observation.timestamp) - timestampRank(b.observation.timestamp);
+			return coverageDelta || relevanceDelta || ageDelta || a.index - b.index;
+		})
+		.slice(0, maxDrops)
+		.map((candidate) => candidate.id);
+}
+
+/**
+ * One reflector pass: record new durable reflections and, when the active pool
+ * is over its target, drop the safest observations toward it. Returns
+ * undefined when the pass changes nothing.
+ */
+export async function runReflector(args: RunReflectorArgs): Promise<ReflectorResult | undefined> {
+	const { model, reflections, observations, pool, signal } = args;
 	if (observations.length === 0) return undefined;
 
 	const coverageById = reflectionCoverageMap(observations, reflections);
 	debugLog("reflector.agent_start", {
 		activeObservationCount: observations.length,
 		reflectionCount: reflections.length,
+		observationTokens: pool.observationTokens,
+		targetTokens: pool.targetTokens,
+		maxDropsAllowed: pool.maxDropsAllowed,
 		coverageSummaryByRelevance: summarizeCoverageByRelevance(observations, coverageById),
 	});
 
 	const allowedObservationIds = observations.map((observation) => observation.id);
+	const allowedObservations = new Map(observations.map((observation) => [observation.id, observation]));
 	const existingReflectionIds = new Set(reflections.map((reflection) => reflection.id));
 	const accumulated = new Map<string, Reflection>();
-	let toolCallCount = 0;
-	let rawProposedReflectionCount = 0;
-	let acceptedReflectionCount = 0;
-	let duplicateReflectionCount = 0;
+	const proposedDropIds: string[] = [];
+	let reflectionToolCalls = 0;
+	let dropToolCalls = 0;
 	let rejectedReflectionCount = 0;
+	let duplicateReflectionCount = 0;
+	let missingDropIdsCount = 0;
 
 	const recordReflections: AgentTool<typeof RecordReflectionsSchema> = {
 		name: "record_reflections",
@@ -139,11 +216,11 @@ export async function runReflector(args: RunReflectorArgs): Promise<Reflection[]
 		description: "Record new durable reflections with supporting observation ids.",
 		parameters: RecordReflectionsSchema,
 		execute: async (_id, params: RecordReflectionsArgs) => {
-			toolCallCount++;
-			rawProposedReflectionCount += params.reflections.length;
+			reflectionToolCalls++;
 			let added = 0;
 			let duplicates = 0;
 			let rejected = 0;
+			const supported = new Set<string>();
 			for (const proposal of params.reflections) {
 				const content = normalizeReflectionContent(proposal.content);
 				const supportingObservationIds = normalizeSupportingObservationIds(proposal.supportingObservationIds, allowedObservationIds);
@@ -156,29 +233,64 @@ export async function runReflector(args: RunReflectorArgs): Promise<Reflection[]
 					duplicates++;
 					continue;
 				}
-				accumulated.set(id, {
-					id,
-					content,
-					supportingObservationIds,
-					tokenCount: estimateStringTokens(content),
-				});
+				accumulated.set(id, { id, content, supportingObservationIds, tokenCount: estimateStringTokens(content) });
+				for (const observationId of supportingObservationIds) supported.add(observationId);
 				added++;
 			}
-			acceptedReflectionCount += added;
 			duplicateReflectionCount += duplicates;
 			rejectedReflectionCount += rejected;
+			const supportedPart = supported.size > 0 ? ` Observations these reflections now support: ${Array.from(supported).join(", ")}.` : "";
 			return {
-				content: [{ type: "text", text: `Recorded ${added} reflection${added === 1 ? "" : "s"}; ${duplicates} duplicate${duplicates === 1 ? "" : "s"}; ${rejected} rejected. Total this run: ${accumulated.size}.` }],
+				content: [{ type: "text", text: `Recorded ${added} reflection${added === 1 ? "" : "s"}; ${duplicates} duplicate${duplicates === 1 ? "" : "s"}; ${rejected} rejected. Total this run: ${accumulated.size}.${supportedPart}` }],
 				details: { added, duplicates, rejected, total: accumulated.size },
 			};
 		},
 	};
 
-	const userText = `CURRENT REFLECTIONS:\n${joinOrEmpty(reflections.map(reflectionToSummaryLine))}\n\nCURRENT OBSERVATIONS:\n${joinOrEmpty(observations.map((observation) => observationToReflectorLine(observation, coverageTierForObservation(observation, coverageById))))}\n\nCrystallize any missing durable facts or patterns into new reflections. If nothing is stable enough, do not call the tool.`;
+	const dropObservations: AgentTool<typeof DropObservationsSchema> = {
+		name: "drop_observations",
+		label: "Drop observations",
+		description: "Propose active observation ids that are safe to remove from compacted memory.",
+		parameters: DropObservationsSchema,
+		execute: async (_id, params: DropObservationsArgs) => {
+			dropToolCalls++;
+			let added = 0;
+			for (const id of params.ids) {
+				if (!allowedObservations.has(id)) {
+					missingDropIdsCount++;
+					continue;
+				}
+				if (proposedDropIds.includes(id)) continue;
+				proposedDropIds.push(id);
+				added++;
+			}
+			return {
+				content: [{ type: "text", text: `Queued ${added} drop candidate${added === 1 ? "" : "s"}. Candidates this run: ${proposedDropIds.length}. Maximum drops allowed: ${pool.maxDropsAllowed}.` }],
+				details: { added, totalCandidates: proposedDropIds.length, maxDropsAllowed: pool.maxDropsAllowed },
+			};
+		},
+	};
+
+	const memoryText = `CURRENT REFLECTIONS:
+${joinOrEmpty(reflections.map(reflectionToSummaryLine))}
+
+CURRENT OBSERVATIONS:
+${joinOrEmpty(observations.map((observation) => observationToReflectorLine(observation, coverageTierForObservation(observation, coverageById))))}`;
+	const dropsAllowed = pool.maxDropsAllowed > 0;
+	const userText = dropsAllowed
+		? `${memoryText}
+
+Active observation pool: ~${pool.observationTokens.toLocaleString()} tokens; target: ~${pool.targetTokens.toLocaleString()} tokens; fullness against target: ~${Math.round(pool.fullness * 100).toLocaleString()}%; over target by ~${pool.tokensOverTarget.toLocaleString()} tokens.
+Maximum drops allowed this run: ${pool.maxDropsAllowed.toLocaleString()} observation${pool.maxDropsAllowed === 1 ? "" : "s"}. This maximum is a hard upper bound, not a target. Drop fewer or none if fewer observations are clearly safe.
+
+First crystallize any missing durable reflections with record_reflections, then drop the safest observations with drop_observations.`
+		: `${memoryText}
+
+Crystallize any missing durable facts or patterns into new reflections. If nothing is stable enough, do not call the tool.`;
 	const prompts: Message[] = [{ role: "user", content: [{ type: "text", text: userText }], timestamp: Date.now() }];
 	const context: AgentContext = {
-		messages: [{ role: "system", content: REFLECTOR_SYSTEM, timestamp: Date.now() }],
-		tools: [recordReflections as AgentTool<any>],
+		messages: [{ role: "system", content: dropsAllowed ? REFLECTOR_DROP_SYSTEM : REFLECTOR_SYSTEM, timestamp: Date.now() }],
+		tools: dropsAllowed ? [recordReflections as AgentTool<any>, dropObservations as AgentTool<any>] : [recordReflections as AgentTool<any>],
 	};
 	const reasoning = (model as { reasoning?: unknown }).reasoning;
 	const thinkingLevel = args.thinkingLevel ?? "low";
@@ -211,17 +323,26 @@ export async function runReflector(args: RunReflectorArgs): Promise<Reflection[]
 		signal,
 	});
 	const acceptedReflections = Array.from(accumulated.values());
-	if (acceptedReflections.length === 0 && streamError) throw new ReflectorStreamError(streamError.stopReason, streamError.errorMessage);
-	const afterCoverageById = reflectionCoverageMap(observations, [...reflections, ...acceptedReflections]);
+	const afterReflections = [...reflections, ...acceptedReflections];
+	const droppedObservationIds = selectDropCandidates(proposedDropIds, observations, pool.maxDropsAllowed, afterReflections);
+	const changed = acceptedReflections.length > 0 || droppedObservationIds.length > 0;
+	if (!changed && streamError) throw new ReflectorStreamError(streamError.stopReason, streamError.errorMessage);
+	const afterCoverageById = reflectionCoverageMap(observations, afterReflections);
 	debugLog("reflector.result", {
-		reason: acceptedReflections.length > 0 ? "accepted_nonempty" : toolCallCount === 0 ? "no_tool_call" : "all_filtered",
-		toolCallCount,
-		rawProposedReflectionCount,
-		acceptedReflectionCount,
+		reason: changed ? "accepted_nonempty" : reflectionToolCalls + dropToolCalls === 0 ? "no_tool_call" : "all_filtered",
+		reflectionToolCalls,
+		dropToolCalls,
+		acceptedReflectionCount: acceptedReflections.length,
 		duplicateReflectionCount,
 		rejectedReflectionCount,
 		acceptedSupportIdCounts: summarizeSupportIdCounts(acceptedReflections),
 		coverageTransitionsByRelevance: summarizeCoverageTransitionsByRelevance(observations, coverageById, afterCoverageById),
+		proposedDropCount: proposedDropIds.length,
+		missingDropIdsCount,
+		selectedDropsCount: droppedObservationIds.length,
+		selectedDropTokens: droppedObservationIds.reduce((sum, id) => sum + (allowedObservations.get(id)?.tokenCount ?? 0), 0),
+		selectedCoverageSummaryByRelevance: summarizeCoverageByRelevanceForIds(droppedObservationIds, observations, afterCoverageById),
+		maxDropsAllowed: pool.maxDropsAllowed,
 	});
-	return acceptedReflections.length > 0 ? acceptedReflections : undefined;
+	return changed ? { reflections: acceptedReflections, droppedObservationIds } : undefined;
 }

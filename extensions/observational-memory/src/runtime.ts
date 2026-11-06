@@ -35,7 +35,7 @@ export function formatNotifyError(message: string): string {
 
 type NotifyLevel = "warning" | "info" | "error";
 type Notify = (message: string, type?: NotifyLevel) => void;
-export type ConsolidationPhase = "observer" | "reflector" | "dropper";
+export type ConsolidationPhase = "observer" | "reflector";
 
 export interface ResolveCtx {
 	model: unknown;
@@ -61,7 +61,15 @@ export class Runtime {
 	readonly warnings = new Warnings();
 	lastObserverError: string | undefined;
 	lastReflectorError: string | undefined;
-	lastDropperError: string | undefined;
+	/**
+	 * Reflector progress (`tokensAtEmpty`) at a session's last pass that changed nothing, after the
+	 * reflector pass marked by `passMarkerId`: the next pass waits for another `reflectAfterTokens`.
+	 */
+	reflectorEmptyBackoff: {
+		sessionIdentity: string | undefined;
+		passMarkerId: string | undefined;
+		tokensAtEmpty: number;
+	} | undefined;
 	/** Deliberate-empty backoff (#23): skip observer re-fires over the same span until enough new tokens arrive. */
 	observerEmptyBackoff: {
 		sessionIdentity: string | undefined;
@@ -159,7 +167,6 @@ export class Runtime {
 		this.consolidationPhase = undefined;
 		this.lastObserverError = undefined;
 		this.lastReflectorError = undefined;
-		this.lastDropperError = undefined;
 		const controller = new AbortController();
 		this.consolidationAbortController = controller;
 		const promise = this.launchTrackedTask(ctx, work, () => {
@@ -184,7 +191,6 @@ export class Runtime {
 		const message = error instanceof Error ? error.message : String(error);
 		if (phase === "observer") this.lastObserverError = message;
 		if (phase === "reflector") this.lastReflectorError = message;
-		if (phase === "dropper") this.lastDropperError = message;
 		this.warnings.warn(ctx, `${phase} failed`, `Observational memory: ${phase} failed: ${formatNotifyError(message)}`);
 		return message;
 	}

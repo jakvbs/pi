@@ -3,13 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
 	compactionRangeStartIndex,
 	measuredObservedTokensSinceLastCompaction,
-	rawObservedTokensSinceReflectionCoverage,
 	measuredTokensSinceLastCompaction,
+	rawObservedTokensSinceReflectorPass,
 	unobservedSourceSpanBefore,
 } from "../src/session-ledger/index.ts";
 import {
 	compactionEntry,
 	observation,
+	observationsDroppedEntry,
 	observationsRecordedEntry,
 	reflection,
 	reflectionsRecordedEntry,
@@ -130,26 +131,26 @@ describe("unobserved source span before a cut", () => {
 	});
 });
 
-describe("observed tokens since reflection coverage", () => {
+describe("observed tokens since the latest reflector pass", () => {
 	function reflections(id: string, coversUpToId: string) {
 		return reflectionsRecordedEntry(id, { reflections: [reflection("eeeeeeeeeeee", ["aaaaaaaaaaaa"])], coversUpToId });
 	}
 
 	it("is zero without observation coverage", () => {
-		expect(rawObservedTokensSinceReflectionCoverage([textCustomMessage("raw-1", "aaaaaaaaaaaa")])).toBe(0);
+		expect(rawObservedTokensSinceReflectorPass([textCustomMessage("raw-1", "aaaaaaaaaaaa")])).toBe(0);
 	});
 
-	it("counts everything observed before any reflection", () => {
+	it("counts everything observed before any pass", () => {
 		const entries = [
 			textCustomMessage("raw-1", "aaaaaaaaaaaa"), // 3
 			textCustomMessage("raw-2", "aaaaaaaa"), // 2, unobserved
 			coverage("om-1", "raw-1"),
 		];
 
-		expect(rawObservedTokensSinceReflectionCoverage(entries)).toBe(3);
+		expect(rawObservedTokensSinceReflectorPass(entries)).toBe(3);
 	});
 
-	it("counts only source between the reflection marker and the observation frontier", () => {
+	it("counts only source between the pass marker and the observation frontier", () => {
 		const entries = [
 			textCustomMessage("raw-1", "aaaaaaaaaaaa"), // 3
 			coverage("om-1", "raw-1"),
@@ -160,10 +161,25 @@ describe("observed tokens since reflection coverage", () => {
 			textCustomMessage("raw-4", "aaaaaaaaaaaaaaaa"), // 4, unobserved backlog
 		];
 
-		expect(rawObservedTokensSinceReflectionCoverage(entries)).toBe(2);
+		expect(rawObservedTokensSinceReflectorPass(entries)).toBe(2);
 	});
 
-	it("is zero when reflection coverage has caught up with observation coverage", () => {
+	it("starts from a pass that only dropped observations when it reaches further than the latest reflections", () => {
+		const entries = [
+			textCustomMessage("raw-1", "aaaaaaaaaaaa"), // 3
+			coverage("om-1", "raw-1"),
+			reflections("om-ref", "raw-1"),
+			textCustomMessage("raw-2", "aaaaaaaa"), // 2
+			coverage("om-2", "raw-2"),
+			observationsDroppedEntry("om-drop", { observationIds: ["aaaaaaaaaaaa"], coversUpToId: "raw-2" }),
+			textCustomMessage("raw-3", "aaaa"), // 1
+			coverage("om-3", "raw-3"),
+		];
+
+		expect(rawObservedTokensSinceReflectorPass(entries)).toBe(1);
+	});
+
+	it("is zero when the latest pass has caught up with observation coverage", () => {
 		const entries = [
 			textCustomMessage("raw-1", "aaaaaaaaaaaa"),
 			coverage("om-1", "raw-1"),
@@ -171,6 +187,6 @@ describe("observed tokens since reflection coverage", () => {
 			textCustomMessage("raw-2", "aaaaaaaaaaaaaaaaaaaaaaaa"),
 		];
 
-		expect(rawObservedTokensSinceReflectionCoverage(entries)).toBe(0);
+		expect(rawObservedTokensSinceReflectorPass(entries)).toBe(0);
 	});
 });

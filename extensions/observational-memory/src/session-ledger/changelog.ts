@@ -71,7 +71,7 @@ export function changeHeadline(change: MemoryChange): string {
 		case "reflected":
 			return `reflector +${plural(change.reflections.length, "reflection")}`;
 		case "dropped":
-			return `dropper −${plural(change.observations.length + change.unknownIds.length, "observation")}`;
+			return `reflector −${plural(change.observations.length + change.unknownIds.length, "observation")}`;
 	}
 }
 

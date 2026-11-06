@@ -107,7 +107,7 @@ Relevance levels (pick one per observation; this field drives future dropping):
 - critical: user assertions about identity, role, or persistent preferences; explicit corrections ("no, don't do X"); concrete completions that future runs MUST NOT redo. These are highest-resistance, load-bearing observations and require the strongest evidence before leaving active memory. Why this matters: if a "critical" item is lost, the assistant may redo finished work, contradict a correction, or misrepresent who the user is.
 - high: non-trivial technical decisions, architectural direction, unresolved blockers, key constraints. Worth keeping across many compactions.
 - medium: task-level context that helps within the current work but isn't durable. The default when you are unsure between medium and high.
-- low: routine tool-call acks, repetitive status updates, content trivially re-derivable from recent messages. The dropper will drop these first.
+- low: routine tool-call acks, repetitive status updates, content trivially re-derivable from recent messages. The reflector will drop these first.
 
 Do NOT default to "critical" or "high". Most observations are medium or low. Reserve "critical" for things that would cause real damage if forgotten.
 

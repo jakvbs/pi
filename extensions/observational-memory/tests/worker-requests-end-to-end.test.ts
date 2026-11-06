@@ -140,7 +140,7 @@ function writeMemorySettings(memory: Record<string, unknown>): void {
 	writeFileSync(join(tempDir, "agent", "settings.json"), JSON.stringify({
 		"observational-memory": {
 			observeAfterTokens: 1,
-			reflectAfterTokens: 1_000_000,
+			observationsPoolMaxTokens: 1_000_000,
 			agentMaxTurns: 1,
 			showWorkerNotifications: false,
 			...memory,
@@ -223,7 +223,7 @@ describe("memory worker requests in a real Pi session", { timeout: 30_000 }, () 
 			return { status: 200, body: workerResponse(body) };
 		}, seen);
 		registry.registerProvider("memory-llm", { baseUrl: `${baseUrl}/memory`, api: "openai-completions", models: [chatModel("worker", `${baseUrl}/memory`)] });
-		writeMemorySettings({ reflectAfterTokens: 1, model: { provider: "memory-llm", id: "worker", thinking: "off" } });
+		writeMemorySettings({ observationsPoolMaxTokens: 1, model: { provider: "memory-llm", id: "worker", thinking: "off" } });
 
 		const session = await startSession(registry, runtime, baseUrl);
 		try {
@@ -372,7 +372,7 @@ describe("memory worker requests in a real Pi session", { timeout: 30_000 }, () 
 		const seen: SeenRequest[] = [];
 		const baseUrl = await startProviderServer((_request, body) => ({ status: 200, body: workerResponse(body) }), seen);
 		registry.registerProvider("opencode-go", { baseUrl: `${baseUrl}/opencode`, api: "openai-completions", models: [chatModel("worker", `${baseUrl}/opencode`)] });
-		writeMemorySettings({ reflectAfterTokens: 1, model: { provider: "opencode-go", id: "worker", thinking: "off" } });
+		writeMemorySettings({ observationsPoolMaxTokens: 1, model: { provider: "opencode-go", id: "worker", thinking: "off" } });
 
 		const session = await startSession(registry, runtime, baseUrl);
 		try {

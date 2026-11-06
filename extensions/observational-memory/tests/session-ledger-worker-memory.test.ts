@@ -25,7 +25,7 @@ describe("bounded worker memory", () => {
 		expect(slice.omittedReflections).toBe(2);
 	});
 
-	it("serves the oldest observations to the dropper", () => {
+	it("serves the oldest observations to the reflector", () => {
 		const slice = boundWorkerMemory(reflections, observations, 200, { observationsFrom: "oldest" });
 
 		expect(slice.observations.map((obs) => obs.id)).toEqual(["a1aaaaaaaaaa", "a2aaaaaaaaaa"]);

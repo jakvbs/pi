@@ -1,9 +1,9 @@
 import { registerSessionResourceCleanup } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { runDropper } from "../src/agents/dropper/agent.ts";
 import { runObserver } from "../src/agents/observer/agent.ts";
 import { runReflector } from "../src/agents/reflector/agent.ts";
+import { observationPoolMetrics } from "../src/agents/reflector/pool.ts";
 import { observation } from "./fixtures/session.ts";
 
 // Pi keeps provider resources per routing id, e.g. an OpenAI Codex WebSocket. A worker
@@ -54,15 +54,7 @@ describe("worker conversations release their provider resources", () => {
 				model: {} as any,
 				reflections: [],
 				observations: [observation("aaaaaaaaaaaa")],
-				agentLoop,
-				modelRegistry,
-			}),
-		dropper: (agentLoop: any) =>
-			runDropper({
-				model: {} as any,
-				reflections: [],
-				observations: [observation("aaaaaaaaaaaa")],
-				targetTokens: 1,
+				pool: observationPoolMetrics([observation("aaaaaaaaaaaa")], 1),
 				agentLoop,
 				modelRegistry,
 			}),

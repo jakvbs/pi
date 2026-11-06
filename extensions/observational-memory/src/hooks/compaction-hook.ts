@@ -25,15 +25,6 @@ import {
 	type UnobservedSourceSpan,
 } from "../session-ledger/index.ts";
 
-const DEFAULT_OBSERVATIONS_POOL_MAX_TOKENS = 20_000;
-
-function observationsPoolMaxTokens(runtime: Runtime): number {
-	const value = (runtime.config as { observationsPoolMaxTokens?: unknown }).observationsPoolMaxTokens;
-	return typeof value === "number" && Number.isFinite(value) && value > 0
-		? value
-		: DEFAULT_OBSERVATIONS_POOL_MAX_TOKENS;
-}
-
 /**
  * Context-visible message roles Pi accepts as a compaction cut point (mirrors
  * Pi's `isCutPointMessage`): never a tool result, which must follow its call.
@@ -219,11 +210,7 @@ async function handleCompaction(
 	let projection: ReturnType<typeof buildCompactionProjection> | undefined;
 	let summary = "";
 	if (resolution.kind === "cut") {
-		projection = buildCompactionProjection(
-			entries,
-			resolution.cut.foldThroughEntryId,
-			{ observationsPoolMaxTokens: observationsPoolMaxTokens(runtime) },
-		);
+		projection = buildCompactionProjection(entries, resolution.cut.foldThroughEntryId);
 		const rendered = renderSummaryWithBudget(projection.reflections, projection.observations, { maxTokens: summaryMaxTokens });
 		summary = rendered.text;
 		// A summary that kept no record would replace older context with only
@@ -274,7 +261,7 @@ async function handleCompaction(
 
 	if (resolution.kind === "uncovered" || !projection || summary.length === 0) {
 		const why = resolution.kind === "uncovered" ? resolution.reason : "no memory record to render";
-		return compactAtProposedCut(entries, event, ctx, runtime, { why, gap: resolution.gap, summaryMaxTokens });
+		return compactAtProposedCut(entries, event, ctx, { why, gap: resolution.gap, summaryMaxTokens });
 	}
 
 	if (resolution.gap && ctx.hasUI) {
@@ -310,13 +297,10 @@ function compactAtProposedCut(
 	entries: Entry[],
 	event: SessionBeforeCompactEvent,
 	ctx: ExtensionContext,
-	runtime: Runtime,
 	args: { why: string; gap?: UnobservedSourceSpan; summaryMaxTokens: number },
 ): CompactionDecision {
 	const { firstKeptEntryId, tokensBefore } = event.preparation;
-	const projection = buildCompactionProjection(entries, foldThroughEntryIdFor(entries, firstKeptEntryId), {
-		observationsPoolMaxTokens: observationsPoolMaxTokens(runtime),
-	});
+	const projection = buildCompactionProjection(entries, foldThroughEntryIdFor(entries, firstKeptEntryId));
 	const rendered = renderSummaryWithBudget(projection.reflections, projection.observations, {
 		maxTokens: args.summaryMaxTokens,
 	});
