@@ -9,6 +9,7 @@
 
 ### Added
 
+- `Harness.shellOutputLimits()` gives the limits of the `bash` and `powershell` tools' output under the current settings (the end of the output within `toolOutputMaxTokens`, no line limit), so a host that runs its users' shell commands into the context keeps them within the same limit.
 - `Tx.submission(id)` reads a committed submission record by ID, so a tool can find the entries of its run's inputs (`pi.live.run.inputs`) without scanning the transcript.
 
 ### Changed

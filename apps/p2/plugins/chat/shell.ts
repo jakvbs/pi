@@ -2,6 +2,7 @@
 // output while it runs; the run places the command's `p2.shell` entry before it ends, so the live block gives way to
 // the entry without a gap. One command at a time per conversation; the session neither moves nor clones while one runs.
 
+import type { OutputLimits } from "@earendil-works/chord/output";
 import type { ConversationId, Harness as DurableHarness } from "@earendil-works/pi-durable";
 import { bool, int, map, nul, num, obj, opt, type Static, str, union } from "@earendil-works/pi-schema";
 import {
@@ -18,8 +19,6 @@ import {
 	method,
 	type P2Principal,
 	SHELL_ENTRY,
-	SHELL_MAX_BYTES,
-	SHELL_MAX_LINES,
 	type ShellData,
 	senderText,
 	shellContextText,
@@ -112,8 +111,9 @@ export function serveShellCommands(host: FacetHost): void {
 		const job = self.job(ShellJob, {
 			run: async (command, ctx) => {
 				try {
-					await runCommand(command, harness().environments, ctx);
-					await placeEntry(command, ctx, harness().durable);
+					const { environments, durable } = harness();
+					await runCommand(command, environments, durable.shellOutputLimits(), ctx);
+					await placeEntry(command, ctx, durable);
 					return null;
 				} finally {
 					worker().liveness.add("activeCalls", -1);
@@ -182,9 +182,15 @@ function liveShell(command: Command, state: Output): LiveShell {
 
 /**
  * Runs the command where its conversation works (a subagent's own location may be on another machine than the
- * session's), sampling its output into the run's state, which ends with how it ended.
+ * session's), sampling its output into the run's state, which ends with how it ended. The output keeps its tail within
+ * `limits`, the bash tool's (`Harness.shellOutputLimits()`), and spills past them.
  */
-async function runCommand(command: Command, environments: ExecutionEnvironments, ctx: RunCtx): Promise<void> {
+async function runCommand(
+	command: Command,
+	environments: ExecutionEnvironments,
+	limits: OutputLimits,
+	ctx: RunCtx,
+): Promise<void> {
 	let output = "";
 	let truncated = false;
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -213,10 +219,10 @@ async function runCommand(command: Command, environments: ExecutionEnvironments,
 			{
 				cwd: location.cwd,
 				inheritEnv: true,
-				spill: { afterBytes: SHELL_MAX_BYTES, afterLines: SHELL_MAX_LINES },
+				spill: { afterBytes: limits.maxBytes, afterLines: limits.maxLines },
 				window: {
-					maxBytes: SHELL_MAX_BYTES,
-					maxLines: SHELL_MAX_LINES,
+					maxBytes: limits.maxBytes,
+					maxLines: limits.maxLines,
 					minIntervalMs: SAMPLE_MS,
 					bytesPerSecond: 100 * 1024,
 				},
@@ -226,7 +232,7 @@ async function runCommand(command: Command, environments: ExecutionEnvironments,
 						output = "";
 						truncated = true;
 					}
-					const tail = shellTail(output + text);
+					const tail = shellTail(output + text, limits);
 					output = tail.text;
 					truncated ||= tail.truncated;
 					timer ??= setTimeout(sample, SAMPLE_MS);

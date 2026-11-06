@@ -94,9 +94,10 @@ const BUDGETS = {
 				"packages/durable/src/images/",
 			],
 		},
-		// The file tools reach their environment helpers and the Harness definitions they need, not the Harness itself,
-		// and pi-schema's root for their schema builders (10 files; its format checks stay out).
-		"./tools": { maxFiles: 27, forbid: ["packages/durable/src/images/", "packages/schema/src/formats/"] },
+		// The file tools reach their environment helpers and the Harness definitions they need (their output limits among
+		// them), not the Harness itself, and pi-schema's root for their schema builders (10 files; its format checks stay
+		// out).
+		"./tools": { maxFiles: 28, forbid: ["packages/durable/src/images/", "packages/schema/src/formats/"] },
 	},
 };
 

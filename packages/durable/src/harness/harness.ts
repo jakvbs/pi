@@ -1,6 +1,7 @@
 import type { Context } from "@earendil-works/chord/context";
 import { withAbortSignal, withoutAbortSignal } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
+import type { OutputLimits } from "@earendil-works/chord/output";
 import type { Models } from "@earendil-works/pi-ai";
 import {
 	type ClientIdentity,
@@ -46,6 +47,7 @@ import { createCompaction } from "./compaction.ts";
 import { readContext } from "./context.ts";
 import { InboxDoc, withdrawQueuedInputs } from "./inbox.ts";
 import { LIMITS_RESTARTS, LiveDoc, settleSchedulerOutcome } from "./live.ts";
+import { shellOutputLimits } from "./output-limits.ts";
 import { ProviderDoc } from "./provider.ts";
 import { BUILTIN_TASKS } from "./registry.ts";
 import { type InvocationBinding, TaskScheduler } from "./scheduler.ts";
@@ -273,6 +275,10 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 			now,
 			create: (target, createOptions, context) => this.#create(target, createOptions, context),
 		};
+	}
+
+	shellOutputLimits(): OutputLimits {
+		return shellOutputLimits(resolveSettings(this.#hostSettings()));
 	}
 
 	/** Resolve a conversation's committed `pi.agent` against `snapshot`, or the current one, and the current settings. */

@@ -9,10 +9,6 @@ import { AuthorSchema } from "./input.ts";
 /** Entry kind of a finished user shell command. */
 export const SHELL_ENTRY = "p2.shell";
 
-/** The output a command keeps: the tail within pi's limits for user shell commands (its bash executor's). */
-export const SHELL_MAX_LINES = 2000;
-export const SHELL_MAX_BYTES = 50 * 1024;
-
 export const ShellDataSchema = obj(
 	{
 		author: AuthorSchema,
@@ -51,13 +47,13 @@ export function shellContextText(data: ShellData): string {
 }
 
 /**
- * The tail of `text` within the limits: whole lines from the end, at most `maxLines` lines and `maxBytes` UTF-8 bytes
- * (a single longer line keeps its end). `truncated` says whether anything was dropped.
+ * The tail of `text` within `limits`: whole lines from the end, at most `maxLines` lines and `maxBytes` UTF-8 bytes
+ * (a single longer line keeps its end). `truncated` says whether anything was dropped. A command keeps the tail within
+ * Durable's `Harness.shellOutputLimits()`, the bash tool's limits.
  */
 export function shellTail(
 	text: string,
-	maxLines = SHELL_MAX_LINES,
-	maxBytes = SHELL_MAX_BYTES,
+	{ maxBytes, maxLines }: { readonly maxBytes: number; readonly maxLines: number },
 ): { text: string; truncated: boolean } {
 	const lines = text.split("\n");
 	let truncated = false;

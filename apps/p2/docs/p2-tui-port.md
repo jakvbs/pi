@@ -1585,7 +1585,8 @@ Tests: `P2/test/p2/shell.test.ts` (a bare session host with real Durable and a r
     the request ID it dedupes, among the last 100 starts per author), so `liveShell` shows it when the call answers.
   - The command runs on the conversation's environment, `Harness.environments.at(agent.cwd)`: local or remote, and
     a subagent's own cwd.
-  - It uses the bash tool's settings (`inheritEnv`, spill and an output window at Durable's 2000 lines / 50 KiB,
+  - It uses the bash tool's settings (`inheritEnv`, spill and an output window of the tail within the bash tool's limits,
+    `Harness.shellOutputLimits()`: the owner's `toolOutputMaxTokens` at 4 bytes per token, without a line limit,
     sampled every 200 ms at 100 KiB/s).
   - The kept tail is the run's state document, which `liveShell` shows.
   - A running job keeps the worker up (`host.activity.jobs`) and counts as one active call (`Liveness`, from before

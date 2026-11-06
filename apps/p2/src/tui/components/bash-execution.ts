@@ -1,9 +1,10 @@
 // Copied from coding-agent interactive/components/bash-execution.ts (p2-tui-port.md section 10.8, `!cmd`/`!!cmd`).
 // Changes: the instance theme and key hints (section 5.4) instead of globals; the output is server text, sanitized
-// (`safeText`) instead of `stripAnsi`; pi's `truncateTail` is `shellTail` (src/runtime/shell.ts, the same limits); the
-// loader exists only for a live command (an entry renderer has no TUI); the author is named for others' commands.
+// (`safeText`) instead of `stripAnsi`; the server already kept the tail the model gets (`shellTail` in
+// src/runtime/shell.ts), so it is not cut again; the loader exists only for a live command (an entry renderer has no
+// TUI); the author is named for others' commands.
 import { Container, Loader, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
-import { shellData, shellTail } from "../../runtime/shell.ts";
+import { shellData } from "../../runtime/shell.ts";
 import type { TuiEntryRenderer } from "../../runtime/tui-renderers.ts";
 import { keyHint, lineText, type RenderContext, safeText } from "../render-context.ts";
 import { truncateToVisualLines } from "./visual-truncate.ts";
@@ -119,11 +120,7 @@ export class BashExecutionComponent extends Container {
 
 	private updateDisplay(): void {
 		const theme = this.ctx.theme.current;
-		// Apply truncation for LLM context limits (same limits as bash tool)
-		const contextTruncation = shellTail(this.outputLines.join("\n"));
-
-		// Get the lines to potentially display (after context truncation)
-		const availableLines = contextTruncation.text ? contextTruncation.text.split("\n") : [];
+		const availableLines = this.outputLines;
 
 		// Apply preview truncation based on expanded state
 		const previewLogicalLines = availableLines.slice(-PREVIEW_LINES);
@@ -198,8 +195,7 @@ export class BashExecutionComponent extends Container {
 			}
 
 			// Add truncation warning (context truncation, not preview truncation)
-			const wasTruncated = this.truncated || contextTruncation.truncated;
-			if (wasTruncated && this.fullOutputPath) {
+			if (this.truncated && this.fullOutputPath) {
 				statusParts.push(theme.fg("warning", `Output truncated. Full output: ${lineText(this.fullOutputPath)}`));
 			}
 
