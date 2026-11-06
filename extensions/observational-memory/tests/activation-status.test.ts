@@ -19,7 +19,9 @@ function setup(options: { compactAfterTokens?: number; contextWindow?: number; p
 	let tokens: number | null = null;
 	const contextWindow = options.contextWindow ?? 1_000_000;
 	const statuses = new Map<string, string | undefined>();
+	const branch: Array<{ type: string }> = [];
 	const ctx = {
+		sessionManager: { getBranch: () => branch },
 		hasUI: true,
 		cwd: "/tmp/project",
 		model: { contextWindow },
@@ -35,6 +37,7 @@ function setup(options: { compactAfterTokens?: number; contextWindow?: number; p
 		setContextTokens: (value: number | null) => {
 			tokens = value;
 		},
+		appendEntry: (type: string) => branch.push({ type }),
 		fire: (name: string, event: unknown = {}) => handlers.get(name)?.(event, ctx),
 	};
 }
@@ -45,11 +48,11 @@ describe("activation status", () => {
 		om.setContextTokens(197_232);
 
 		om.fire("session_start");
-		expect(om.status()).toBe("compact 49%");
+		expect(om.status()).toBe("compact 49% · 0×");
 
 		om.setContextTokens(412_000);
 		om.fire("turn_end", { entries: [] });
-		expect(om.status()).toBe("compact 103%");
+		expect(om.status()).toBe("compact 103% · 0×");
 	});
 
 	it("shows an unknown share while Pi does not know the context size after a compaction", () => {
@@ -57,11 +60,27 @@ describe("activation status", () => {
 		om.setContextTokens(401_000);
 
 		om.fire("turn_end", { entries: [{ type: "compaction" }] });
-		expect(om.status()).toBe("compact ?");
+		expect(om.status()).toBe("compact ? · 1×");
 
+		om.appendEntry("compaction");
 		om.setContextTokens(null);
 		om.fire("session_compact");
-		expect(om.status()).toBe("compact ?");
+		expect(om.status()).toBe("compact ? · 1×");
+	});
+
+	it("counts the compactions on the current branch", () => {
+		const om = setup();
+		om.setContextTokens(100_000);
+		om.appendEntry("message");
+		om.appendEntry("compaction");
+		om.appendEntry("message");
+		om.appendEntry("compaction");
+
+		om.fire("session_tree");
+		expect(om.status()).toBe("compact 25% · 2×");
+
+		om.fire("turn_end", { entries: [{ type: "message" }, { type: "compaction" }] });
+		expect(om.status()).toBe("compact ? · 3×");
 	});
 
 	it("hides the status when memory does not activate first", () => {
