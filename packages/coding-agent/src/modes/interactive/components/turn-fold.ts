@@ -1,5 +1,5 @@
 // Folds the activity of each turn (thinking, tool calls, commentary) into one row between the user message and the
-// reply, also while the turn runs.
+// reply, also while the turn runs. The text of the commentary stays visible below the row.
 import {
 	type Component,
 	Container,
@@ -47,8 +47,8 @@ interface Turn {
  * and rows the reply is followed by that are not tool calls (notices about the reply).
  *
  * While the turn runs, its finished rows fold into the same row as they finish ({@link TurnFolds.foldFinished}), so
- * only what still runs shows below it: the response being written, with its thinking as one label line, and the tool
- * calls that have no result yet.
+ * only its commentary and what still runs show below it: the response being written, with its thinking as one label
+ * line, and the tool calls that have no result yet.
  *
  * A handoff ({@link TurnFolds.setHandoff}) adds what a model wrote about the turn to its row.
  */
@@ -259,6 +259,17 @@ function isReply(row: Component): row is AssistantMessageComponent {
 	return row instanceof AssistantMessageComponent && row.isReply();
 }
 
+/**
+ * Whether a row is commentary: a response with text that also called tools, such as a progress report between steps.
+ * A folded turn keeps its text visible below the row.
+ */
+function isCommentary(row: Component): row is AssistantMessageComponent {
+	return (
+		row instanceof AssistantMessageComponent &&
+		(row.getMessage()?.content.some((part) => part.type === "text" && part.text.trim() !== "") ?? false)
+	);
+}
+
 /** Whether a row of a running turn can fold: not a response being written or the reply, not a tool call that runs. */
 function isFinishedActivity(row: Component): boolean {
 	if (row instanceof AssistantMessageComponent) return row.isFinished() && !row.isReply();
@@ -313,8 +324,8 @@ function formatDuration(durationMs: number): string {
 }
 
 /**
- * The fold row of one turn, followed by the turn's activity while it is open. With folding off it shows the activity
- * alone, as before folding existed. The reply stays outside, after this component. A running turn adds rows as they
+ * The fold row of one turn, followed by the turn's activity while it is open, or by the text of its commentary while it
+ * is folded. With folding off it shows the activity alone, as before folding existed. The reply stays outside, after this component. A running turn adds rows as they
  * finish ({@link absorb}) and gets its reply once it has one ({@link finish}).
  */
 export class TurnFoldComponent extends Container {
@@ -352,6 +363,7 @@ export class TurnFoldComponent extends Container {
 	/** Fold more rows of the turn, after the ones folded before. */
 	absorb(rows: readonly Component[]): void {
 		for (const row of rows) this.activity.addChild(row);
+		this.update();
 	}
 
 	/**
@@ -389,8 +401,15 @@ export class TurnFoldComponent extends Container {
 	}
 
 	private update(): void {
-		this.children = !this.folding ? [this.activity] : this.open ? [this.header, this.activity] : [this.header];
-		this.reply?.setActivityFolded(this.folding && !this.open);
+		const folded = this.folding && !this.open;
+		const commentary = this.activity.children.filter(isCommentary);
+		this.children = !this.folding
+			? [this.activity]
+			: this.open
+				? [this.header, this.activity]
+				: [this.header, ...commentary];
+		for (const row of commentary) row.setActivityFolded(folded);
+		this.reply?.setActivityFolded(folded);
 	}
 
 	private renderRow(width: number): string {
