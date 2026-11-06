@@ -7,8 +7,9 @@ import type { Runtime } from "./runtime.ts";
 export const ACTIVATION_STATUS_KEY = "observational-memory";
 
 /**
- * Show `compact N%` in the footer: the context Pi reports (the same reading
- * activation compares) as a share of the activation threshold. Hidden when
+ * Show `compact N% · K×` in the footer: the context Pi reports (the same
+ * reading activation compares) as a share of the activation threshold, and the
+ * number of compactions on the current branch. Hidden when
  * memory is passive or the threshold does not fit the model's context window,
  * since Pi's own compaction comes first there.
  */
@@ -37,5 +38,8 @@ export function renderActivationStatus(runtime: Runtime, ctx: ExtensionContext, 
 	}
 	const progress =
 		compactionPending || usage.tokens === null ? "?" : `${Math.round((usage.tokens / threshold) * 100)}%`;
-	ctx.ui.setStatus(ACTIVATION_STATUS_KEY, ctx.ui.theme.fg("dim", `compact ${progress}`));
+	// A compaction proposed at this turn_end is persisted after the handlers, so the branch does not hold it yet.
+	const compactions =
+		ctx.sessionManager.getBranch().filter((entry) => entry.type === "compaction").length + (compactionPending ? 1 : 0);
+	ctx.ui.setStatus(ACTIVATION_STATUS_KEY, ctx.ui.theme.fg("dim", `compact ${progress} · ${compactions}×`));
 }

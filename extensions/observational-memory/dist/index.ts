@@ -213,7 +213,8 @@ function renderActivationStatus(runtime, ctx, compactionPending = false) {
     return;
   }
   const progress = compactionPending || usage.tokens === null ? "?" : `${Math.round(usage.tokens / threshold * 100)}%`;
-  ctx.ui.setStatus(ACTIVATION_STATUS_KEY, ctx.ui.theme.fg("dim", `compact ${progress}`));
+  const compactions = ctx.sessionManager.getBranch().filter((entry) => entry.type === "compaction").length + (compactionPending ? 1 : 0);
+  ctx.ui.setStatus(ACTIVATION_STATUS_KEY, ctx.ui.theme.fg("dim", `compact ${progress} \xB7 ${compactions}\xD7`));
 }
 
 // src/memory-file.ts
