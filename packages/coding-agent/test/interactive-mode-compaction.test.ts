@@ -95,7 +95,12 @@ describe("InteractiveMode compaction events", () => {
 				usage: previousUsage,
 			},
 		];
-		const fakeThis = { pendingTools: new Map(), turnFolds: { reset: vi.fn() }, renderSessionItems: vi.fn() };
+		const fakeThis = {
+			pendingTools: new Map(),
+			turnFolds: { reset: vi.fn() },
+			stepMeter: { reset: vi.fn() },
+			renderSessionItems: vi.fn(),
+		};
 		const renderSessionEntries = Reflect.get(InteractiveMode.prototype, "renderSessionEntries") as (
 			this: typeof fakeThis,
 			entries: SessionEntry[],
@@ -163,6 +168,8 @@ describe("InteractiveMode compaction events", () => {
 			showStatus: vi.fn(),
 			session: { isStreaming: false },
 			turnFolds: { reset: vi.fn(), end: vi.fn(), foldFinished: vi.fn() },
+			stepMeter: { reset: vi.fn() },
+			measureStep: () => undefined,
 			options: {},
 			addMessageToChat: (message: AgentMessage) =>
 				rendered.push(

@@ -12,6 +12,7 @@ import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
 import type { SessionEntry } from "../src/core/session-manager.ts";
 import { TURN_HANDOFF_ENTRY_TYPE } from "../src/core/turn-handoff.ts";
+import { StepMeter } from "../src/modes/interactive/components/step-usage.ts";
 import type { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { TranscriptContainer } from "../src/modes/interactive/components/tool-execution.ts";
 import { TurnFolds } from "../src/modes/interactive/components/turn-fold.ts";
@@ -25,7 +26,14 @@ type ModeThis = Record<string, unknown> & { chatContainer: TranscriptContainer; 
 
 /** The parts of InteractiveMode that render a branch and handle run events, with the real methods. */
 function createMode(
-	options: { folding?: boolean; isStreaming?: boolean; showCacheMissNotices?: boolean; view?: boolean } = {},
+	options: {
+		folding?: boolean;
+		isStreaming?: boolean;
+		showCacheMissNotices?: boolean;
+		showTokenUsage?: boolean;
+		subscription?: boolean;
+		view?: boolean;
+	} = {},
 ): ModeThis {
 	const chatContainer = new TranscriptContainer();
 	const prototype = InteractiveMode.prototype as unknown as Record<string, unknown>;
@@ -35,6 +43,7 @@ function createMode(
 		// A view only checks that it follows a file; it never reads it here.
 		options: { viewTail: options.view ? {} : undefined },
 		pendingTools: new Map<string, ToolExecutionComponent>(),
+		stepMeter: new StepMeter(),
 		hideThinkingBlock: false,
 		hiddenThinkingLabel: "Thinking...",
 		outputPad: 1,
@@ -50,12 +59,14 @@ function createMode(
 			getShowImages: () => false,
 			getImageWidthCells: () => 60,
 			getShowCacheMissNotices: () => options.showCacheMissNotices ?? false,
+			getShowTokenUsage: () => options.showTokenUsage ?? true,
 			getShowTerminalProgress: () => false,
 		},
 		sessionManager: { getCwd: () => process.cwd(), getEntries: () => [] },
 		session: {
 			retryAttempt: 0,
 			isStreaming: options.isStreaming ?? false,
+			modelRuntime: { isUsingSubscription: () => options.subscription ?? false },
 			extensionRunner: {
 				getMessageRenderer: () => undefined,
 				// An extension that runs every `!` command itself, so the test needs no shell.
@@ -88,6 +99,8 @@ function createMode(
 		"handleBashCommand",
 		"addBashComponentToChat",
 		"addCustomEntryToChat",
+		"measureStep",
+		"placeLiveStepUsage",
 	]) {
 		mode[name] = prototype[name];
 	}
@@ -728,6 +741,133 @@ describe("Turn handoffs", () => {
 			"✓ Ran npm test.",
 			"→ Run the tests.",
 		]);
+	});
+});
+
+/** A model call's message with the usage its provider reported: `input` counts the whole prompt, cache reads included. */
+function billed(message: AssistantMessage, input: number, output: number, cost: number): AssistantMessage {
+	return {
+		...message,
+		usage: {
+			input: input / 10,
+			cacheRead: input - input / 10,
+			cacheWrite: 0,
+			output,
+			totalTokens: input + output,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: cost },
+		},
+	};
+}
+
+/** One turn of two steps that ran a command each, measured by their calls, and a reply. */
+const BILLED_TURN: AgentMessage[] = [
+	user("check", 0),
+	billed(assistant([fauxToolCall("bash", { command: "ls" }, { id: "t1" })], 0, 1_000), 10_000, 200, 0.05),
+	toolResult("t1", "ok", false),
+	billed(assistant([fauxToolCall("bash", { command: "npm test" }, { id: "t2" })], 2_000, 1_000), 19_700, 100, 0.07),
+	toolResult("t2", "ok", false),
+	billed(assistant("Done.", 4_000, 1_000, "stop"), 21_000, 300, 0.02),
+];
+
+/** The transcript at width 60 without colours, each line cut at its last character. */
+function lines60(mode: ModeThis): string[] {
+	return mode.chatContainer
+		.render(60)
+		.map((line) => stripAnsi(line).trimEnd())
+		.filter(Boolean);
+}
+
+describe("Step usage", () => {
+	beforeAll(() => {
+		initTheme("dark");
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	test("each step shows what it added to the context and its call's cost at the right edge: a tool row, then the reply", () => {
+		const mode = createMode({ folding: false });
+		renderBranch(mode, BILLED_TURN);
+
+		// The first step added the second call's input growth; the reply added its output.
+		expect(lines60(mode)).toEqual([
+			" check",
+			` ✓ bash ls${" ".repeat(31)}+9.7k ctx · $0.050`,
+			` ✓ bash npm test${" ".repeat(25)}+1.3k ctx · $0.070`,
+			" Done.",
+			`${" ".repeat(42)}+300 ctx · $0.020`,
+		]);
+	});
+
+	test("a folded turn sums its steps on its row and hides the reply's line; an open row shows every step", () => {
+		const mode = createMode();
+		renderBranch(mode, BILLED_TURN);
+		expect(visibleLines(mode)).toEqual(["check", "▸ 2 tools · 0:05 · +11k ctx · $0.140", "Done."]);
+
+		mode.turnFolds.toggleLast();
+		expect(visibleLines(mode).at(-1)).toBe("+300 ctx · $0.020");
+	});
+
+	test("a call without usage measures nothing; a compaction leaves the step before it without a context part", () => {
+		const mode = createMode({ folding: false });
+		renderBranch(mode, [
+			user("check", 0),
+			billed(assistant([fauxToolCall("bash", { command: "ls" }, { id: "t1" })], 0, 1_000), 10_000, 200, 0.05),
+			toolResult("t1", "ok", false),
+			{ role: "compactionSummary", summary: "summary", tokensBefore: 10_000, timestamp: START + 2_000 },
+			assistant("", 3_000, 1_000, "error", "overloaded"),
+			billed(assistant([fauxToolCall("bash", { command: "pwd" }, { id: "t2" })], 4_000, 1_000), 4_000, 100, 0.01),
+			toolResult("t2", "ok", false),
+			billed(assistant("Done.", 6_000, 1_000, "stop"), 5_000, 50, 0.01),
+		]);
+
+		const lines = lines60(mode);
+		expect(lines).toContain(` ✓ bash ls${" ".repeat(43)}$0.050`);
+		expect(lines).toContain(` ✓ bash pwd${" ".repeat(30)}+1.0k ctx · $0.010`);
+	});
+
+	test("a live step shows its cost when its call ends and what it added when the next call ends", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		const mode = createMode({ folding: false });
+
+		await emit(mode, { type: "agent_start" });
+		await emit(mode, { type: "message_start", message: user("check", 0) });
+		// This call's tool call gets its row only when it starts running.
+		await respond(
+			mode,
+			billed(assistant([fauxToolCall("bash", { command: "ls" }, { id: "t1" })], 0, 1_000), 10_000, 200, 0.05),
+		);
+		await runTool(mode, "t1", "ls", 2_000);
+		expect(lines60(mode).at(-1)).toBe(` ✓ bash ls${" ".repeat(43)}$0.050`);
+
+		// This call streams its tool call first, as providers do, so its row exists when the call ends.
+		const second = billed(
+			assistant([fauxToolCall("bash", { command: "pwd" }, { id: "t2" })], 2_000, 1_000),
+			19_700,
+			100,
+			0.07,
+		);
+		await emit(mode, { type: "message_start", message: second });
+		await emit(mode, {
+			type: "message_update",
+			message: second,
+			assistantMessageEvent: { type: "start", partial: second },
+		});
+		await emit(mode, { type: "message_end", message: second });
+		expect(lines60(mode).slice(-2)).toEqual([
+			` ✓ bash ls${" ".repeat(31)}+9.7k ctx · $0.050`,
+			` ○ bash pwd${" ".repeat(42)}$0.070`,
+		]);
+	});
+
+	test("a subscription shows no cost; with the setting off nothing shows", () => {
+		const subscription = createMode({ subscription: true });
+		renderBranch(subscription, BILLED_TURN);
+		expect(visibleLines(subscription)).toEqual(["check", "▸ 2 tools · 0:05 · +11k ctx", "Done."]);
+
+		const off = createMode({ showTokenUsage: false });
+		renderBranch(off, BILLED_TURN);
+		expect(visibleLines(off)).toEqual(["check", "▸ 2 tools · 0:05", "Done."]);
 	});
 });
 

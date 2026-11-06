@@ -4,6 +4,7 @@ import type { AgentSession } from "../../../core/agent-session.ts";
 import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
 import type { ContextUsage } from "../../../core/extensions/types.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
+import type { ModelRuntime } from "../../../core/model-runtime.ts";
 import { addUsageToTotals, createUsageTotals, type UsageTotals } from "../../../core/usage-totals.ts";
 import { theme } from "../theme/theme.ts";
 
@@ -28,6 +29,12 @@ export function formatTokens(count: number): string {
 	if (count < 1000000) return `${Math.round(count / 1000)}k`;
 	if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
 	return `${Math.round(count / 1000000)}M`;
+}
+
+/** Whether a provider bills a subscription, so its cost is only an estimate of API pricing and stays in /session. */
+export function billsSubscription(provider: string, modelRuntime: ModelRuntime): boolean {
+	// Kimi Coding is subscription-backed despite using API-key authentication.
+	return provider === "kimi-coding" || modelRuntime.isUsingSubscription(provider);
 }
 
 export function formatCwdForFooter(cwd: string, home: string | undefined): string {
@@ -223,12 +230,8 @@ export class FooterComponent implements Component {
 			statsParts.push(theme.fg("warning", `cache ${latestCacheHitRate.toFixed(0)}%`));
 		}
 
-		// Kimi Coding is subscription-backed despite using API-key authentication. A subscription's
-		// cost is only an estimate of API pricing, so it stays in /session.
 		const provider = sessionModel ? sessionModel.provider : state.model?.provider;
-		const usingSubscription = provider
-			? provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(provider)
-			: false;
+		const usingSubscription = provider ? billsSubscription(provider, this.session.modelRuntime) : false;
 		if (usageTotals.cost && !usingSubscription) {
 			statsParts.push(theme.fg("dim", `$${usageTotals.cost.toFixed(3)}`));
 		}

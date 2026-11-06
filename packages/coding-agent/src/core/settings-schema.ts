@@ -260,6 +260,13 @@ export const SettingsSchema = Type.Object(
 				default: SETTINGS_DEFAULTS.showCacheMissNotices,
 			}),
 		),
+		showTokenUsage: Type.Optional(
+			Type.Boolean({
+				description:
+					"Show what each step added to the context window and what it cost, at the right of its first tool row or its reply, summed on each folded turn's row.",
+				default: SETTINGS_DEFAULTS.showTokenUsage,
+			}),
+		),
 		externalEditor: Type.Optional(
 			Type.String({ description: "Command for Ctrl+G external editor; takes precedence over VISUAL and EDITOR." }),
 		),

@@ -222,6 +222,11 @@
       "description": "Show cache cost and provider recovery notices.",
       "default": false
     },
+    "showTokenUsage": {
+      "type": "boolean",
+      "description": "Show what each step added to the context window and what it cost, at the right of its first tool row or its reply, summed on each folded turn's row.",
+      "default": true
+    },
     "externalEditor": {
       "type": "string",
       "description": "Command for Ctrl+G external editor; takes precedence over VISUAL and EDITOR."
