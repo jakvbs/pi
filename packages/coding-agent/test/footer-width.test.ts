@@ -104,11 +104,14 @@ function createSession(options: {
 	return session as unknown as AgentSession;
 }
 
-function createFooterData(providerCount: number, statuses: Record<string, string> = {}): ReadonlyFooterDataProvider {
+function createFooterData(
+	sharedModelIds: readonly string[],
+	statuses: Record<string, string> = {},
+): ReadonlyFooterDataProvider {
 	const provider = {
 		getGitBranch: () => "main",
 		getExtensionStatuses: () => new Map(Object.entries(statuses)),
-		getAvailableProviderCount: () => providerCount,
+		isModelIdShared: (modelId: string) => sharedModelIds.includes(modelId),
 		onBranchChange: (callback: () => void) => {
 			void callback;
 			return () => {};
@@ -137,7 +140,7 @@ describe("FooterComponent width handling", () => {
 	it("keeps all lines within width for wide session names", () => {
 		const width = 93;
 		const session = createSession({ sessionName: "한글".repeat(30) });
-		const footer = new FooterComponent(session, createFooterData(1));
+		const footer = new FooterComponent(session, createFooterData([]));
 
 		const lines = footer.render(width);
 		for (const line of lines) {
@@ -147,14 +150,14 @@ describe("FooterComponent width handling", () => {
 
 	it("shows the session ID after the branch and session name", () => {
 		const session = createSession({ sessionName: "release" });
-		const footer = new FooterComponent(session, createFooterData(1));
+		const footer = new FooterComponent(session, createFooterData([]));
 
 		expect(stripAnsi(footer.render(200)[0]!).trimEnd()).toMatch(/ \(main\) • release • test-session$/);
 	});
 
 	it("leaves out the session ID of a session that is not saved", () => {
 		const session = createSession({ sessionName: "release", persisted: false });
-		const footer = new FooterComponent(session, createFooterData(1));
+		const footer = new FooterComponent(session, createFooterData([]));
 
 		expect(stripAnsi(footer.render(200)[0]!).trimEnd()).toMatch(/ \(main\) • release$/);
 	});
@@ -175,7 +178,7 @@ describe("FooterComponent width handling", () => {
 				cost: { total: 1.234 },
 			},
 		});
-		const footer = new FooterComponent(session, createFooterData(2));
+		const footer = new FooterComponent(session, createFooterData(["模".repeat(30)]));
 
 		const lines = footer.render(width);
 		for (const line of lines) {
@@ -191,7 +194,7 @@ describe("FooterComponent width handling", () => {
 			thinkingLevel: "high",
 			routedModel: { model: { id: "gpt-5.6-luna" }, thinkingLevel: "medium" },
 		});
-		const footer = new FooterComponent(session, createFooterData(1));
+		const footer = new FooterComponent(session, createFooterData([]));
 
 		const statsLine = stripAnsi(footer.render(120)[1]);
 
@@ -230,7 +233,7 @@ describe("FooterComponent width handling", () => {
 				cost: { total: 0.375 },
 			},
 		});
-		const footer = new FooterComponent(session, createFooterData(1));
+		const footer = new FooterComponent(session, createFooterData([]));
 
 		const statsLine = stripAnsi(footer.render(120)[1]);
 		expect(statsLine).toContain("$1.250");
@@ -239,7 +242,7 @@ describe("FooterComponent width handling", () => {
 	it("updates cached usage totals after an entry is appended", () => {
 		const usage = { input: 10, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0.5 } };
 		const session = createSession({ sessionName: "", usage });
-		const footer = new FooterComponent(session, createFooterData(1));
+		const footer = new FooterComponent(session, createFooterData([]));
 		expect(stripAnsi(footer.render(120)[1])).toContain("$0.500");
 
 		session.sessionManager.getEntries().push({ type: "message", message: { role: "assistant", usage } } as never);
@@ -253,27 +256,40 @@ describe("FooterComponent width handling", () => {
 			usage: { input: 520, output: 127_000, cacheRead: 28_000_000, cacheWrite: 477_000, cost: { total: 0 } },
 			earlierRequests: 1,
 		});
-		const footer = new FooterComponent(session, createFooterData(1));
+		const footer = new FooterComponent(session, createFooterData([]));
 
 		expect(stripAnsi(footer.render(120)[1]).trimEnd()).toBe(`ctx 161k${" ".repeat(102)}test-model`);
 	});
 
 	it("puts extension statuses on the stats line when they fit next to the model", () => {
 		const session = createSession({ sessionName: "", contextTokens: 12_000 });
-		const footerData = createFooterData(1, { timing: "● 0:12", "observational-memory": "compact 3%" });
+		const footerData = createFooterData([], { timing: "● 0:12", "observational-memory": "compact 3%" });
 
 		const wide = new FooterComponent(session, footerData).render(60).map((line) => stripAnsi(line).trimEnd());
 		expect(wide).toEqual([
 			"/tmp/project (main) • test-session",
-			`ctx 12k compact 3% ● 0:12${" ".repeat(25)}test-model`,
+			`ctx 12k · compact 3% · ● 0:12${" ".repeat(21)}test-model`,
 		]);
 
 		const narrow = new FooterComponent(session, footerData).render(30).map((line) => stripAnsi(line).trimEnd());
-		expect(narrow.slice(1)).toEqual([`ctx 12k${" ".repeat(13)}test-model`, "compact 3% ● 0:12"]);
+		expect(narrow.slice(1)).toEqual([`ctx 12k${" ".repeat(13)}test-model`, "compact 3% · ● 0:12"]);
+	});
+
+	it("names the provider only when another provider offers a model with the same id", () => {
+		const session = createSession({ sessionName: "", provider: "pi-sub-anthropic", modelId: "claude-opus" });
+		const stats = (sharedModelIds: readonly string[]) =>
+			stripAnsi(new FooterComponent(session, createFooterData(sharedModelIds)).render(120)[1]).trimEnd();
+
+		expect(stats([])).toMatch(/ claude-opus$/);
+		expect(stats(["other-model"])).not.toContain("pi-sub-anthropic");
+		expect(stats(["claude-opus"])).toMatch(/ \(pi-sub-anthropic\) claude-opus$/);
 	});
 
 	it("marks the context size when auto-compaction is off", () => {
-		const footer = new FooterComponent(createSession({ sessionName: "", contextTokens: 9_500 }), createFooterData(1));
+		const footer = new FooterComponent(
+			createSession({ sessionName: "", contextTokens: 9_500 }),
+			createFooterData([]),
+		);
 
 		footer.setAutoCompactEnabled(false);
 
@@ -287,11 +303,11 @@ describe("FooterComponent width handling", () => {
 			stripAnsi(
 				new FooterComponent(
 					createSession({ sessionName: "", contextTokens: 200, usage, earlierRequests }),
-					createFooterData(1),
+					createFooterData([]),
 				).render(120)[1],
 			);
 
-		expect(stats(missed, 1)).toMatch(/^ctx 200 cache 25% /);
+		expect(stats(missed, 1)).toMatch(/^ctx 200 · cache 25% /);
 		expect(stats(missed, 0)).toMatch(/^ctx 200 /);
 		expect(stats(missed, 0)).not.toContain("cache");
 		expect(stats(hit, 1)).not.toContain("cache");
@@ -303,9 +319,11 @@ describe("FooterComponent width handling", () => {
 		const subscription = createSession({ sessionName: "", provider: "anthropic", usingSubscription: true, usage });
 		const apiKey = createSession({ sessionName: "", provider: "anthropic", usage });
 
-		expect(stripAnsi(new FooterComponent(kimi, createFooterData(1)).render(120)[1])).not.toContain("$");
-		expect(stripAnsi(new FooterComponent(subscription, createFooterData(1)).render(120)[1])).not.toContain("$");
-		expect(stripAnsi(new FooterComponent(apiKey, createFooterData(1)).render(120)[1])).toMatch(/^ctx \? \$1\.234 /);
+		expect(stripAnsi(new FooterComponent(kimi, createFooterData([])).render(120)[1])).not.toContain("$");
+		expect(stripAnsi(new FooterComponent(subscription, createFooterData([])).render(120)[1])).not.toContain("$");
+		expect(stripAnsi(new FooterComponent(apiKey, createFooterData([])).render(120)[1])).toMatch(
+			/^ctx \? · \$1\.234 /,
+		);
 	});
 
 	it("does not mark generic OAuth sign-in as a subscription", () => {
@@ -320,7 +338,7 @@ describe("FooterComponent width handling", () => {
 				cost: { total: 1.234 },
 			},
 		});
-		const footer = new FooterComponent(session, createFooterData(1));
+		const footer = new FooterComponent(session, createFooterData([]));
 		const stats = stripAnsi(footer.render(120)[1]);
 
 		expect(stats).toContain("$1.234");

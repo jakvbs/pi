@@ -2,7 +2,7 @@
 
 Shows how much of the Claude and Codex subscription quotas is used, in Pi's interactive mode.
 
-- Footer: `Claude 5h 12% 7d 81% ↻2h5m · Codex 7d 3%` - used percent per quota window. A window at 70% or more is highlighted and shows the time to its reset; at 90% it turns red, and a subscription whose limit is reached has its name in red. `?` means no value is known: the check failed and no session has saved one.
+- Footer: `Claude 5h 12% 7d 81% reset 2h5m · Codex 7d 3%` - used percent per quota window. A window at 70% or more is highlighted and shows the time to its reset; at 90% it turns red, and a subscription whose limit is reached has its name in red. `?` means no value is known: the check failed and no session has saved one.
 - `/usage`: checks again and lists every window with its reset time, or the error of a failed check and the age of the value kept instead.
 
 Usage is read from the endpoints the official clients use for the same view, with the OAuth access token of the logged-in pi provider; no model request is made and nothing is billed:

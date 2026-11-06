@@ -5601,14 +5601,13 @@ export class InteractiveMode {
 		return findExactModelReferenceMatch(searchTerm, [...this.session.modelRuntime.getAvailableSnapshot()]);
 	}
 
-	/** Update the footer's available provider count from the current snapshot without refreshing catalogs. */
+	/** Give the footer the available models from the current snapshot without refreshing catalogs. */
 	private updateAvailableProviderCount(): void {
-		const models =
+		this.footerDataProvider.setAvailableModels(
 			this.session.scopedModels.length > 0
 				? this.session.scopedModels.map((scoped) => scoped.model)
-				: this.session.modelRuntime.getAvailableSnapshot();
-		const uniqueProviders = new Set(models.map((model) => model.provider));
-		this.footerDataProvider.setAvailableProviderCount(uniqueProviders.size);
+				: this.session.modelRuntime.getAvailableSnapshot(),
+		);
 	}
 
 	private async maybeWarnAboutAnthropicSubscriptionAuth(
