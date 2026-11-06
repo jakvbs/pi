@@ -42,7 +42,10 @@ export class AssistantMessageComponent extends Container {
 	private timestamp?: string;
 	private thinkingVisibilityOverrides = new Map<number, boolean>();
 	private markdownSlots: MarkdownSlot[] = [];
-	/** Set while this message is the reply of a folded turn: thinking folds with the turn, the stop notice stays. */
+	/**
+	 * Set while this message is the reply or the commentary of a folded turn: thinking folds with the turn, the text and
+	 * the stop notice stay.
+	 */
 	private activityFolded = false;
 	/** Set while this message runs in a folded turn: each thinking run shows as its label line. */
 	private thinkingCollapsed = false;
@@ -116,7 +119,7 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	/**
-	 * Fold or show this reply's thinking with its turn. While folded, an abort or error notice shows here even when the
+	 * Fold or show this message's thinking with its turn. While folded, an abort or error notice shows here even when the
 	 * message has tool calls, because their rows, which show it otherwise, are folded too.
 	 */
 	setActivityFolded(folded: boolean): void {

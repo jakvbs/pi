@@ -240,13 +240,14 @@ describe("TurnFolds", () => {
 		initTheme("dark");
 	});
 
-	test("folds a recorded branch into user message, one row and the reply", () => {
+	test("folds a recorded branch into user message, one row with the commentary below it, and the reply", () => {
 		const mode = createMode();
 		renderBranch(mode, RECORDED_BRANCH);
 
 		expect(visibleLines(mode)).toEqual([
 			"fix the bug",
 			"▸ 2 tools · 2 thinking · 1:40 · 1 error",
+			"running the tests",
 			"Fixed it.",
 			"thanks",
 			"You are welcome.",
@@ -338,7 +339,7 @@ describe("TurnFolds", () => {
 		expect(visibleLines(mode).slice(-2)).toEqual(["▸ 1 tool · 0:04", "Done."]);
 	});
 
-	test("a running turn folds each finished row at once; the running call and the response being written show below", async () => {
+	test("a running turn folds each finished row at once; its commentary, the running call and the response being written show below", async () => {
 		vi.useFakeTimers({ toFake: ["Date"] });
 		const mode = createMode();
 		const step = assistant(
@@ -351,18 +352,18 @@ describe("TurnFolds", () => {
 		await emit(mode, { type: "message_start", message: user("check", 0) });
 		await respond(mode, step);
 		await emit(mode, { type: "tool_execution_start", toolCallId: "t1", toolName: "bash", args: { command: "ls" } });
-		expect(visibleLines(mode)).toEqual(["check", "▸ 1 thinking · 0:02", "… bash ls"]);
+		expect(visibleLines(mode)).toEqual(["check", "▸ 1 thinking · 0:02", "Listing.", "… bash ls"]);
 
 		await runTool(mode, "t1", "ls", 3_000);
 		const writing = assistant([fauxThinking("all files are there"), fauxText("All")], 4_000, 0, "stop");
 		await emit(mode, { type: "message_start", message: writing });
-		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 1 thinking · 0:03", "Thinking...", "All"]);
+		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 1 thinking · 0:03", "Listing.", "Thinking...", "All"]);
 
 		await emit(mode, {
 			type: "message_end",
 			message: assistant([fauxThinking("all files are there"), fauxText("All good.")], 4_000, 1_000, "stop"),
 		});
-		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 2 thinking · 0:05", "All good."]);
+		expect(visibleLines(mode)).toEqual(["check", "▸ 1 tool · 2 thinking · 0:05", "Listing.", "All good."]);
 
 		mode.turnFolds.toggleLast();
 		expect(visibleLines(mode)).toEqual([
@@ -537,6 +538,7 @@ describe("TurnFolds", () => {
 		expect(visibleLines(mode)).toEqual([
 			"fix the bug",
 			"▸ 2 tools · 2 thinking · 1:40 · 1 error",
+			"running the tests",
 			"Fixed it.",
 			"thanks",
 			"You are welcome.",
@@ -700,10 +702,15 @@ describe("TurnFolds in a read-only view", () => {
 	/** A finished worker session: one task, its activity and the final reply. */
 	const WORKER_SESSION = RECORDED_BRANCH.slice(0, 6);
 
-	test("a finished one-turn worker session reads as task, one row and reply, as in a normal session", () => {
+	test("a finished one-turn worker session reads as task, one row with its commentary and reply, as in a normal session", () => {
 		const view = createMode({ view: true });
 		renderBranch(view, WORKER_SESSION);
-		expect(visibleLines(view)).toEqual(["fix the bug", "▸ 2 tools · 2 thinking · 1:40 · 1 error", "Fixed it."]);
+		expect(visibleLines(view)).toEqual([
+			"fix the bug",
+			"▸ 2 tools · 2 thinking · 1:40 · 1 error",
+			"running the tests",
+			"Fixed it.",
+		]);
 
 		const normal = createMode();
 		renderBranch(normal, WORKER_SESSION);
