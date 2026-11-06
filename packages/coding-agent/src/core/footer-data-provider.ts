@@ -110,7 +110,7 @@ export class FooterDataProvider {
 	private reftableTablesListWatcher: FSWatcher | null = null;
 	private reftableTablesListPath: string | null = null;
 	private branchChangeCallbacks = new Set<() => void>();
-	private availableProviderCount = 0;
+	private sharedModelIds: ReadonlySet<string> = new Set();
 	private refreshTimer: ReturnType<typeof setTimeout> | null = null;
 	private gitWatcherRetryTimer: ReturnType<typeof setTimeout> | null = null;
 	private refreshInFlight = false;
@@ -156,14 +156,20 @@ export class FooterDataProvider {
 		this.extensionStatuses.clear();
 	}
 
-	/** Number of unique providers with available models (for footer display) */
-	getAvailableProviderCount(): number {
-		return this.availableProviderCount;
+	/** Whether more than one provider offers an available model with this id, so its name alone is ambiguous. */
+	isModelIdShared(modelId: string): boolean {
+		return this.sharedModelIds.has(modelId);
 	}
 
-	/** Internal: update available provider count */
-	setAvailableProviderCount(count: number): void {
-		this.availableProviderCount = count;
+	/** Internal: record the available models, to find the model ids offered by more than one provider */
+	setAvailableModels(models: readonly { provider: string; id: string }[]): void {
+		const providersById = new Map<string, Set<string>>();
+		for (const model of models) {
+			const providers = providersById.get(model.id) ?? new Set<string>();
+			providers.add(model.provider);
+			providersById.set(model.id, providers);
+		}
+		this.sharedModelIds = new Set([...providersById].filter(([, providers]) => providers.size > 1).map(([id]) => id));
 	}
 
 	setCwd(cwd: string): void {
@@ -381,8 +387,8 @@ export class FooterDataProvider {
 	}
 }
 
-/** Read-only view for extensions - excludes setExtensionStatus, setAvailableProviderCount and dispose */
+/** Read-only view for extensions - excludes setExtensionStatus, setAvailableModels and dispose */
 export type ReadonlyFooterDataProvider = Pick<
 	FooterDataProvider,
-	"getGitBranch" | "getExtensionStatuses" | "getAvailableProviderCount" | "onBranchChange"
+	"getGitBranch" | "getExtensionStatuses" | "isModelIdShared" | "onBranchChange"
 >;

@@ -117,7 +117,7 @@ test("the footer shows reset times only for windows close to their limit", () =>
 	];
 	assert.equal(
 		statusLine(results, NOW, brackets),
-		"[dim:Claude] [dim:5h] [text:12%] [dim:7d] [warning:81%][dim: ↻2h5m][dim: · ][dim:Codex] [warning:?]",
+		"[dim:Claude] [dim:5h] [text:12%] [dim:7d] [warning:81%][dim: reset 2h5m][dim: · ][dim:Codex] [warning:?]",
 	);
 	assert.equal(statusLine([], NOW, brackets), "");
 });

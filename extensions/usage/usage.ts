@@ -156,16 +156,17 @@ const ERROR_PERCENT = 90;
 export type Color = "dim" | "text" | "warning" | "error";
 export type Paint = (color: Color, text: string) => string;
 
-/** One footer line for all checked subscriptions, e.g. `Claude 5h 12% 7d 81% ↻2h5m · Codex 7d 3%`. */
+/** One footer line for all checked subscriptions, e.g. `Claude 5h 12% 7d 81% reset 2h5m · Codex 7d 3%`. */
 export function statusLine(results: readonly { label: string; usage: Usage }[], now: number, paint: Paint): string {
 	return results
 		.map(({ label, usage }) => {
 			if (usage.kind === "error") return `${paint("dim", label)} ${paint("warning", "?")}`;
 			const windows = usage.windows.map((window) => {
 				const color = window.percent >= ERROR_PERCENT ? "error" : window.percent >= WARNING_PERCENT ? "warning" : "text";
+				// A word, not a symbol such as U+21BB: terminal fonts draw such symbols wider than their cell, over the next digit.
 				const reset =
 					window.percent >= WARNING_PERCENT && window.resetsAt !== undefined
-						? paint("dim", ` ↻${formatRemaining(window.resetsAt - now)}`)
+						? paint("dim", ` reset ${formatRemaining(window.resetsAt - now)}`)
 						: "";
 				return `${paint("dim", window.label)} ${paint(color, `${Math.round(window.percent)}%`)}${reset}`;
 			});

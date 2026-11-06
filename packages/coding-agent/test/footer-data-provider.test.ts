@@ -277,3 +277,24 @@ describe("FooterDataProvider reftable branch detection", () => {
 		}
 	});
 });
+
+describe("FooterDataProvider shared model ids", () => {
+	it("marks a model id as shared only when more than one provider offers it", () => {
+		const dir = mkdtempSync(join(tmpdir(), "footer-data-provider-"));
+		const provider = new FooterDataProvider(dir);
+		try {
+			provider.setAvailableModels([
+				{ provider: "anthropic", id: "claude-opus" },
+				{ provider: "pi-sub-anthropic", id: "claude-opus" },
+				{ provider: "pi-sub-anthropic", id: "claude-haiku" },
+				{ provider: "pi-sub-anthropic", id: "claude-haiku" },
+			]);
+			expect(provider.isModelIdShared("claude-opus")).toBe(true);
+			expect(provider.isModelIdShared("claude-haiku")).toBe(false);
+			expect(provider.isModelIdShared("gpt")).toBe(false);
+		} finally {
+			provider.dispose();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});

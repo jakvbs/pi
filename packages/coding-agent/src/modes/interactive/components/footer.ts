@@ -233,10 +233,12 @@ export class FooterComponent implements Component {
 			statsParts.push(theme.fg("dim", `$${usageTotals.cost.toFixed(3)}`));
 		}
 		if (areExperimentalFeaturesEnabled()) {
-			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
+			statsParts.push(theme.bold(theme.fg("warning", "xp")));
 		}
 
-		let statsLeft = statsParts.join(" ");
+		// One separator between all parts, core stats and extension statuses alike, so each part reads on its own.
+		const separator = theme.fg("dim", " · ");
+		let statsLeft = statsParts.join(separator);
 
 		// Calculate available space for padding (minimum 2 spaces between stats and model)
 		const minPadding = 2;
@@ -248,12 +250,16 @@ export class FooterComponent implements Component {
 		const statusText = Array.from(this.footerData.getExtensionStatuses().entries())
 			.sort(([a], [b]) => a.localeCompare(b))
 			.map(([, text]) => sanitizeStatusText(text))
-			.join(" ");
+			.join(separator);
 		const inlineStatuses =
 			statusText !== "" &&
-			visibleWidth(statsLeft) + 1 + visibleWidth(statusText) + minPadding + visibleWidth(rightSideWithoutProvider) <=
+			visibleWidth(statsLeft) +
+				visibleWidth(separator) +
+				visibleWidth(statusText) +
+				minPadding +
+				visibleWidth(rightSideWithoutProvider) <=
 				width;
-		if (inlineStatuses) statsLeft = `${statsLeft} ${statusText}`;
+		if (inlineStatuses) statsLeft = `${statsLeft}${separator}${statusText}`;
 
 		let statsLeftWidth = visibleWidth(statsLeft);
 
@@ -263,9 +269,9 @@ export class FooterComponent implements Component {
 			statsLeftWidth = visibleWidth(statsLeft);
 		}
 
-		// Prepend the provider in parentheses if there are multiple providers and there's enough room
+		// Prepend the provider only when another provider offers a model with the same id and there's enough room
 		let rightSide = rightSideWithoutProvider;
-		if (!sessionModel && this.footerData.getAvailableProviderCount() > 1 && state.model) {
+		if (!sessionModel && state.model && this.footerData.isModelIdShared(state.model.id)) {
 			rightSide = `(${state.model!.provider}) ${rightSideWithoutProvider}`;
 			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
 				// Too wide, fall back
