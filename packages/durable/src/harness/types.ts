@@ -951,6 +951,12 @@ export interface Harness extends Session {
 	 * definition cannot take it settles as `orphaned` instead.
 	 */
 	abortTask(id: TaskId, context: Context): Promise<"marked" | "terminal">;
+	/**
+	 * The limits of the `bash` and `powershell` tools' output under the current settings: the end of the output within
+	 * `toolOutputMaxTokens`, without a line limit. A host that runs its users' shell commands into the context (`!cmd`)
+	 * keeps their output within these, so one setting bounds both.
+	 */
+	shellOutputLimits(): OutputLimits;
 	/** Resolve with the terminal receipt; cancelling `context` cancels only this wait. */
 	waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>>;
 	/** Resolve when the ordinary ownership scope of every ownerless conversation has no live non-background task. */

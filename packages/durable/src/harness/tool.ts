@@ -47,9 +47,9 @@ import {
 	type ToolSlot,
 	toolSlot,
 } from "./live.ts";
+import { outputLimits } from "./output-limits.ts";
 import type {
 	NestedToolExecutionResult,
-	Settings,
 	ToolControl,
 	ToolDiagnostic,
 	ToolExecutionApi,
@@ -344,25 +344,6 @@ async function resolveTool(
 	return (input.kind === "model" ? agent.tools : agent.callable).find((tool) => tool.name === name);
 }
 
-/** Bytes of an estimated token, as the coding agent counts them for its tool output limit. */
-const BYTES_PER_TOKEN = 4;
-
-/** Lines are not limited unless a tool limits them, as the coding agent does not limit them. */
-const NO_LINE_LIMIT = Number.MAX_SAFE_INTEGER;
-
-/**
- * The tool's output limits within the settings' `toolOutputMaxTokens`, which a tool may only lower; the defaults when
- * the tool did not resolve.
- */
-function outputLimits(tool: ToolRegistration | undefined, settings: Settings): OutputLimits {
-	const maxBytes = settings.toolOutputMaxTokens * BYTES_PER_TOKEN;
-	return {
-		maxBytes: Math.min(tool?.outputLimits?.maxBytes ?? maxBytes, maxBytes),
-		maxLines: tool?.outputLimits?.maxLines ?? NO_LINE_LIMIT,
-		retain: tool?.outputLimits?.retain ?? "head",
-	};
-}
-
 /** The call: from the input for a nested call, which hooks see with its parent, else from the assistant entry. */
 async function readCall(runtime: Runtime, input: ToolTaskInput, context: Context): Promise<ToolHookCall> {
 	if (input.kind === "nested") {
@@ -431,7 +412,7 @@ async function run(
 	args: JsonObject,
 	context: Context,
 ): Promise<void> {
-	const limits = outputLimits(tool, runtime.settings);
+	const limits = outputLimits(tool?.outputLimits, runtime.settings);
 	const reported: Reported = { output: new OutputBuffer(limits), limits, diagnostics: [], details: undefined };
 	const streams = input.kind === "model" || input.progress !== false;
 	const progress = publishProgress(runtime, reported, streams, context);
@@ -772,7 +753,7 @@ async function afterHarnessResult(
 	});
 	const harness: ToolDiagnostic[] = [];
 	if (truncation !== undefined && final.output === result.output) harness.push(truncation);
-	const limits = outputLimits(tool, runtime.settings);
+	const limits = outputLimits(tool?.outputLimits, runtime.settings);
 	const bounded = boundContent(final.output ?? [], limits);
 	if (bounded.droppedBytes > 0) harness.push(truncated(bounded, limits.retain));
 	const { structuredOutput: _dropped, ...rest } = final;

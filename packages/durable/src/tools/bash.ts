@@ -1,6 +1,7 @@
 import type { Context } from "@earendil-works/chord/context";
 import { bool, num, obj, opt, type Static, str } from "@earendil-works/pi-schema";
 import { defineTool } from "../harness/define.ts";
+import { SHELL_OUTPUT_LIMITS } from "../harness/output-limits.ts";
 import type { ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "../harness/types.ts";
 import { requireEnv } from "./env.ts";
 
@@ -158,7 +159,7 @@ export function createBashTool(options?: BashToolOptions): ToolRegistration<type
 		description: `Execute a bash command in the current working directory. Returns combined stdout and stderr. Output past the tool output limit is cut to its end, and the full output is saved to a temp file. Optionally provide a timeout in seconds.`,
 		parameters: bashSchema,
 		structuredOutputSchema: shellStructuredOutputSchema,
-		outputLimits: { retain: "tail" },
+		outputLimits: SHELL_OUTPUT_LIMITS,
 		async execute(args, api, context) {
 			validateTimeout(args.timeout);
 			const execution = await prepareExecution(args.command, options, api, context);
@@ -182,7 +183,7 @@ export function createPowerShellTool(options?: PowerShellToolOptions): ToolRegis
 		description: `Execute a PowerShell command in the current working directory. Returns combined stdout and stderr. Output past the tool output limit is cut to its end, and the full output is saved to a temp file. Optionally provide a timeout in seconds.`,
 		parameters: powershellSchema,
 		structuredOutputSchema: shellStructuredOutputSchema,
-		outputLimits: { retain: "tail" },
+		outputLimits: SHELL_OUTPUT_LIMITS,
 		async execute(args, api, context) {
 			validateTimeout(args.timeout);
 			const execution = await prepareExecution(args.command, options, api, context);

@@ -2,7 +2,7 @@
 // with the fake provider and a real local execution environment, the chat worker facet, principals over memory links.
 
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -33,12 +33,17 @@ const ALICE = { kind: "guest", id: "alice", name: "Alice", home: "s1", sessions:
 const BOB = { kind: "guest", id: "bob", name: "Bob", home: "s1", sessions: { s1: "view" }, revision: 1 } as const;
 const where = { session: "s1", conversation: 1 };
 
-async function shellHost() {
+/** `toolOutputMaxTokens`: the owner's setting, absent for Durable's default. */
+async function shellHost(toolOutputMaxTokens?: number) {
 	const directory = mkdtempSync(join(tmpdir(), "p2-shell-"));
 	const context = durableContext(new AbortController().signal);
 	const durable = await DurableHarness.open(
 		await openNodeSqliteStorage(join(directory, "session.sqlite")),
-		{ models: createP2Models(true), registry: createRegistry() },
+		{
+			models: createP2Models(true),
+			registry: createRegistry(),
+			...(toolOutputMaxTokens === undefined ? {} : { settings: { toolOutputMaxTokens } }),
+		},
 		context,
 	);
 	await durable.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" }, cwd: directory } });
@@ -211,15 +216,38 @@ describe("user shell commands", () => {
 		await until(owner.view, (next) => shells(next).length === 2);
 	});
 
-	it("keeps the tail within the bash tool's limits", () => {
+	it("keeps the tail within the bash tool's limits, which toolOutputMaxTokens sets, saving all of it", async (t) => {
+		// 200 tokens are 800 bytes, without a line limit: the last 160 lines of 5 bytes with their breaks.
+		const fixture = await shellHost(200);
+		t.after(() => fixture.close());
+		assert.deepEqual(fixture.durable.shellOutputLimits(), {
+			maxBytes: 800,
+			maxLines: Number.MAX_SAFE_INTEGER,
+			retain: "tail",
+		});
+		const owner = await holdIn(fixture.client(OWNER), Chat, where, "participant");
+		if (owner.variant !== "participant") return;
+		t.after(follow(owner.view, () => {}));
+		await owner.shell({ command: "seq 1 3000", includeInContext: true, requestId: "1" }, BACKGROUND_CONTEXT);
+		const [shell] = shells(await until(owner.view, (next) => shells(next).length === 1));
+		assert.equal(shell?.data.output, Array.from({ length: 160 }, (_, index) => index + 2841).join("\n"));
+		assert.equal(shell?.data.truncated, true);
+		const all = Array.from({ length: 3000 }, (_, index) => `${index + 1}\n`).join("");
+		assert.equal(readFileSync(shell!.data.fullOutputPath!, "utf-8"), all);
+	});
+
+	it("cuts the tail to whole lines within the limits", () => {
 		const lines = Array.from({ length: 2500 }, (_, index) => `line ${index}`).join("\n");
-		const tail = shellTail(lines);
-		assert.equal(tail.truncated, true);
-		assert.equal(tail.text.split("\n").length, 2000);
-		assert.match(tail.text, /^line 500\n/);
-		const long = shellTail("x".repeat(60 * 1024));
-		assert.equal(long.truncated, true);
-		assert.equal(long.text.length, 50 * 1024);
-		assert.deepEqual(shellTail("short"), { text: "short", truncated: false });
+		const byLines = shellTail(lines, { maxBytes: 1_000_000, maxLines: 2000 });
+		assert.equal(byLines.truncated, true);
+		assert.match(byLines.text, /^line 500\n/);
+		// Lines 1000 to 2499 take 9 bytes each and 1499 line breaks between them: 14999 bytes.
+		assert.deepEqual(shellTail(lines, { maxBytes: 14_999, maxLines: Number.MAX_SAFE_INTEGER }), {
+			text: Array.from({ length: 1500 }, (_, index) => `line ${index + 1000}`).join("\n"),
+			truncated: true,
+		});
+		const unlimited = { maxBytes: 100, maxLines: Number.MAX_SAFE_INTEGER };
+		assert.deepEqual(shellTail("x".repeat(60 * 1024), unlimited), { text: "x".repeat(100), truncated: true });
+		assert.deepEqual(shellTail("short", unlimited), { text: "short", truncated: false });
 	});
 });
