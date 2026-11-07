@@ -201,6 +201,29 @@ describe("AssistantMessageComponent", () => {
 		expect(collapsed).toContain("second reasoning");
 	});
 
+	test("a thinking window cut inside a code block keeps the block, so its closing fence does not open a new one", () => {
+		initTheme("dark");
+		const thinking = [
+			"I compare two versions.",
+			"```ts",
+			"const a = 1;",
+			"const b = 2;",
+			"```",
+			"The second is shorter.",
+			"So I pick it.",
+		].join("\n");
+		const component = new AssistantMessageComponent(createAssistantMessage([{ type: "thinking", thinking }]), false);
+		component.setPlace("live");
+
+		expect(component.render(60).map((line) => stripAnsi(line).trimEnd())).toEqual([
+			"",
+			"   const b = 2;",
+			" ```",
+			" The second is shorter.",
+			" So I pick it.",
+		]);
+	});
+
 	test("uses configured output padding for text and thinking", () => {
 		initTheme("dark");
 

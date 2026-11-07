@@ -54,6 +54,8 @@
 - Fixed resuming a session restoring an old thinking level after `/tree` navigated to before a `/thinking` change. Like the model, the live thinking level is now recorded on the new branch with the next prompt ([#11451](https://github.com/earendil-works/pi/issues/11451))
 - Fixed inline images in fullscreen mode showing only their first row in Orca, while regular mode showed them in full. Fullscreen now draws Kitty images after the rows they cover on every terminal, as it already did for WezTerm ([#11835](https://github.com/earendil-works/pi/issues/11835))
 - Fixed the edit tool rewriting the line endings of untouched lines in files with mixed CRLF/LF or lone CR line endings, and running out of memory on large files after the file was already written; the diff now covers only the changed lines and their surroundings and is computed before writing ([#8544](https://github.com/earendil-works/pi/issues/8544))
+- While a folded turn's response is written, its thinking window no longer shows a stray ```` ``` ```` line and the text after it as code when its last four lines start inside a code block.
+- Hints such as `(ctrl+o to expand)` on skill blocks, compaction and branch summaries, long `!` command output and the startup header name the presses that reach the expanded level, for example `(ctrl+o ×3 to expand)` from folded turns, since `Ctrl+O` now cycles through four levels. The read-only view's hint for `Alt+O` says it opens the last folded row.
 
 ### Changed
 

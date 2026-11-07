@@ -364,7 +364,11 @@ export class AssistantMessageComponent extends Container {
 	}
 }
 
-/** The text from the `count`-th last non-empty line on, so a long thinking run is not rendered whole for its window. */
+/**
+ * The text from the `count`-th last non-empty line on, so a long thinking run is not rendered whole for its window. A
+ * cut inside a code block starts with that block's opening fence, so its lines keep their style and its closing fence
+ * does not open a new block.
+ */
 function lastSourceLines(text: string, count: number): string {
 	const lines = text.split("\n");
 	let start = lines.length;
@@ -372,8 +376,15 @@ function lastSourceLines(text: string, count: number): string {
 		start--;
 		if (lines[start].trim()) kept++;
 	}
-	return lines.slice(start).join("\n");
+	let openFence: string | undefined;
+	for (const line of lines.slice(0, start)) {
+		if (CODE_FENCE.test(line)) openFence = openFence === undefined ? line : undefined;
+	}
+	return [...(openFence === undefined ? [] : [openFence]), ...lines.slice(start)].join("\n");
 }
+
+/** A line that opens or closes a fenced code block. */
+const CODE_FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 /** The last `count` lines a block renders that are not blank. */
 function lastLines(block: Component, count: number): Component {
