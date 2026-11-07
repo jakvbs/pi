@@ -4,6 +4,9 @@
 
 ### Breaking Changes
 
+- Removed Pi's built-in compaction summarizer: `compact()`, `generateSummary()`, `generateSummaryWithUsage()` and their prompts. A `session_before_compact` extension handler, such as observational memory, now writes every compaction summary. Without one, threshold compaction does not start, `/compact` fails with a message, and overflow recovery removes older messages with a notice instead of a summary. Branch summarization for `/tree` is unchanged
+- `/compact` takes no instructions: removed `customInstructions` from `AgentSession.compact()`, the RPC `compact` command, `ctx.compact()` options and the `session_before_compact` event. `/compact <text>` shows a warning and does not compact
+- Removed the compaction variant of the `summarization_retry_attempt_start` event; only branch summaries emit it
 - Removed `readFile` from `GrepOperations`. The grep tool now takes context lines from ripgrep and no longer reads matched files itself. To search a remote system, override grep's `execute()`; see [Remote Execution](docs/extensions.md#remote-execution) ([#9276](https://github.com/earendil-works/pi/issues/9276))
 - OpenAI-compatible models no longer send `"tools": []` when all tools are disabled in a session that has used tools; the field is omitted. This fixes 400 errors (`tools must not be an empty array`) from vLLM 0.20+, also behind LiteLLM. If your proxy requires `tools` once the history has tool calls, such as older LiteLLM versions in front of Anthropic, set `compat.requiresToolsWithToolHistory: true` for that model in `models.json` ([#11843](https://github.com/earendil-works/pi/issues/11843))
 

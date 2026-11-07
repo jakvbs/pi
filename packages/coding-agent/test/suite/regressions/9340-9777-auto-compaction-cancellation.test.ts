@@ -75,41 +75,61 @@ describe("automatic compaction cancellation regressions", () => {
 	});
 
 	// Regression test for #9777.
-	it("cancels summarization authentication", async () => {
-		const harness = await createHarness({ settings: { compaction: { keepRecentTokens: 1 } } });
+	it("cancels a compaction handler through its abort signal", async () => {
+		let markHandlerStarted = () => {};
+		const handlerStarted = new Promise<void>((resolve) => {
+			markHandlerStarted = resolve;
+		});
+		let handlerSignal: AbortSignal | undefined;
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => {
+						handlerSignal = event.signal;
+						markHandlerStarted();
+						await new Promise<void>((resolve) => event.signal.addEventListener("abort", () => resolve()));
+						return {
+							compaction: {
+								summary: "late",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: 0,
+							},
+						};
+					});
+				},
+			],
+		});
 		harnesses.push(harness);
 		seedCompactableSession(harness);
-		let markAuthStarted = () => {};
-		const authStarted = new Promise<void>((resolve) => {
-			markAuthStarted = resolve;
-		});
-		let authSignal: AbortSignal | undefined;
-		vi.spyOn(harness.session.modelRuntime, "getAuth").mockImplementation(async (_model, options) => {
-			authSignal = options?.signal;
-			markAuthStarted();
-			if (!authSignal) throw new Error("Missing auth abort signal");
-			return await new Promise<never>((_resolve, reject) => {
-				authSignal?.addEventListener("abort", () => reject(authSignal?.reason), { once: true });
-			});
-		});
 
 		const compaction = runAutoCompaction(harness);
-		await authStarted;
-		const started = harness.eventsOfType("compaction_start").length;
+		await handlerStarted;
 		const wasCompacting = harness.session.isCompacting;
 		await Promise.all([compaction, harness.session.abort()]);
 
-		expect({ started, wasCompacting, authAborted: authSignal?.aborted }).toEqual({
-			started: 1,
+		expect({ wasCompacting, handlerAborted: handlerSignal?.aborted }).toEqual({
 			wasCompacting: true,
-			authAborted: true,
+			handlerAborted: true,
 		});
 		expect(harness.eventsOfType("compaction_end").at(-1)?.aborted).toBe(true);
+		expect(harness.sessionManager.getEntries().some((entry) => entry.type === "compaction")).toBe(false);
 	});
 
 	// Regression test for #9777.
 	it("cancels synchronously from compaction_start", async () => {
-		const harness = await createHarness({ settings: { compaction: { keepRecentTokens: 1 } } });
+		let handlerCalls = 0;
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", () => {
+						handlerCalls++;
+						return { cancel: true };
+					});
+				},
+			],
+		});
 		harnesses.push(harness);
 		seedCompactableSession(harness);
 		harness.session.subscribe((event) => {
@@ -118,25 +138,40 @@ describe("automatic compaction cancellation regressions", () => {
 
 		await runAutoCompaction(harness);
 
-		expect(harness.faux.state.callCount).toBe(0);
+		expect(handlerCalls).toBe(0);
 		expect(harness.eventsOfType("compaction_end").at(-1)?.aborted).toBe(true);
 	});
 
-	// Regression test for #9777.
-	it.each([
-		["matching error text", () => new Error("Compaction cancelled")],
-		["an unrelated AbortError", () => Object.assign(new Error("auth failed"), { name: "AbortError" })],
-	] as const)("reports %s as a failure", async (_label, createError) => {
+	it("does not start threshold compaction without a compaction handler", async () => {
 		const harness = await createHarness({ settings: { compaction: { keepRecentTokens: 1 } } });
 		harnesses.push(harness);
 		seedCompactableSession(harness);
-		vi.spyOn(harness.session.modelRuntime, "getAuth").mockRejectedValue(createError());
+
+		await expect(runAutoCompaction(harness)).resolves.toBe(false);
+
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
+	});
+
+	it("reports a handler that compacted nothing as a failure", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", () => undefined);
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
 
 		await runAutoCompaction(harness);
 
 		const event = harness.eventsOfType("compaction_end").at(-1);
-		expect(event?.aborted).toBe(false);
-		expect(event?.errorMessage).toContain(createError().message);
+		expect({ aborted: event?.aborted, errorMessage: event?.errorMessage }).toEqual({
+			aborted: false,
+			errorMessage:
+				"Auto-compaction failed: No extension compacted the session. Pi needs a compaction extension to write the summary.",
+		});
 	});
 
 	it("reports extension cancellation as aborted", async () => {

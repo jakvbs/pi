@@ -396,7 +396,7 @@ Other operations change the current session without replacing the runtime:
 
 | Operation | Events |
 |---|---|
-| `/compact` or automatic compaction | `session_before_compact` (can cancel or customize), then `session_compact` or `session_compact_failed` |
+| `/compact` or automatic compaction | `session_before_compact` (can cancel, or provide the summary), then `session_compact` or `session_compact_failed` |
 | `/tree` navigation | `session_before_tree` (can cancel or customize), then `session_tree` |
 | `/name` or `pi.setSessionName()` | `session_info_changed` |
 | `/model` or model cycling (`Ctrl+P`) | `thinking_level_select` if the level changes or is clamped, then `model_select` |
@@ -537,7 +537,7 @@ Fired on compaction. See [compaction.md](compaction.md) for details.
 
 ```typescript
 pi.on("session_before_compact", async (event, ctx) => {
-  const { preparation, branchEntries, customInstructions, reason, willRetry, signal } = event;
+  const { preparation, branchEntries, reason, willRetry, signal } = event;
 
   // reason - "manual" (/compact), "threshold", or "overflow"
   // willRetry - whether the aborted turn is retried after compaction (overflow recovery)
@@ -1291,7 +1291,6 @@ Trigger compaction without awaiting completion. Use `onComplete` and `onError` f
 
 ```typescript
 ctx.compact({
-  customInstructions: "Focus on recent changes",
   onComplete: (result) => {
     ctx.ui.notify("Compaction completed", "info");
   },

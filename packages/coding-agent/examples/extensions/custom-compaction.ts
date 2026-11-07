@@ -1,7 +1,7 @@
 /**
  * Custom Compaction Extension
  *
- * Replaces the default compaction behavior with a full summary of the entire context.
+ * Writes the compaction summary: pi has no summarizer of its own. It summarizes the entire context.
  * Instead of keeping the last 20k tokens of conversation turns, this extension:
  * 1. Summarizes ALL messages (messagesToSummarize + turnPrefixMessages)
  * 2. Discards all old turns completely, keeping only the summary
@@ -27,7 +27,7 @@ export default function (pi: ExtensionAPI) {
 		// Use Gemini Flash for summarization (cheaper/faster than most conversation models)
 		const model = ctx.modelRegistry.find("google", "gemini-2.5-flash");
 		if (!model) {
-			ctx.ui.notify(`Could not find Gemini Flash model, using default compaction`, "warning");
+			ctx.ui.notify(`Could not find Gemini Flash model, compaction cannot run`, "warning");
 			return;
 		}
 
@@ -93,7 +93,7 @@ ${conversationText}
 				.join("\n");
 
 			if (!summary.trim()) {
-				if (!signal.aborted) ctx.ui.notify("Compaction summary was empty, using default compaction", "warning");
+				if (!signal.aborted) ctx.ui.notify("Compaction summary was empty, compaction cannot run", "warning");
 				return;
 			}
 
@@ -110,7 +110,7 @@ ${conversationText}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			ctx.ui.notify(`Compaction failed: ${message}`, "error");
-			// Fall back to default compaction on error
+			// Without a result, manual compaction fails and overflow recovery cuts without a summary
 			return;
 		}
 	});

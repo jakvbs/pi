@@ -75,14 +75,14 @@ CLI tool options override this setting for one invocation. `--tools` with only `
 |---|---|---|---|
 | `compaction.enabled` | boolean | `true` | Enable automatic compaction. |
 | `compaction.reserveTokens` | number | `16384` | Free context tokens below which automatic compaction starts. |
-| `compaction.keepRecentTokens` | number | `20000` | Recent tokens retained without summarization. |
+| `compaction.keepRecentTokens` | number | `20000` | Recent tokens proposed to the compaction extension as the retained tail. |
 | `compaction.modelOverrides` | object | None | Per-model token settings keyed by exact `provider/modelId`. |
 
 <a id="per-model-compaction-overrides"></a>
 
 Compaction token values must be non-negative safe integers. Each value resolves independently from the matching model override, then the ordinary compaction setting, then the built-in default. Project and user objects merge before model lookup.
 
-See [Compaction Reference](compaction.md) for trigger, summarization, and validation behavior.
+See [Compaction Reference](compaction.md) for trigger, cut, and validation behavior.
 
 ### Branch summaries
 

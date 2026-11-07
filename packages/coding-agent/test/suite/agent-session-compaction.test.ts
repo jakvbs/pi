@@ -1,13 +1,9 @@
-import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
-	createAssistantMessageEventStream,
 	fauxAssistantMessage,
 	fauxToolCall,
-	getCurrentSystemPrompt,
-	getCurrentTools,
 	type Model,
-	type SimpleStreamOptions,
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -52,31 +48,6 @@ function createAssistant(
 		model: model.id,
 		usage: createUsage(options.totalTokens ?? 0),
 	};
-}
-
-function useSummaryStreamFn(
-	harness: Harness,
-	summary: string,
-	onRequest?: (context: TranscriptContext, options: SimpleStreamOptions | undefined) => void,
-): () => number {
-	let callCount = 0;
-	harness.session.agent.streamFunction = (model, context, options) => {
-		callCount++;
-		onRequest?.(context, options);
-		const stream = createAssistantMessageEventStream();
-		queueMicrotask(() => {
-			const message: AssistantMessage = {
-				...fauxAssistantMessage(summary),
-				api: model.api,
-				provider: model.provider,
-				model: model.id,
-				usage: createUsage(10),
-			};
-			stream.push({ type: "done", reason: "stop", message });
-		});
-		return stream;
-	};
-	return () => callCount;
 }
 
 function seedCompactableSession(harness: Harness): void {
@@ -316,130 +287,9 @@ describe("AgentSession compaction characterization", () => {
 		await expect(harness.session.compact()).rejects.toThrow("No model selected");
 	});
 
-	it("throws when compacting without configured auth", async () => {
-		const harness = await createHarness({ withConfiguredAuth: false });
-		harnesses.push(harness);
-		// Auth is resolved only when Pi summarizes itself, after checking there is something to compact.
-		seedCompactableSession(harness);
-
-		await expect(harness.session.compact()).rejects.toThrow(`No API key found for ${harness.getModel().provider}.`);
-	});
-
-	it("manually compacts with a custom streamFn when registry auth is absent", async () => {
-		const harness = await createHarness({ withConfiguredAuth: false });
-		harnesses.push(harness);
-		seedCompactableSession(harness);
-		const getStreamCallCount = useSummaryStreamFn(harness, "summary from custom stream");
-
-		const result = await harness.session.compact();
-
-		expect(result.summary).toContain("summary from custom stream");
-		expect(getStreamCallCount()).toBe(1);
-	});
-
-	it("manually compacts with provider-resolved bearer auth", async () => {
-		const harness = await createHarness({ withConfiguredAuth: false });
-		harnesses.push(harness);
-		const model = harness.getModel();
-		harness.session.modelRuntime.registerNativeProvider({
-			id: model.provider,
-			name: "Faux bearer provider",
-			auth: {
-				apiKey: {
-					name: "Faux bearer token",
-					resolve: async () => ({
-						auth: { headers: { Authorization: "Bearer ambient-token" } },
-						source: "ambient bearer token",
-					}),
-				},
-			},
-			getModels: () => harness.models,
-			stream: () => createAssistantMessageEventStream(),
-			streamSimple: () => createAssistantMessageEventStream(),
-		});
-		seedCompactableSession(harness);
-		const summaryResponse = (_context: TranscriptContext, options: SimpleStreamOptions | undefined) => {
-			expect(options?.apiKey).toBeUndefined();
-			expect(options?.headers).toEqual({ Authorization: "Bearer ambient-token" });
-			return fauxAssistantMessage("summary with bearer auth");
-		};
-		harness.setResponses([summaryResponse]);
-
-		const result = await harness.session.compact();
-
-		expect(result.summary).toContain("summary with bearer auth");
-		expect(harness.faux.state.callCount).toBe(1);
-	});
-
-	it("uses the standalone compaction request context", async () => {
-		const harness = await createHarness({ settings: { compaction: { keepRecentTokens: 1 } } });
-		harnesses.push(harness);
-		seedCompactableSession(harness);
-
-		const transformContext = vi.fn(async (messages: AgentMessage[]) => messages);
-		harness.session.agent.transformContext = transformContext;
-		harness.session.agent.sessionId = "active-routing-session";
-		harness.session.agent.transport = "websocket";
-
-		let requestContext: TranscriptContext | undefined;
-		let requestOptions: SimpleStreamOptions | undefined;
-		useSummaryStreamFn(harness, "standalone summary", (context, options) => {
-			requestContext = context;
-			requestOptions = options;
-		});
-
-		await harness.session.compact();
-
-		expect(transformContext).not.toHaveBeenCalled();
-		expect(getCurrentSystemPrompt(requestContext?.messages ?? [])).not.toBe(harness.session.agent.state.systemPrompt);
-		expect(getCurrentTools(requestContext?.messages ?? [])).toEqual([]);
-		// Regression test for #9652: split-turn summaries use a clear Markdown conversation boundary.
-		expect(JSON.stringify(requestContext?.messages)).toContain("# Conversation\\n[User]: message to compact");
-		expect(requestOptions).toMatchObject({ cacheRetention: "none" });
-		expect(requestOptions?.sessionId).not.toBe("active-routing-session");
-		expect(requestOptions?.transport).toBeUndefined();
-	});
-
-	it("persists usage from pi-generated manual compaction", async () => {
-		const harness = await createHarness({ withConfiguredAuth: false });
-		harnesses.push(harness);
-		seedCompactableSession(harness);
-		useSummaryStreamFn(harness, "summary from custom stream");
-
-		const result = await harness.session.compact();
-
-		const compactionEntries = harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction");
-		expect(result.usage).toEqual(createUsage(10));
-		expect(compactionEntries).toHaveLength(1);
-		expect(compactionEntries[0]?.type === "compaction" ? compactionEntries[0].usage : undefined).toEqual(
-			createUsage(10),
-		);
-	});
-
-	it("auto-compacts with a custom streamFn when registry auth is absent", async () => {
-		const harness = await createHarness({ withConfiguredAuth: false });
-		harnesses.push(harness);
-		seedCompactableSession(harness);
-		const getStreamCallCount = useSummaryStreamFn(harness, "auto summary from custom stream");
-		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
-
-		await sessionInternals._runAutoCompaction("threshold", false);
-
-		const compactionEntries = harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction");
-		const compactionEnd = harness.eventsOfType("compaction_end").at(-1);
-		expect(compactionEntries).toHaveLength(1);
-		expect(compactionEnd?.result?.estimatedTokensAfter).toBeGreaterThan(0);
-		expect(getStreamCallCount()).toBe(1);
-	});
-
-	it("notifies extensions when auto-compaction fails", async () => {
-		const failedEvents: Array<{
-			reason: "manual" | "threshold" | "overflow";
-			errorMessage?: string;
-			aborted: boolean;
-			willRetry: boolean;
-			fromExtension: boolean;
-		}> = [];
+	it("fails manual compaction without a compaction extension and tells extensions why", async () => {
+		const failedEvents: Array<{ reason: string; errorMessage?: string; aborted: boolean; fromExtension: boolean }> =
+			[];
 		const harness = await createHarness({
 			extensionFactories: [
 				(pi) => {
@@ -451,29 +301,36 @@ describe("AgentSession compaction characterization", () => {
 		});
 		harnesses.push(harness);
 		seedCompactableSession(harness);
-		harness.session.agent.streamFunction = () => {
-			throw new Error("summary generator blew up");
-		};
-		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+		const message = "No extension compacted the session. Pi needs a compaction extension to write the summary.";
 
-		await expect(sessionInternals._runAutoCompaction("threshold", false)).resolves.toBe(false);
+		await expect(harness.session.compact()).rejects.toThrow(message);
 
-		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
-			reason: "threshold",
-			aborted: false,
-			willRetry: false,
-			errorMessage: "Auto-compaction failed: summary generator blew up",
-		});
+		expect(harness.sessionManager.getEntries().some((entry) => entry.type === "compaction")).toBe(false);
+		expect(harness.faux.state.callCount).toBe(0);
 		expect(failedEvents).toEqual([
 			expect.objectContaining({
-				type: "session_compact_failed",
-				reason: "threshold",
+				reason: "manual",
 				aborted: false,
-				willRetry: false,
 				fromExtension: false,
-				errorMessage: "Auto-compaction failed: summary generator blew up",
+				errorMessage: `Compaction failed: ${message}`,
 			}),
 		]);
+	});
+
+	it("recovers from overflow without a compaction extension by cutting with a notice", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+
+		await expect(sessionInternals._runAutoCompaction("overflow", true)).resolves.toBe(true);
+
+		const compaction = harness.sessionManager.getEntries().find((entry) => entry.type === "compaction");
+		expect(compaction?.type === "compaction" ? [compaction.summary, compaction.fromHook] : undefined).toEqual([
+			"Earlier messages were removed to recover from a context overflow. No extension compacted them, so no summary describes them.",
+			false,
+		]);
+		expect(harness.faux.state.callCount).toBe(0);
 	});
 
 	it("compacts and resumes after a length stop below the desired output limit", async () => {

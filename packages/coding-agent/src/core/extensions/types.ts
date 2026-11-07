@@ -333,7 +333,6 @@ export interface ContextUsage {
 }
 
 export interface CompactOptions {
-	customInstructions?: string;
 	onComplete?: (result: CompactionResult) => void;
 	onError?: (error: Error) => void;
 }
@@ -807,7 +806,6 @@ export interface SessionBeforeCompactEvent {
 	type: "session_before_compact";
 	preparation: CompactionPreparation;
 	branchEntries: SessionEntry[];
-	customInstructions?: string;
 	/** What triggered the compaction: manual /compact, the context threshold, or context overflow recovery */
 	reason: "manual" | "threshold" | "overflow";
 	/** True when the aborted turn is retried after this compaction (overflow recovery) */

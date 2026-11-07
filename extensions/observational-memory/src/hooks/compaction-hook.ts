@@ -74,7 +74,7 @@ export type CompactionCutResolution =
 	| { kind: "cut"; cut: CompactionCut; gap?: UnobservedSourceSpan; retainedTokens?: number }
 	| { kind: "uncovered"; reason: string; gap: UnobservedSourceSpan };
 
-/** What the hook returns to Pi: never `undefined`, which would hand the compaction to Pi's own summarizer. */
+/** What the hook returns to Pi: never `undefined`, which Pi treats as a compaction no extension handled. */
 type CompactionDecision =
 	| { cancel: true }
 	| { compaction: { summary: string; firstKeptEntryId: string; tokensBefore: number; details?: unknown } };
@@ -338,8 +338,8 @@ function compactAtProposedCut(
 
 /**
  * A failure must not leave the decision to Pi: Pi's extension runner reports
- * an exception escaping this handler and treats it as no result, which runs
- * Pi's own summarizer. Manual and threshold compaction wait for the next
+ * an exception escaping this handler and treats it as no result, which fails
+ * the compaction without saying why. Manual and threshold compaction wait for the next
  * attempt. Overflow recovery must free context, so it cuts at Pi's boundary
  * with a notice; the ledger keeps every record, and the next compaction
  * renders it again.

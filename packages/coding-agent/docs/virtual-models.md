@@ -79,7 +79,7 @@ Registration follows the same queuing and reload rules as `pi.registerProvider()
 | `user` | First request after a message the user wrote, including steering and follow-up messages |
 | `continuation` | Any other request in the agent loop, such as after tool results or extension messages |
 | `retry` | Automatic retry after a failed request, including after compaction for a context overflow |
-| `direct` | Request made outside the agent loop, such as a compaction summary or an extension calling `ctx.modelRegistry.streamSimple()` |
+| `direct` | Request made outside the agent loop, such as a branch summary or an extension calling `ctx.modelRegistry.streamSimple()` |
 
 Returning `previous` for `continuation` and `failed` for `retry` keeps prompt caches and thinking signatures valid. Switching models between turns is allowed but loses the prompt cache. A retry can also switch to another model, for example when `failed.message.errorMessage` reports that a provider is overloaded or the context overflowed.
 

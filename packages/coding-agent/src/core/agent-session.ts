@@ -70,7 +70,6 @@ import {
 	type CompactionResult,
 	calculateContextTokens,
 	collectEntriesForBranchSummary,
-	compact,
 	estimateContextTokens,
 	estimateProjectedContextTokens,
 	estimateTokens,
@@ -218,11 +217,6 @@ export type AgentSessionEvent =
 			errorMessage: string;
 	  }
 	| { type: "summarization_retry_attempt_start"; source: "branchSummary" }
-	| {
-			type: "summarization_retry_attempt_start";
-			source: "compaction";
-			reason: "manual" | "threshold" | "overflow";
-	  }
 	| { type: "summarization_retry_finished" }
 	| { type: "bash_execution_update"; id?: string; delta: string };
 
@@ -362,6 +356,26 @@ function estimateMessagesTokens(messages: AgentMessage[]): number {
 		tokens += estimateTokens(message);
 	}
 	return tokens;
+}
+
+/**
+ * The compaction to record when no `session_before_compact` handler returned one. Pi has no summarizer of its own:
+ * overflow recovery must free context, so it cuts at the prepared boundary and says that no summary describes the
+ * removed part; manual and threshold compaction fail and say why.
+ */
+function compactionWithoutExtension(
+	preparation: CompactionPreparation,
+	reason: "manual" | "threshold" | "overflow",
+): CompactionResult {
+	if (reason !== "overflow") {
+		throw new Error("No extension compacted the session. Pi needs a compaction extension to write the summary.");
+	}
+	return {
+		summary:
+			"Earlier messages were removed to recover from a context overflow. No extension compacted them, so no summary describes them.",
+		firstKeptEntryId: preparation.firstKeptEntryId,
+		tokensBefore: preparation.tokensBefore,
+	};
 }
 
 // ============================================================================
@@ -2895,32 +2909,6 @@ export class AgentSession {
 	// Compaction
 	// =========================================================================
 
-	/** Generate Pi's built-in compaction summary for manual and automatic compaction. */
-	private async _runDefaultCompaction(
-		preparation: CompactionPreparation,
-		model: Model<any>,
-		customInstructions: string | undefined,
-		signal: AbortSignal,
-		reason: "manual" | "threshold" | "overflow",
-	): Promise<CompactionResult> {
-		// Resolve the request only when Pi summarizes itself: routing may call models or fail.
-		const request = await this._getSummarizationRequestAuth(model, signal);
-		return compact(
-			preparation,
-			request.model,
-			request.apiKey,
-			request.headers,
-			customInstructions,
-			signal,
-			request.thinkingLevel,
-			this.agent.streamFunction,
-			request.env,
-			this.settingsManager.getRetrySettings(),
-			this._summarizationRetryCallbacks({ source: "compaction", reason }),
-			undefined, // sessionId
-		);
-	}
-
 	private _clearManualCompactionState(): void {
 		this._compactionAbortController = undefined;
 		this._resolveIdleWaitIfIdle();
@@ -2931,17 +2919,14 @@ export class AgentSession {
 	 *
 	 * This is the manual entry point used by `/compact`, RPC, and extensions. It is
 	 * separate from automatic threshold/overflow compaction, which enters through
-	 * `_checkCompaction()` and `_runAutoCompaction()`. After preparation and the
-	 * `session_before_compact` hook, both paths call the lower-level `compact()`
-	 * function imported from `./compaction/index.ts`, unless the hook cancels or
-	 * supplies a custom result.
+	 * `_checkCompaction()` and `_runAutoCompaction()`. Both paths prepare the cut and
+	 * let a `session_before_compact` handler write the summary; pi has no summarizer
+	 * of its own (see `compactionWithoutExtension()`).
 	 *
 	 * Aborts the current agent operation first. Manual compaction never retries or
 	 * continues the interrupted agent turn.
-	 *
-	 * @param customInstructions Optional instructions for the compaction summary
 	 */
-	async compact(customInstructions?: string): Promise<CompactionResult> {
+	async compact(): Promise<CompactionResult> {
 		await this.abort();
 		this._compactionAbortController = new AbortController();
 		this._emit({ type: "compaction_start", reason: "manual" });
@@ -2974,7 +2959,6 @@ export class AgentSession {
 					type: "session_before_compact",
 					preparation,
 					branchEntries: pathEntries,
-					customInstructions,
 					reason: "manual",
 					willRetry: false,
 					signal: this._compactionAbortController.signal,
@@ -2991,34 +2975,8 @@ export class AgentSession {
 				}
 			}
 
-			let summary: string;
-			let firstKeptEntryId: string;
-			let tokensBefore: number;
-			let usage: Usage | undefined;
-			let details: unknown;
-
-			if (extensionCompaction) {
-				// Extension provided compaction content
-				summary = extensionCompaction.summary;
-				firstKeptEntryId = extensionCompaction.firstKeptEntryId;
-				tokensBefore = extensionCompaction.tokensBefore;
-				usage = extensionCompaction.usage;
-				details = extensionCompaction.details;
-			} else {
-				// Shared default summary generator, also used by automatic compaction.
-				const result = await this._runDefaultCompaction(
-					preparation,
-					model,
-					customInstructions,
-					this._compactionAbortController.signal,
-					"manual",
-				);
-				summary = result.summary;
-				firstKeptEntryId = result.firstKeptEntryId;
-				tokensBefore = result.tokensBefore;
-				usage = result.usage;
-				details = result.details;
-			}
+			const { summary, firstKeptEntryId, tokensBefore, usage, details } =
+				extensionCompaction ?? compactionWithoutExtension(preparation, "manual");
 
 			if (this._compactionAbortController.signal.aborted) {
 				throw new Error("Compaction cancelled");
@@ -3116,10 +3074,8 @@ export class AgentSession {
 	 * 3. Threshold without retry: valid or estimated context usage crossed the
 	 *    configured threshold; compact without retrying the completed response.
 	 *
-	 * Each case calls `_runAutoCompaction()`. After preparation and the
-	 * `session_before_compact` hook, that method calls the lower-level `compact()`
-	 * function imported from `./compaction/index.ts`, unless the hook cancels or
-	 * supplies a custom result.
+	 * Each case calls `_runAutoCompaction()`, which lets a `session_before_compact`
+	 * handler write the summary.
 	 *
 	 * @param assistantMessage The assistant message to check
 	 * @param skipAbortedCheck If false, include aborted messages (for pre-prompt check). Default: true
@@ -3263,9 +3219,8 @@ export class AgentSession {
 
 	/**
 	 * Execute threshold or overflow compaction. Manual compaction uses
-	 * `AgentSession.compact()` instead. Both paths call the lower-level `compact()`
-	 * function imported from `./compaction/index.ts` after preparation and extension
-	 * interception.
+	 * `AgentSession.compact()` instead. Threshold compaction does not start without a
+	 * `session_before_compact` handler, because pi has no summarizer of its own.
 	 *
 	 * @param reason Automatic trigger selected by `_checkCompaction()`
 	 * @param willRetry Whether to continue the interrupted turn after overflow compaction
@@ -3284,6 +3239,9 @@ export class AgentSession {
 				return false;
 			}
 
+			if (reason === "threshold" && !this._extensionRunner.hasHandlers("session_before_compact")) {
+				return false;
+			}
 			const pathEntries = this.sessionManager.getBranch();
 			const preparation = prepareCompaction(pathEntries, settings);
 			if (!preparation) {
@@ -3303,7 +3261,6 @@ export class AgentSession {
 					type: "session_before_compact",
 					preparation,
 					branchEntries: pathEntries,
-					customInstructions: undefined,
 					reason,
 					willRetry,
 					signal: abortController.signal,
@@ -3321,35 +3278,8 @@ export class AgentSession {
 			}
 			abortController.signal.throwIfAborted();
 
-			let summary: string;
-			let firstKeptEntryId: string;
-			let tokensBefore: number;
-			let usage: Usage | undefined;
-			let details: unknown;
-
-			if (extensionCompaction) {
-				// Extension provided compaction content
-				summary = extensionCompaction.summary;
-				firstKeptEntryId = extensionCompaction.firstKeptEntryId;
-				tokensBefore = extensionCompaction.tokensBefore;
-				usage = extensionCompaction.usage;
-				details = extensionCompaction.details;
-			} else {
-				// Shared default summary generator, also used by manual compaction.
-				const compactResult = await this._runDefaultCompaction(
-					preparation,
-					model,
-					undefined,
-					abortController.signal,
-					reason,
-				);
-				summary = compactResult.summary;
-				firstKeptEntryId = compactResult.firstKeptEntryId;
-				tokensBefore = compactResult.tokensBefore;
-				usage = compactResult.usage;
-				details = compactResult.details;
-			}
-			abortController.signal.throwIfAborted();
+			const { summary, firstKeptEntryId, tokensBefore, usage, details } =
+				extensionCompaction ?? compactionWithoutExtension(preparation, reason);
 
 			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
 			this._appendRestoredSkills(this.sessionManager);
@@ -3632,7 +3562,7 @@ export class AgentSession {
 				compact: (options) => {
 					void (async () => {
 						try {
-							const result = await this.compact(options?.customInstructions);
+							const result = await this.compact();
 							options?.onComplete?.(result);
 						} catch (error) {
 							const err = error instanceof Error ? error : new Error(String(error));
@@ -3903,14 +3833,12 @@ export class AgentSession {
 	}
 
 	/**
-	 * Retry policy + callbacks shared by compaction and branch-summary summarization calls.
+	 * Retry policy + callbacks for branch-summary summarization calls.
 	 * Uses the same `settings.retry` budget/backoff as agent-turn retries so a single transient
 	 * stream drop no longer fails the whole operation. `source` carries the context
 	 * the TUI needs to render the retry and recreate the underlying indicator.
 	 */
-	private _summarizationRetryCallbacks(
-		source: { source: "branchSummary" } | { source: "compaction"; reason: "manual" | "threshold" | "overflow" },
-	): RetryCallbacks {
+	private _summarizationRetryCallbacks(source: { source: "branchSummary" }): RetryCallbacks {
 		return {
 			onRetryScheduled: (attempt, maxAttempts, delayMs, errorMessage) => {
 				this._emit({

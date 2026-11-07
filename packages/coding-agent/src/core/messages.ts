@@ -143,7 +143,7 @@ export function createCustomMessage(
  *
  * This is used by:
  * - Agent's transormToLlm option (for prompt calls and queued messages)
- * - Compaction's generateSummary (for summarization)
+ * - Branch summarization and bug reports (for summarization)
  * - Custom extensions and tools
  *
  * Each version of a whole file, such as a skill, is sent in full once (see collapseRepeatedContextBlocks).

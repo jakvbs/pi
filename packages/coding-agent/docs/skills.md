@@ -50,7 +50,7 @@ Arguments after `/skill:name` are appended to the loaded instructions as a user 
 /skill:pdf-tools extract report.pdf
 ```
 
-Running `/skill:name` again sends a short note that the skill is already loaded, followed by the new request, when the latest full copy of the skill in the model's context has the same content. The skill is sent in full again when its file changed since that copy or when compaction summarized it.
+Running `/skill:name` again sends a short note that the skill is already loaded, followed by the new request, when the latest full copy of the skill in the model's context has the same content. The skill is sent in full again when its file changed since that copy or when compaction removed it.
 
 After a compaction, Pi restores the skills that it removed from the model's context, as the model last saw them: skills from `/skill:name` and whole-file reads of a skill's file. The newest skills come first. Each one is restored in full when it has at most 8,000 tokens and fits the total budget of 25,000 tokens or a tenth of the model's context window, whichever is smaller. Any other skill is only named with its path, so the model can read it again. The transcript shows one `[skills restored after compaction]` line.
 

@@ -2496,7 +2496,7 @@ export class InteractiveMode {
 			compact: (options) => {
 				void (async () => {
 					try {
-						const result = await this.session.compact(options?.customInstructions);
+						const result = await this.session.compact();
 						options?.onComplete?.(result);
 					} catch (error) {
 						const err = error instanceof Error ? error : new Error(String(error));
@@ -3570,10 +3570,13 @@ export class InteractiveMode {
 				await this.handleClearCommand();
 				return;
 			}
-			if (text === "/compact" || text.startsWith("/compact ")) {
-				const customInstructions = text.startsWith("/compact ") ? text.slice(9).trim() : undefined;
+			if (text === "/compact") {
 				this.editor.setText("");
-				await this.handleCompactCommand(customInstructions);
+				await this.handleCompactCommand();
+				return;
+			}
+			if (text.startsWith("/compact ")) {
+				this.showWarning("/compact takes no instructions. Run /compact alone.");
 				return;
 			}
 			if (text === "/reload") {
@@ -4021,17 +4024,7 @@ export class InteractiveMode {
 
 			case "summarization_retry_attempt_start": {
 				this.clearStatusIndicator("retry");
-				if (event.source === "branchSummary") {
-					this.showStatusIndicator(new BranchSummaryStatusIndicator(this.ui));
-				} else {
-					const colorFn = isEmbeddedStatus(this.editor)
-						? (text: string) =>
-								(this.editor.borderColor ?? theme.getThinkingBorderColor(this.session.thinkingLevel || "off"))(
-									text,
-								)
-						: undefined;
-					this.showStatusIndicator(new CompactionStatusIndicator(this.ui, event.reason, colorFn));
-				}
+				this.showStatusIndicator(new BranchSummaryStatusIndicator(this.ui));
 				this.ui.requestRender();
 				break;
 			}
@@ -7498,11 +7491,11 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	private async handleCompactCommand(customInstructions?: string): Promise<void> {
+	private async handleCompactCommand(): Promise<void> {
 		this.clearStatusIndicator();
 
 		try {
-			await this.session.compact(customInstructions);
+			await this.session.compact();
 		} catch {
 			// Ignore, will be emitted as an event
 		}

@@ -372,11 +372,6 @@ Manually compact conversation context to reduce token usage.
 {"type": "compact"}
 ```
 
-With custom instructions:
-```json
-{"type": "compact", "customInstructions": "Focus on code changes"}
-```
-
 Response:
 ```json
 {

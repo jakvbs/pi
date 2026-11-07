@@ -1037,11 +1037,15 @@ describe("durable length recovery", () => {
 				compaction: { keepRecentTokens: 1, reserveTokens: 0 },
 				retry: { enabled: false, maxRetries: 0, baseDelayMs: 1 },
 			},
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", () => ({ cancel: true }));
+				},
+			],
 		});
 		harnesses.push(harness);
 		harness.setResponses([
 			fauxAssistantMessage("partial response", { stopReason: "length" }),
-			fauxAssistantMessage("summary failed", { stopReason: "error", errorMessage: "summary failed" }),
 			fauxAssistantMessage("must not retry"),
 		]);
 
@@ -1058,6 +1062,6 @@ describe("durable length recovery", () => {
 				.buildSessionProjection()
 				.messages.some((message) => getMessageText(message) === "partial response"),
 		).toBe(false);
-		expect(harness.faux.state.callCount).toBe(2);
+		expect(harness.faux.state.callCount).toBe(1);
 	});
 });

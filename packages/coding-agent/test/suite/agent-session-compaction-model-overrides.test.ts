@@ -142,34 +142,4 @@ describe("AgentSession compaction model overrides", () => {
 		await harness.session.setModel(harness.getModel("small")!);
 		expect(harness.settingsManager.getCompactionReserveTokens(harness.session.model)).toBe(10);
 	});
-
-	it("captures model identity before awaiting summarization auth", async () => {
-		const harness = await createHarness({
-			models: [{ id: "first" }, { id: "second" }],
-			settings: {
-				compaction: {
-					modelOverrides: {
-						"faux/first": { reserveTokens: 2000, keepRecentTokens: 150 },
-						"faux/second": { reserveTokens: 4000, keepRecentTokens: 20000 },
-					},
-				},
-			},
-		});
-		harnesses.push(harness);
-		seedHistory(harness);
-		const getAuth = harness.session.modelRuntime.getAuth.bind(harness.session.modelRuntime);
-		vi.spyOn(harness.session.modelRuntime, "getAuth").mockImplementation(async (model, ...args) => {
-			harness.session.agent.state.model = harness.getModel("second")!;
-			return getAuth(model, ...args);
-		});
-		const requests: string[] = [];
-		harness.setResponses([
-			(_context, _options, _state, model) => {
-				requests.push(model.id);
-				return fauxAssistantMessage("summary");
-			},
-		]);
-		await harness.session.compact();
-		expect(requests).toEqual(["first"]);
-	});
 });

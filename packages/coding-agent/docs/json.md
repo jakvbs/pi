@@ -169,15 +169,13 @@ Assistant-turn retry emits:
 
 On final failure, `auto_retry_end` has `success: false` and a `finalError` string.
 
-Compaction and branch-summary retry emit:
+Branch-summary retry emits:
 
 ```json
 {"type":"summarization_retry_scheduled","attempt":1,"maxAttempts":3,"delayMs":2000,"errorMessage":"terminated"}
-{"type":"summarization_retry_attempt_start","source":"compaction","reason":"threshold"}
+{"type":"summarization_retry_attempt_start","source":"branchSummary"}
 {"type":"summarization_retry_finished"}
 ```
-
-For a branch summary, `source` is `"branchSummary"` and `reason` is absent. The `reason` on a compaction retry is `"manual"`, `"threshold"`, or `"overflow"`.
 
 ## RPC-only events
 

@@ -1,5 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { type FauxResponseStep, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionContext } from "../../src/core/extensions/index.ts";
@@ -320,7 +320,6 @@ describe("AgentSession virtual models", () => {
 			fauxAssistantMessage("first"),
 			fauxAssistantMessage("second"),
 			fauxAssistantMessage("summary"),
-			fauxAssistantMessage("summary"),
 		]);
 
 		await harness.session.prompt("one");
@@ -336,11 +335,15 @@ describe("AgentSession virtual models", () => {
 			{ provider: "router", modelId: "auto", state: { turns: 2 } },
 		]);
 
-		await harness.session.compact();
+		await harness.session.navigateTree(harness.sessionManager.getTree()[0]!.entry.id, { summarize: true });
 
 		expect(reasons()).toEqual(["user", "continuation", "user", "direct"]);
 		expect(states).toEqual([undefined, { turns: 1 }, { turns: 1 }, undefined]);
-		expect(stored()).toHaveLength(2);
+		expect(
+			harness.sessionManager
+				.getEntries()
+				.filter((entry) => entry.type === "custom" && entry.customType === VIRTUAL_MODEL_STATE_ENTRY),
+		).toHaveLength(2);
 	});
 
 	it("does not route compactions that an extension supplies", async () => {
@@ -368,30 +371,27 @@ describe("AgentSession virtual models", () => {
 		expect(reasons()).toEqual(["user", "user"]);
 	});
 
-	it("routes compaction summaries to the resolved model", async () => {
+	it("routes branch summaries to the resolved model", async () => {
 		const summaries: string[] = [];
-		const { harness, reasons } = await createRoutedHarness(defaultRoute, {
-			settings: { compaction: { keepRecentTokens: 1 } },
-		});
-		const summary: FauxResponseStep = (_context, options, _state, model) => {
-			summaries.push(`${model.id}:${options?.reasoning ?? "off"}`);
-			return fauxAssistantMessage("summary");
-		};
-		// Compaction summarizes the history and the split turn prefix with one routed model.
+		const { harness, reasons } = await createRoutedHarness(defaultRoute);
 		harness.setResponses([
 			fauxAssistantMessage("first answer"),
 			fauxAssistantMessage("second answer"),
-			summary,
-			summary,
+			(_context, options, _state, model) => {
+				summaries.push(`${model.id}:${options?.reasoning ?? "off"}`);
+				return fauxAssistantMessage("summary");
+			},
 		]);
 		await harness.session.prompt("first");
 		await harness.session.prompt("second");
 
-		const result = await harness.session.compact();
+		const result = await harness.session.navigateTree(harness.sessionManager.getTree()[0]!.entry.id, {
+			summarize: true,
+		});
 
-		expect(result.summary).toContain("summary");
+		expect(result.summaryEntry?.summary).toContain("summary");
 		expect(reasons()).toEqual(["user", "user", "direct"]);
 		// The router's model and thinking level apply. The provider layer sizes output from that model.
-		expect(summaries).toEqual(["large:low", "large:low"]);
+		expect(summaries).toEqual(["large:low"]);
 	});
 });

@@ -47,11 +47,9 @@ For the persisted tree and entry types, see [Session Format](session-format.md).
 
 The model receives the active branch, not every branch in the session file. Pi combines that history with the system prompt, discovered context files, available tools, and loaded skill descriptions. [How Pi Works](how-pi-works.md#context) describes how those inputs are assembled.
 
-The footer shows current context usage. When the active context approaches the model's limit, Pi normally compacts older history automatically. Compaction adds a summary and keeps recent messages. It does not delete the original session entries.
+The footer shows current context usage. When the active context approaches the model's limit, a compaction extension, such as observational memory, replaces older history with a summary and keeps recent messages. Compaction does not delete the original session entries. Pi has no summarizer of its own: without a compaction extension, automatic compaction does not run, and when the context overflows Pi removes older messages without a summary.
 
-Run `/compact` to compact manually. You can add instructions when the summary should preserve a particular topic or decision. Configure automatic compaction and retained history through [Settings](settings.md#compaction).
-
-Compaction can fail if the provider is unavailable or cannot accept the summarization request. Correct the provider problem and run `/compact` again. Disabling automatic compaction does not disable the manual command.
+Run `/compact` to compact manually. It takes no instructions. Configure automatic compaction and retained history through [Settings](settings.md#compaction). Disabling automatic compaction does not disable the manual command.
 
 See [Compaction Reference](compaction.md) for thresholds, retained boundaries, branch-summary behavior, and extension hooks.
 
