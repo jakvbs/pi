@@ -46,6 +46,8 @@
 - Fixed `tool_search` and `searchTools()` not finding a tool by property names and descriptions behind a local `$ref`, as in MCP input schemas that put their models in `$defs`. Referenced definitions are read once, so recursive schemas do not loop, and definitions nothing references stay out of the search text ([#11803](https://github.com/earendil-works/pi/issues/11803))
 - Fixed the codemode `resolves to` summary of a tool leaving out field names behind a local `$ref`, for example `structuredContent?` instead of `structuredContent?: { results }` for MCP output schemas that put their models in `$defs` ([#11803](https://github.com/earendil-works/pi/issues/11803))
 - Fixed every codemode script failing with `URI malformed` when any callable tool, such as an MCP tool, had a `$ref` with a malformed percent escape (`#/$defs/%E0`) in its schema, even scripts that do not call that tool. The parameter now renders as `unknown` in the tool's declaration ([#11803](https://github.com/earendil-works/pi/issues/11803))
+- While a folded turn's response is written, its thinking window no longer shows a stray ```` ``` ```` line and the text after it as code when its last four lines start inside a code block.
+- Hints such as `(ctrl+o to expand)` on skill blocks, compaction and branch summaries, long `!` command output and the startup header name the presses that reach the expanded level, for example `(ctrl+o ×3 to expand)` from folded turns, since `Ctrl+O` now cycles through four levels. The read-only view's hint for `Alt+O` says it opens the last folded row.
 
 ### Changed
 
