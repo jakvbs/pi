@@ -63,6 +63,8 @@ concurrency:
 
 jobs:
   authorize:
+    # Only earendil-works/pi holds the org token and the pi-analyze environment that this job and analyze need.
+    if: github.repository == 'earendil-works/pi'
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.verify.outputs.should_run }}
