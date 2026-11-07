@@ -6,10 +6,11 @@ import { type Component, Container, type Focusable, type OverlayHandle, type TUI
 import { TuiMainScreen } from "../../tui/src/tui-main-screen.ts";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
-import type { QuietStartup } from "../src/core/settings-manager.ts";
+import type { QuietStartup, TranscriptDetail } from "../src/core/settings-manager.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
-import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
+import { ToolExecutionComponent, TranscriptContainer } from "../src/modes/interactive/components/tool-execution.ts";
+import { TurnFolds } from "../src/modes/interactive/components/turn-fold.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
@@ -144,45 +145,35 @@ describe("InteractiveMode.showManagedToolStatus", () => {
 	});
 });
 
-describe("InteractiveMode.setToolsExpanded", () => {
-	test("applies expansion state to the active header and chat entries", () => {
-		const header = { setExpanded: vi.fn() };
-		const loadedResourcesChild = { setExpanded: vi.fn() };
-		const chatChild = { setExpanded: vi.fn() };
-		const fakeThis: any = {
-			toolDisplayMode: "collapsed",
-			get toolOutputExpanded() {
-				return this.toolDisplayMode === "expanded";
-			},
-			setToolDisplayMode(mode: string) {
-				(InteractiveMode as any).prototype.setToolDisplayMode.call(this, mode);
-			},
-			applyToolDisplayMode(mode: string) {
-				(InteractiveMode as any).prototype.applyToolDisplayMode.call(this, mode);
-			},
+describe("InteractiveMode transcript detail", () => {
+	function createDetailMode(saved: TranscriptDetail) {
+		const chatContainer = new TranscriptContainer();
+		const settingsManager = {
+			saved,
+			getTranscriptDetail: () => settingsManager.saved,
+			setTranscriptDetail: vi.fn((detail: TranscriptDetail) => {
+				settingsManager.saved = detail;
+			}),
+		};
+		const mode = Object.assign(Object.create(InteractiveMode.prototype), {
+			transcriptDetail: saved,
+			turnFolds: new TurnFolds(chatContainer, saved === "folded", 1),
 			customHeader: undefined,
-			builtInHeader: header,
-			loadedResourcesContainer: { children: [loadedResourcesChild] },
-			chatContainer: { children: [chatChild] },
-			pendingMessagesContainer: { children: [] },
+			builtInHeader: { setExpanded: vi.fn() },
+			loadedResourcesContainer: new Container(),
+			chatContainer,
+			pendingMessagesContainer: new Container(),
 			ui: { requestRender: vi.fn() },
 			showStatus: vi.fn(),
-		};
+			runtimeHost: { session: { settingsManager } },
+		});
+		return { mode, settingsManager };
+	}
 
-		(InteractiveMode as any).prototype.setToolsExpanded.call(fakeThis, true);
-
-		expect(fakeThis.toolOutputExpanded).toBe(true);
-		expect(header.setExpanded).toHaveBeenCalledWith(true);
-		expect(loadedResourcesChild.setExpanded).toHaveBeenCalledWith(true);
-		expect(chatChild.setExpanded).toHaveBeenCalledWith(true);
-		expect(fakeThis.showStatus).toHaveBeenCalledWith("Tool output: expanded");
-	});
-
-	test("cycles all three modes, saving each one, and the boolean extension setter exits compact mode without saving", () => {
-		initTheme("dark");
+	function toolRow(): ToolExecutionComponent {
 		const component = new ToolExecutionComponent(
 			"read",
-			"compact-cycle",
+			"detail-cycle",
 			{ path: "notes.txt" },
 			{},
 			undefined,
@@ -190,35 +181,54 @@ describe("InteractiveMode.setToolsExpanded", () => {
 			process.cwd(),
 		);
 		component.updateResult({ content: [{ type: "text", text: "full result" }], isError: false });
-		const fakeThis = Object.assign(Object.create(InteractiveMode.prototype), {
-			toolDisplayMode: "collapsed",
-			builtInHeader: { setExpanded: vi.fn() },
-			loadedResourcesContainer: new Container(),
-			chatContainer: new Container(),
-			showStatus: vi.fn(),
-			runtimeHost: { session: { settingsManager: { setToolOutput: vi.fn() } } },
-		});
-		fakeThis.chatContainer.addChild(component);
-		for (const expected of ["expanded", "compact", "collapsed"]) {
-			fakeThis.toggleToolOutputExpansion();
-			expect(fakeThis.toolDisplayMode).toBe(expected);
-			expect(fakeThis.runtimeHost.session.settingsManager.setToolOutput).toHaveBeenLastCalledWith(expected);
-			expect(fakeThis.builtInHeader.setExpanded).toHaveBeenLastCalledWith(expected === "expanded");
-			expect(fakeThis.showStatus).toHaveBeenLastCalledWith(`Tool output: ${expected}`);
-			if (expected === "compact")
-				expect(
-					component
-						.render(120)
-						.map((line) => line.trim())
-						.filter(Boolean),
-				).toHaveLength(1);
-			else expect(component.render(120).join("\n")).toContain("full result");
+		return component;
+	}
+
+	test("the expand key cycles folded, compact, collapsed and expanded, saving each; only folded folds turns", () => {
+		initTheme("dark");
+		const { mode, settingsManager } = createDetailMode("folded");
+		const loadedResource = { setExpanded: vi.fn() };
+		mode.loadedResourcesContainer.addChild(loadedResource);
+		const row = toolRow();
+		mode.chatContainer.addChild(row);
+		const lines = () =>
+			row
+				.render(120)
+				.map((line) => line.trim())
+				.filter(Boolean);
+
+		for (const expected of ["compact", "collapsed", "expanded", "folded"] as const) {
+			mode.cycleTranscriptDetail();
+			expect(mode.transcriptDetail).toBe(expected);
+			expect(settingsManager.setTranscriptDetail).toHaveBeenLastCalledWith(expected);
+			expect(mode.turnFolds.isFolding()).toBe(expected === "folded");
+			expect(mode.builtInHeader.setExpanded).toHaveBeenLastCalledWith(expected === "expanded");
+			expect(loadedResource.setExpanded).toHaveBeenLastCalledWith(expected === "expanded");
+			expect(mode.showStatus).toHaveBeenLastCalledWith(`Transcript detail: ${expected}`);
+			if (expected === "compact" || expected === "folded") expect(lines()).toHaveLength(1);
+			else expect(lines().join("\n")).toContain("full result");
 		}
-		fakeThis.toggleToolOutputExpansion();
-		fakeThis.toggleToolOutputExpansion();
-		fakeThis.setToolsExpanded(false);
-		expect(fakeThis.toolDisplayMode).toBe("collapsed");
-		expect(fakeThis.runtimeHost.session.settingsManager.setToolOutput).toHaveBeenLastCalledWith("compact");
+	});
+
+	test("an extension that expands the output and restores it returns to the saved level, without saving", () => {
+		initTheme("dark");
+		const { mode, settingsManager } = createDetailMode("folded");
+
+		mode.setToolsExpanded(false);
+		expect(mode.transcriptDetail).toBe("folded");
+
+		const wasExpanded = mode.createExtensionUIContext().getToolsExpanded();
+		mode.setToolsExpanded(true);
+		expect(mode.transcriptDetail).toBe("expanded");
+		expect(mode.turnFolds.isFolding()).toBe(false);
+		mode.setToolsExpanded(wasExpanded);
+		expect(mode.transcriptDetail).toBe("folded");
+		expect(mode.turnFolds.isFolding()).toBe(true);
+		expect(settingsManager.setTranscriptDetail).not.toHaveBeenCalled();
+
+		const expandedOwner = createDetailMode("expanded");
+		expandedOwner.mode.setToolsExpanded(false);
+		expect(expandedOwner.mode.transcriptDetail).toBe("collapsed");
 	});
 });
 

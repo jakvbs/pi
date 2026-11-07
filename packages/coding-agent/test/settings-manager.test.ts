@@ -577,24 +577,24 @@ describe("SettingsManager", () => {
 		});
 	});
 
-	describe("toolOutput", () => {
-		it("should default to compact and persist the chosen mode", async () => {
+	describe("transcriptDetail", () => {
+		it("should default to folded and persist the chosen level", async () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
 
-			expect(manager.getToolOutput()).toBe("compact");
+			expect(manager.getTranscriptDetail()).toBe("folded");
 
-			manager.setToolOutput("expanded");
+			manager.setTranscriptDetail("expanded");
 			await manager.flush();
 
 			const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
-			expect(savedSettings.toolOutput).toBe("expanded");
-			expect(SettingsManager.create(projectDir, agentDir).getToolOutput()).toBe("expanded");
+			expect(savedSettings.transcriptDetail).toBe("expanded");
+			expect(SettingsManager.create(projectDir, agentDir).getTranscriptDetail()).toBe("expanded");
 		});
 
-		it("should treat an unknown mode as compact", () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ toolOutput: "full" }));
+		it("should treat an unknown level as folded", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ transcriptDetail: "full" }));
 
-			expect(SettingsManager.create(projectDir, agentDir).getToolOutput()).toBe("compact");
+			expect(SettingsManager.create(projectDir, agentDir).getTranscriptDetail()).toBe("folded");
 		});
 	});
 

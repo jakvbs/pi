@@ -18,7 +18,7 @@ type DialogContext = {
 	extensionOverlays: Map<unknown, () => void>;
 	programStatus: { setBlocked: ReturnType<typeof vi.fn> };
 	disposeActiveSelector: () => void;
-	toggleToolOutputExpansion: () => void;
+	cycleTranscriptDetail: () => void;
 };
 
 type DialogMethods = {
@@ -71,7 +71,7 @@ function createContext(): DialogContext & DialogMethods {
 		extensionOverlays: new Map(),
 		programStatus: { setBlocked: vi.fn() },
 		disposeActiveSelector: vi.fn(),
-		toggleToolOutputExpansion: vi.fn(),
+		cycleTranscriptDetail: vi.fn(),
 	};
 	return new Proxy(context, {
 		get(target, key, receiver) {

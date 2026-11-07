@@ -248,18 +248,15 @@ export const SettingsSchema = Type.Object(
 		branchSummary: Type.Optional(BranchSummarySettingsSchema),
 		retry: Type.Optional(RetrySettingsSchema),
 		hideThinkingBlock: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.hideThinkingBlock })),
-		foldTurns: Type.Optional(
-			Type.Boolean({
-				description:
-					"Fold each turn into rows between the user message and the reply, one per part that commentary ends.",
-				default: SETTINGS_DEFAULTS.foldTurns,
-			}),
-		),
-		toolOutput: Type.Optional(
-			Type.Union([Type.Literal("compact"), Type.Literal("collapsed"), Type.Literal("expanded")], {
-				description: "How tool calls show: one line each, with a preview of their output, or with all of it.",
-				default: SETTINGS_DEFAULTS.toolOutput,
-			}),
+		transcriptDetail: Type.Optional(
+			Type.Union(
+				[Type.Literal("folded"), Type.Literal("compact"), Type.Literal("collapsed"), Type.Literal("expanded")],
+				{
+					description:
+						"How much of the agent's work the transcript shows: turns folded into rows, each tool call on one line, with a preview of its output, or with all of it.",
+					default: SETTINGS_DEFAULTS.transcriptDetail,
+				},
+			),
 		),
 		showCacheMissNotices: Type.Optional(
 			Type.Boolean({
@@ -512,6 +509,7 @@ export type CodemodeMode = Static<typeof CodemodeModeSchema>;
 export interface CodemodeSettings extends Static<typeof CodemodeSettingsSchema> {}
 export type DefaultProjectTrust = NonNullable<SettingsInput["defaultProjectTrust"]>;
 export type QuietStartup = NonNullable<SettingsInput["quietStartup"]>;
+export type TranscriptDetail = NonNullable<SettingsInput["transcriptDetail"]>;
 export type TransportSetting = NonNullable<SettingsInput["transport"]>;
 export type SessionShareDestination = NonNullable<SettingsInput["sessionShareDestination"]>;
 export type PackageSource = Static<typeof PackageSourceSchema>;

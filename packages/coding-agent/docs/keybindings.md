@@ -161,14 +161,13 @@ On native Windows, `app.suspend` has no default because Windows terminals do not
 
 | Keybinding id | Default | Description |
 |--------|---------|-------------|
-| `app.tools.expand` | `ctrl+o` | Cycle tool output: collapsed → expanded → compact |
-| `app.tools.toggle` | `alt+h` | Fold turns, or show every turn in full |
+| `app.tools.expand` | `ctrl+o` | Show more of the agent's work: folded turns → compact → collapsed → expanded |
 | `app.turn.toggle` | `alt+o` | Open or fold the last row of a folded turn |
 | `app.message.copy` | `ctrl+x` | Copy the selected message in `/tree`; in fullscreen mode, copy the active selection when `fullscreenCopyOnSelect` is `false`; otherwise copy the last assistant message. On OAuth sign-in screens, copy the sign-in URL |
 | `app.message.followUp` | `alt+enter` (`ctrl+q` on Windows and WSL) | Queue follow-up message |
 | `app.message.dequeue` | `alt+up` (`alt+q` on Windows and WSL) | Restore queued messages to editor |
 
-Tool output starts in the mode saved in the `toolOutput` setting, compact by default, and each press of `ctrl+o` saves the mode it selects. Compact tool output shows one line per call with its status and abbreviated arguments, without results or images. Click a compact row in fullscreen mode to expand it, or cycle `ctrl+o` back to expanded. Other expandable transcript entries remain collapsed in compact mode. This changes only the display, not the model context.
+The transcript starts at the level saved in the `transcriptDetail` setting, folded turns by default, and each press of `ctrl+o` saves the level it selects. Folded turns show the tool calls that still run, and those of an opened row, as compact rows. Compact tool output shows one line per call with its status and abbreviated arguments, without results or images. Click a compact row in fullscreen mode to expand it, or cycle `ctrl+o` to expanded. Other expandable transcript entries remain collapsed in compact mode. This changes only the display, not the model context.
 
 ### Tree Navigation
 

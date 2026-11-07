@@ -116,7 +116,7 @@ import {
 	sessionEntryToContextMessages,
 	type UsageEntry,
 } from "../../core/session-manager.ts";
-import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
+import type { FullscreenExitOutput, TranscriptDetail, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import { getSourcePackageKey, type SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
@@ -558,10 +558,14 @@ export class InteractiveMode {
 	private unplacedStepUsage: { toolCallId: string; usage: StepUsage } | undefined;
 	private viewFollowTimer: NodeJS.Timeout | undefined;
 
-	// Tool output expansion state
-	private toolDisplayMode: ToolDisplayMode = "compact";
+	/** How much of the agent's work the transcript shows; `app.tools.expand` cycles it. */
+	private transcriptDetail: TranscriptDetail = "folded";
+	/** Folded turns show the tool rows that still run, and the rows of an opened part, on one line each. */
+	private get toolDisplayMode(): ToolDisplayMode {
+		return this.transcriptDetail === "folded" ? "compact" : this.transcriptDetail;
+	}
 	private get toolOutputExpanded(): boolean {
-		return this.toolDisplayMode === "expanded";
+		return this.transcriptDetail === "expanded";
 	}
 
 	// Thinking block visibility state
@@ -723,9 +727,9 @@ export class InteractiveMode {
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
-		this.toolDisplayMode = this.settingsManager.getToolOutput();
+		this.transcriptDetail = this.settingsManager.getTranscriptDetail();
 		this.outputPad = this.settingsManager.getOutputPad();
-		this.turnFolds = new TurnFolds(this.chatContainer, this.settingsManager.getFoldTurns(), this.outputPad);
+		this.turnFolds = new TurnFolds(this.chatContainer, this.transcriptDetail === "folded", this.outputPad);
 
 		// Register themes from resource loader and initialize
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
@@ -1106,9 +1110,8 @@ export class InteractiveMode {
 					rawKeyHint(`${keyText("app.clear")} twice`, "to exit"),
 					hint("app.exit", "to exit"),
 					hint("app.suspend", "to suspend"),
-					hint("app.tools.expand", "to expand tools"),
+					hint("app.tools.expand", "to show more of the work"),
 					hint("app.thinking.toggle", "to expand thinking"),
-					hint("app.tools.toggle", "to fold turns"),
 					hint("app.turn.toggle", "to open the last turn"),
 					hint("app.message.copy", "to copy the last message"),
 				].join("\n");
@@ -1126,7 +1129,7 @@ export class InteractiveMode {
 						"to cycle models",
 					),
 					hint("app.model.select", "to select model"),
-					hint("app.tools.expand", "to expand tools"),
+					hint("app.tools.expand", "to show more of the work"),
 					hint("app.thinking.toggle", "to expand thinking"),
 					hint("app.editor.external", "for external editor"),
 					rawKeyHint("/", "for commands"),
@@ -2267,10 +2270,9 @@ export class InteractiveMode {
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
-		this.applyToolDisplayMode(this.settingsManager.getToolOutput());
 		this.outputPad = this.settingsManager.getOutputPad();
 		this.turnFolds.setOutputPad(this.outputPad);
-		this.turnFolds.setFolding(this.settingsManager.getFoldTurns());
+		this.applyTranscriptDetail(this.settingsManager.getTranscriptDetail());
 		this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
 		const clearOnShrink = this.settingsManager.getClearOnShrink();
 		this.ui.setClearOnShrink(clearOnShrink);
@@ -2956,7 +2958,7 @@ export class InteractiveMode {
 				options,
 				(option) => finish(option),
 				() => finish(undefined),
-				{ tui: this.ui, timeout: opts?.timeout, onToggleToolsExpanded: () => this.toggleToolOutputExpansion() },
+				{ tui: this.ui, timeout: opts?.timeout, onToggleToolsExpanded: () => this.cycleTranscriptDetail() },
 			);
 			this.pushExtensionDialog(selector, blocked);
 		});
@@ -3271,9 +3273,8 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.clear", () => this.handleCtrlC());
 		this.defaultEditor.onCtrlD = () => this.handleCtrlD();
 		this.defaultEditor.onAction("app.suspend", () => this.handleCtrlZ());
-		this.defaultEditor.onAction("app.tools.expand", () => this.toggleToolOutputExpansion());
+		this.defaultEditor.onAction("app.tools.expand", () => this.cycleTranscriptDetail());
 		this.defaultEditor.onAction("app.thinking.toggle", () => this.toggleThinkingBlockVisibility());
-		this.defaultEditor.onAction("app.tools.toggle", () => this.toggleTurnFolding());
 		this.defaultEditor.onAction("app.turn.toggle", () => this.toggleLastTurn());
 		this.defaultEditor.onAction(
 			"app.message.copy",
@@ -3354,9 +3355,8 @@ export class InteractiveMode {
 		// Global debug handler on TUI (works regardless of focus)
 		this.ui.onDebug = () => this.handleDebugCommand();
 		this.defaultEditor.onAction("app.model.select", () => this.showModelSelector());
-		this.defaultEditor.onAction("app.tools.expand", () => this.toggleToolOutputExpansion());
+		this.defaultEditor.onAction("app.tools.expand", () => this.cycleTranscriptDetail());
 		this.defaultEditor.onAction("app.thinking.toggle", () => this.toggleThinkingBlockVisibility());
-		this.defaultEditor.onAction("app.tools.toggle", () => this.toggleTurnFolding());
 		this.defaultEditor.onAction("app.turn.toggle", () => this.toggleLastTurn());
 		this.defaultEditor.onAction("app.editor.external", () => void this.handleOpenExternalEditor());
 		this.defaultEditor.onAction(
@@ -4917,31 +4917,46 @@ export class InteractiveMode {
 		}
 	}
 
-	private toggleToolOutputExpansion(): void {
-		const next: Record<ToolDisplayMode, ToolDisplayMode> = {
-			collapsed: "expanded",
-			expanded: "compact",
+	/** Show one level more of the agent's work, and folded turns again after the full output; saves the level. */
+	private cycleTranscriptDetail(): void {
+		const next: Record<TranscriptDetail, TranscriptDetail> = {
+			folded: "compact",
 			compact: "collapsed",
+			collapsed: "expanded",
+			expanded: "folded",
 		};
-		const mode = next[this.toolDisplayMode];
-		this.setToolDisplayMode(mode);
-		this.settingsManager.setToolOutput(mode);
+		const detail = next[this.transcriptDetail];
+		this.setTranscriptDetail(detail);
+		this.settingsManager.setTranscriptDetail(detail);
 	}
 
+	/**
+	 * The extension setter, which knows only expanded or not: an extension that expands the output and then restores it
+	 * returns to the level saved with `app.tools.expand`, folded turns included, or to collapsed when that level is
+	 * expanded. Neither call is saved.
+	 */
 	private setToolsExpanded(expanded: boolean): void {
-		this.setToolDisplayMode(expanded ? "expanded" : "collapsed");
+		if (expanded) {
+			this.setTranscriptDetail("expanded");
+		} else if (this.toolOutputExpanded) {
+			const saved = this.settingsManager.getTranscriptDetail();
+			this.setTranscriptDetail(saved === "expanded" ? "collapsed" : saved);
+		}
 	}
 
-	private setToolDisplayMode(mode: ToolDisplayMode): void {
-		if (mode === this.toolDisplayMode) return;
-		this.applyToolDisplayMode(mode);
-		this.showStatus(`Tool output: ${mode}`);
+	private setTranscriptDetail(detail: TranscriptDetail): void {
+		if (detail === this.transcriptDetail) return;
+		this.applyTranscriptDetail(detail);
+		this.ui.requestRender();
+		this.showStatus(`Transcript detail: ${detail}`);
 	}
 
-	/** Show every tool row, and the other expandable rows, in a tool output mode. */
-	private applyToolDisplayMode(mode: ToolDisplayMode): void {
-		if (mode === this.toolDisplayMode) return;
-		this.toolDisplayMode = mode;
+	/** Fold the turns or show them in full, and show every tool row and the other expandable rows, at a level. */
+	private applyTranscriptDetail(detail: TranscriptDetail): void {
+		if (detail === this.transcriptDetail) return;
+		this.transcriptDetail = detail;
+		this.turnFolds.setFolding(detail === "folded");
+		const mode = this.toolDisplayMode;
 		const expanded = this.toolOutputExpanded;
 		const activeHeader = this.customHeader ?? this.builtInHeader;
 		if (isExpandable(activeHeader)) {
@@ -4975,19 +4990,13 @@ export class InteractiveMode {
 		this.showStatus(`Thinking blocks: ${this.hideThinkingBlock ? "hidden" : "visible"}`);
 	}
 
-	private toggleTurnFolding(): void {
-		const folding = !this.turnFolds.isFolding();
-		this.turnFolds.setFolding(folding);
-		this.settingsManager.setFoldTurns(folding);
-		this.ui.requestRender();
-		this.showStatus(`Finished turns: ${folding ? "folded" : "shown in full"}`);
-	}
-
 	private toggleLastTurn(): void {
 		if (this.turnFolds.toggleLast()) {
 			this.ui.requestRender();
 		} else {
-			this.showStatus(this.turnFolds.isFolding() ? "No folded turn yet" : "Turn folding is off");
+			this.showStatus(
+				this.turnFolds.isFolding() ? "No folded turn yet" : "Turns are not folded at this detail level",
+			);
 		}
 	}
 
@@ -6855,10 +6864,10 @@ export class InteractiveMode {
 				return;
 			}
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
-			this.toolDisplayMode = this.settingsManager.getToolOutput();
+			this.transcriptDetail = this.settingsManager.getTranscriptDetail();
 			this.outputPad = this.settingsManager.getOutputPad();
 			this.turnFolds.setOutputPad(this.outputPad);
-			this.turnFolds.setFolding(this.settingsManager.getFoldTurns());
+			this.turnFolds.setFolding(this.transcriptDetail === "folded");
 			this.rebuildChatFromMessages();
 			chatRestoredBeforeSessionStart = true;
 		};
@@ -7227,7 +7236,6 @@ export class InteractiveMode {
 		const selectModel = this.getAppKeyDisplay("app.model.select");
 		const expandTools = this.getAppKeyDisplay("app.tools.expand");
 		const toggleThinking = this.getAppKeyDisplay("app.thinking.toggle");
-		const toggleFolding = this.getAppKeyDisplay("app.tools.toggle");
 		const toggleTurn = this.getAppKeyDisplay("app.turn.toggle");
 		const externalEditor = this.getAppKeyDisplay("app.editor.external");
 		const cycleModelBackward = this.getAppKeyDisplay("app.model.cycleBackward");
@@ -7272,9 +7280,8 @@ export class InteractiveMode {
 | \`${cycleThinkingLevel}\` | Cycle thinking level |
 | \`${cycleModelForward}\` / \`${cycleModelBackward}\` | Cycle models |
 | \`${selectModel}\` | Open model selector |
-| \`${expandTools}\` | Toggle tool output expansion |
+| \`${expandTools}\` | Show more of the agent's work: folded turns, compact, collapsed, expanded |
 | \`${toggleThinking}\` | Toggle thinking block visibility |
-| \`${toggleFolding}\` | Fold turns, or show them in full |
 | \`${toggleTurn}\` | Open or fold the last row of a folded turn |
 | \`${externalEditor}\` | Edit message in external editor |
 | \`${copyMessage}\` | Copy selection or last assistant message |
