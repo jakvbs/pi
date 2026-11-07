@@ -4,6 +4,7 @@
 
 import { getSystemMessageText } from "@earendil-works/pi-ai";
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
+import { formatProjectInstructions, PROJECT_CONTEXT_SECTION } from "./context-blocks.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
 export interface BuildSystemPromptOptions {
@@ -77,12 +78,9 @@ export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptOption
 }
 
 function renderProjectContext(contextFiles: Array<{ path: string; content: string }>): string {
-	return [
-		"Project-specific instructions and guidelines:",
-		...contextFiles.map(
-			({ path, content }) => `<project_instructions path="${path}">\n${content}\n</project_instructions>`,
-		),
-	].join("\n\n");
+	return ["Project-specific instructions and guidelines:", ...contextFiles.map(formatProjectInstructions)].join(
+		"\n\n",
+	);
 }
 
 function buildRules(
@@ -169,7 +167,7 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 	}
 
 	if (appendSystemPrompt) promptSections.addendum = appendSystemPrompt;
-	if (contextFiles.length > 0) promptSections.project_context = renderProjectContext(contextFiles);
+	if (contextFiles.length > 0) promptSections[PROJECT_CONTEXT_SECTION] = renderProjectContext(contextFiles);
 	// A hidden reader is still reachable through another tool, so skills stay but the hint names no tool.
 	const readers = ["read", "bash"] as const;
 	const skillFileReadTool =

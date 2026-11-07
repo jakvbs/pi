@@ -6,6 +6,7 @@ import { access, readFile, stat } from "node:fs/promises";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import chalk from "chalk";
 import { resolve } from "path";
+import { formatFileBlock } from "../core/context-blocks.ts";
 import { resolveReadPath } from "../core/tools/path-utils.ts";
 import { processImage } from "../utils/image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../utils/mime.ts";
@@ -75,7 +76,7 @@ export async function processFileArguments(fileArgs: string[], options?: Process
 			// Handle text file
 			try {
 				const content = stripBom(await readFile(absolutePath, "utf-8"));
-				text += `<file name="${absolutePath}">\n${content}\n</file>\n`;
+				text += formatFileBlock(absolutePath, content);
 			} catch (error: unknown) {
 				const message = error instanceof Error ? error.message : String(error);
 				console.error(chalk.red(`Error: Could not read file ${absolutePath}: ${message}`));

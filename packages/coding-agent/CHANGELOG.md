@@ -27,7 +27,7 @@
 - Consecutive cache warms now show as one `Cache warmed: $<total>` line with the cumulative cost instead of one line per warm
 - The OpenAI Codex provider is shown as "OpenAI Codex" again instead of "OpenAI Codex (legacy)" in `/login` and the model selector
 - Running `/skill:name` again no longer sends a second full copy of the skill to the model. When the latest full copy of the skill in the model's context has the same content, the repeat carries a short note that the skill is already loaded, followed by the new request. The skill is sent in full again when its file changed since that copy or when compaction summarized it. The session file and the transcript keep the full text of every invocation
-- A repeated `read` of a whole file that has not changed since its latest full copy in the model's context now sends the model a short note instead of a second copy; a changed file, a partial or truncated read, and a read after compaction summarized the earlier copy still send the full text. The session keeps the full result. Extension tools opt in with `wholeFile: { path }` in `details` (`WholeFileDetails`)
+- A repeated `read` of a whole file that has not changed since its latest full copy in the model's context now sends the model a short note instead of a second copy; a changed file, a partial or truncated read, and a read after compaction summarized the earlier copy still send the full text. The session keeps the full result. Extension tools opt in with `wholeFile: { path }` in `details` (`WholeFileDetails`). The same applies to a context file, such as `AGENTS.md`, that the system prompt already holds, and to a file given with `@path`
 
 ### Fixed
 

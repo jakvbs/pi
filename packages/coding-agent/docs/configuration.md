@@ -45,3 +45,5 @@ Context files are separate from project `.pi` configuration. Pi loads them from 
 An `AGENTS.override.md` replaces `AGENTS.md` or `CLAUDE.md` only in the same directory. It does not suppress context files from the agent directory or other directories.
 
 Context-file discovery does not require project trust.
+
+The system prompt already holds every context file. When the model reads one with `read` and the file has not changed since the system prompt loaded it, the model gets a short note instead of a second copy.
