@@ -2,7 +2,7 @@ import { Box, Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import type { BranchSummaryMessage } from "../../../core/messages.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
-import { keyText } from "./keybinding-hints.ts";
+import { expandKeyText } from "./keybinding-hints.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 
 /**
@@ -80,7 +80,7 @@ export class BranchSummaryMessageComponent extends Box {
 			content.addChild(
 				new Text(
 					theme.fg("customMessageText", "Branch summary (") +
-						theme.fg("dim", keyText("app.tools.expand")) +
+						theme.fg("dim", expandKeyText()) +
 						theme.fg("customMessageText", " to expand)"),
 					0,
 					0,

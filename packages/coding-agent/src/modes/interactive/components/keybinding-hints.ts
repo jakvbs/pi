@@ -43,6 +43,28 @@ export function keyHint(keybinding: Keybinding, description: string): string {
 	return theme.fg("dim", keyText(keybinding)) + theme.fg("muted", ` ${description}`);
 }
 
+/** How many presses of `app.tools.expand` reach the transcript level that expands every entry. */
+let expandPresses = 1;
+
+/** Set how many presses of `app.tools.expand` reach the transcript level that expands every entry. */
+export function setExpandPresses(presses: number): void {
+	expandPresses = presses;
+}
+
+/**
+ * The keys that expand an entry which opens only at the transcript's expanded level, with the number of presses when
+ * it takes more than one, for example `ctrl+o ×3`.
+ */
+export function expandKeyText(): string {
+	const keys = keyText("app.tools.expand");
+	return expandPresses > 1 ? `${keys} ×${expandPresses}` : keys;
+}
+
+/** {@link keyHint} for an entry which opens only at the transcript's expanded level. */
+export function expandHint(description: string): string {
+	return theme.fg("dim", expandKeyText()) + theme.fg("muted", ` ${description}`);
+}
+
 export function rawKeyHint(key: string, description: string): string {
 	return theme.fg("dim", formatKeyText(key)) + theme.fg("muted", ` ${description}`);
 }

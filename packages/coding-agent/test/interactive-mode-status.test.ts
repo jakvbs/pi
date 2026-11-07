@@ -1,18 +1,22 @@
 import { homedir } from "node:os";
 import * as path from "node:path";
-import { type AutocompleteProvider, CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
+import { type AutocompleteProvider, CombinedAutocompleteProvider, setKeybindings } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { type Component, Container, type Focusable, type OverlayHandle, type TUI } from "../../tui/src/tui.ts";
 import { TuiMainScreen } from "../../tui/src/tui-main-screen.ts";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
+import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type { QuietStartup, TranscriptDetail } from "../src/core/settings-manager.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
+import { CompactionSummaryMessageComponent } from "../src/modes/interactive/components/compaction-summary-message.ts";
+import { setExpandPresses } from "../src/modes/interactive/components/keybinding-hints.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
 import { ToolExecutionComponent, TranscriptContainer } from "../src/modes/interactive/components/tool-execution.ts";
 import { TurnFolds } from "../src/modes/interactive/components/turn-fold.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../src/utils/ansi.ts";
 
 function renderLastLine(container: Container, width = 120): string {
 	const last = container.children[container.children.length - 1];
@@ -207,6 +211,28 @@ describe("InteractiveMode transcript detail", () => {
 			if (expected === "compact" || expected === "folded") expect(lines()).toHaveLength(1);
 			else expect(lines().join("\n")).toContain("full result");
 		}
+	});
+
+	test("an entry that opens only at the expanded level names the presses of the expand key that reach it", () => {
+		initTheme("dark");
+		setKeybindings(new KeybindingsManager());
+		const { mode } = createDetailMode("folded");
+		mode.takeTranscriptDetail("folded");
+		const summary = new CompactionSummaryMessageComponent({
+			role: "compactionSummary",
+			summary: "The work so far.",
+			tokensBefore: 900,
+			timestamp: 0,
+		});
+		mode.chatContainer.addChild(summary);
+		const hint = () => stripAnsi(summary.render(120).join("\n")).match(/Compacted from 900 tokens \((.*)\)/)?.[1];
+
+		expect(hint()).toBe("ctrl+o ×3 to expand");
+		for (const expected of ["ctrl+o ×2 to expand", "ctrl+o to expand", undefined, "ctrl+o ×3 to expand"]) {
+			mode.cycleTranscriptDetail();
+			expect(hint()).toBe(expected);
+		}
+		setExpandPresses(1);
 	});
 
 	test("an extension that expands the output and restores it returns to the saved level, without saving", () => {
