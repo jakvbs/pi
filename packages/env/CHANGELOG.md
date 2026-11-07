@@ -9,6 +9,7 @@
 ### Fixed
 
 - An aborted or timed-out request no longer waits for a remote host that does not answer: aborting while the connection starts rejects at once with `aborted`, a sent request settles as `aborted` if the daemon does not answer its cancel within a second, `RemoteExecutionEnv.exec` enforces its timeout locally as well, and file operations stop waiting for the connection when aborted. `ssh` gets `ConnectTimeout=15`, so a host that is down fails a start within 15 s.
+- An `exec` command without an output window and a `process` program no longer lose the end of their output when they exit while a slow link holds their output back: the daemon stopped reading 100 ms after the exit although its reader was still waiting for the link, and the output left in the pipe, up to 64 KiB, was lost. The 100 ms of silence after an exit now count only while the link does not hold the readers back.
 - On Windows, an `exec` command's output readers stop once the command has settled, also while a descendant keeps a pipe open without writing; they stayed blocked until it exited, because cancelling a blocked read did not reach the standard library's overlapped pipe I/O.
 
 ## [1.5.0] - 2026-11-02

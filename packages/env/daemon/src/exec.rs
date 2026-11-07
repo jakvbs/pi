@@ -412,7 +412,7 @@ pub fn run(
         return Err(abandon(child, error));
     }
     let stderr = child.stderr.take().unwrap();
-    if let Err(error) = spawn_reader(1, stderr, sender.clone(), stop.clone(), gate) {
+    if let Err(error) = spawn_reader(1, stderr, sender.clone(), stop.clone(), gate.clone()) {
         return Err(abandon(child, error));
     }
     if let Err((child, error)) = start_waiter(child, None, sender.clone()) {
@@ -477,8 +477,16 @@ pub fn run(
             break;
         }
         if idle_until.is_some_and(|idle| now >= idle) {
-            // A descendant may hold the pipes open after the process exited; stop waiting for it.
-            break;
+            if gate
+                .as_ref()
+                .is_some_and(|output| output.holds_readers(EXIT_STDIO_GRACE))
+            {
+                // A reader the link holds back has not seen its pipe go quiet.
+                idle_until = Some(now + EXIT_STDIO_GRACE);
+            } else {
+                // A descendant may hold the pipes open after the process exited; stop waiting for it.
+                break;
+            }
         }
         if let Some(pending) = &mut pending
             && !pending.is_empty()
