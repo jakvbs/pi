@@ -250,8 +250,15 @@ export const SettingsSchema = Type.Object(
 		hideThinkingBlock: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.hideThinkingBlock })),
 		foldTurns: Type.Optional(
 			Type.Boolean({
-				description: "Fold each finished turn into one row between the user message and the reply.",
+				description:
+					"Fold each turn into rows between the user message and the reply, one per part that commentary ends.",
 				default: SETTINGS_DEFAULTS.foldTurns,
+			}),
+		),
+		toolOutput: Type.Optional(
+			Type.Union([Type.Literal("compact"), Type.Literal("collapsed"), Type.Literal("expanded")], {
+				description: "How tool calls show: one line each, with a preview of their output, or with all of it.",
+				default: SETTINGS_DEFAULTS.toolOutput,
 			}),
 		),
 		showCacheMissNotices: Type.Optional(

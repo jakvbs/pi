@@ -214,8 +214,26 @@
     },
     "foldTurns": {
       "type": "boolean",
-      "description": "Fold each finished turn into one row between the user message and the reply.",
+      "description": "Fold each turn into rows between the user message and the reply, one per part that commentary ends.",
       "default": true
+    },
+    "toolOutput": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "compact"
+        },
+        {
+          "type": "string",
+          "const": "collapsed"
+        },
+        {
+          "type": "string",
+          "const": "expanded"
+        }
+      ],
+      "description": "How tool calls show: one line each, with a preview of their output, or with all of it.",
+      "default": "compact"
     },
     "showCacheMissNotices": {
       "type": "boolean",

@@ -157,6 +157,9 @@ describe("InteractiveMode.setToolsExpanded", () => {
 			setToolDisplayMode(mode: string) {
 				(InteractiveMode as any).prototype.setToolDisplayMode.call(this, mode);
 			},
+			applyToolDisplayMode(mode: string) {
+				(InteractiveMode as any).prototype.applyToolDisplayMode.call(this, mode);
+			},
 			customHeader: undefined,
 			builtInHeader: header,
 			loadedResourcesContainer: { children: [loadedResourcesChild] },
@@ -174,7 +177,7 @@ describe("InteractiveMode.setToolsExpanded", () => {
 		expect(fakeThis.showStatus).toHaveBeenCalledWith("Tool output: expanded");
 	});
 
-	test("cycles all three modes and the boolean extension setter exits compact mode", () => {
+	test("cycles all three modes, saving each one, and the boolean extension setter exits compact mode without saving", () => {
 		initTheme("dark");
 		const component = new ToolExecutionComponent(
 			"read",
@@ -192,11 +195,13 @@ describe("InteractiveMode.setToolsExpanded", () => {
 			loadedResourcesContainer: new Container(),
 			chatContainer: new Container(),
 			showStatus: vi.fn(),
+			runtimeHost: { session: { settingsManager: { setToolOutput: vi.fn() } } },
 		});
 		fakeThis.chatContainer.addChild(component);
 		for (const expected of ["expanded", "compact", "collapsed"]) {
 			fakeThis.toggleToolOutputExpansion();
 			expect(fakeThis.toolDisplayMode).toBe(expected);
+			expect(fakeThis.runtimeHost.session.settingsManager.setToolOutput).toHaveBeenLastCalledWith(expected);
 			expect(fakeThis.builtInHeader.setExpanded).toHaveBeenLastCalledWith(expected === "expanded");
 			expect(fakeThis.showStatus).toHaveBeenLastCalledWith(`Tool output: ${expected}`);
 			if (expected === "compact")
@@ -212,6 +217,7 @@ describe("InteractiveMode.setToolsExpanded", () => {
 		fakeThis.toggleToolOutputExpansion();
 		fakeThis.setToolsExpanded(false);
 		expect(fakeThis.toolDisplayMode).toBe("collapsed");
+		expect(fakeThis.runtimeHost.session.settingsManager.setToolOutput).toHaveBeenLastCalledWith("compact");
 	});
 });
 

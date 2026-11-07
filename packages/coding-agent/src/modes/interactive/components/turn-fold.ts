@@ -1,5 +1,5 @@
-// Folds the activity of each turn (thinking, tool calls, commentary) into one row between the user message and the
-// reply, also while the turn runs. The text of the commentary stays visible below the row.
+// Folds the activity of each turn (thinking, tool calls) into rows between the user message and the reply, also while
+// the turn runs. Commentary the model wrote between tool calls ends one part of the turn and stays visible below its row.
 import {
 	type Component,
 	Container,
@@ -14,7 +14,7 @@ import { CustomMessageComponent } from "./custom-message.ts";
 import { formatUsage, type StepUsage, sumUsage } from "./step-usage.ts";
 import { ToolExecutionComponent, TranscriptContainer } from "./tool-execution.ts";
 
-/** What a folded turn did, as its row shows it. */
+/** What a part of a turn, or a whole turn, did, as its row shows it. */
 export interface TurnSummary {
 	tools: number;
 	/** Non-empty thinking blocks, also the reply's. */
@@ -22,11 +22,10 @@ export interface TurnSummary {
 	/** Tool calls that ended with an error. */
 	errors: number;
 	/**
-	 * From the message that opened the turn to the end of its last response or tool result, whichever is later;
-	 * undefined without a response.
+	 * From the start to the end of the last response or tool result, whichever is later; undefined without a response.
 	 */
 	durationMs: number | undefined;
-	/** What the turn's steps added to the context window and cost, from the usage set on its rows. */
+	/** What the steps added to the context window and cost, from the usage set on their rows. */
 	usage: StepUsage;
 }
 
@@ -35,9 +34,9 @@ interface Turn {
 	/** The last row of the opener; undefined when the turn opened at the top of the transcript. */
 	after: Component | undefined;
 	startedAt: number;
-	/** The row the turn folds into while it runs, from its first finished tool call or thinking on. */
-	fold: TurnFoldComponent | undefined;
-	/** The latest handoff of the running turn, kept for its row until the row exists. */
+	/** The parts the turn folded into so far, in order; only the last one takes more rows, unless commentary closed it. */
+	parts: TurnFoldComponent[];
+	/** The latest handoff of the running turn, which its last part shows. */
 	handoff: RunningTurnHandoff | undefined;
 }
 
@@ -46,21 +45,24 @@ interface Turn {
  * after a row that opens it (a user message, a `!` command, a compaction or branch-summary marker, an extension message
  * after a reply), or at an assistant message that follows a folded turn without such a row, such as an automatic retry
  * after a failed reply. Its reply is the last assistant message whose stop reason is not `toolUse`; everything else the
- * turn added folds into one row above the reply, except extension messages (notices that stay visible in their place)
- * and rows the reply is followed by that are not tool calls (notices about the reply).
+ * turn added folds above the reply, except extension messages (notices that stay visible in their place) and rows the
+ * reply is followed by that are not tool calls (notices about the reply).
  *
- * While the turn runs, its finished rows fold into the same row as they finish ({@link TurnFolds.foldFinished}), so
- * only its commentary and what still runs show below it: the response being written, with its thinking as one label
- * line, and the tool calls that have no result yet.
+ * The turn folds into parts, each one row. Commentary, a response that wrote text and then called tools, ends its part
+ * and shows below the part's row; the rows after it start the next part. The reply's thinking counts in the last part.
  *
- * A handoff ({@link TurnFolds.setHandoff}) adds what a model wrote about the turn to its row.
+ * While the turn runs, its finished rows fold into its parts as they finish ({@link TurnFolds.foldFinished}), so only
+ * the rows and commentary of its parts and what still runs show: the response being written, with the last lines of its
+ * thinking, and the tool calls that have no result yet.
+ *
+ * A handoff ({@link TurnFolds.setHandoff}) adds what a model wrote about the turn to a row of the turn.
  */
 export class TurnFolds {
 	private readonly transcript: Container;
 	private folding: boolean;
 	private outputPad: number;
 	private openTurn: Turn | undefined;
-	/** The row of the turn that folded last, which a finished handoff describes. */
+	/** The last part of the turn that folded last, which a finished handoff describes. */
 	private lastFold: TurnFoldComponent | undefined;
 
 	constructor(transcript: Container, folding: boolean, outputPad: number) {
@@ -71,7 +73,7 @@ export class TurnFolds {
 
 	/** Open a turn after the transcript's current last row. */
 	start(startedAt: number): void {
-		this.openTurn = { after: this.lastRow(), startedAt, fold: undefined, handoff: undefined };
+		this.openTurn = { after: this.lastRow(), startedAt, parts: [], handoff: undefined };
 	}
 
 	/**
@@ -101,7 +103,7 @@ export class TurnFolds {
 
 	/**
 	 * Fold the open turn, at its reply or before a row that opens the next turn. A turn without tool calls and thinking
-	 * keeps its rows and gets no fold row.
+	 * gets no row.
 	 */
 	end(): void {
 		const open = this.openTurn;
@@ -110,21 +112,21 @@ export class TurnFolds {
 	}
 
 	/**
-	 * Show a handoff in the row of the turn it describes: a running one in the open turn's row until its reply, a
-	 * finished one in the row of the turn that folded last.
+	 * Show a handoff in a row of the turn it describes: a running one in the last part of the open turn until its reply,
+	 * a finished one in the last part of the turn that folded last.
 	 */
 	setHandoff(handoff: TurnHandoff): void {
 		if (handoff.kind === "finished") {
 			this.lastFold?.setHandoff(handoff);
 		} else if (this.openTurn) {
 			this.openTurn.handoff = handoff;
-			this.openTurn.fold?.setHandoff(handoff);
+			this.openTurn.parts.at(-1)?.setHandoff(handoff);
 		}
 	}
 
 	/**
 	 * Fold the rows of the open turn that have finished, in order up to the first one still running: responses that
-	 * called tools, tool calls with their result, notices. The fold row appears with the first tool call or thinking.
+	 * called tools, tool calls with their result, notices. A part gets its row with its first tool call or thinking.
 	 */
 	foldFinished(): void {
 		const turn = this.openTurn;
@@ -133,65 +135,100 @@ export class TurnFolds {
 
 		const finished: Component[] = [];
 		for (const row of rows) {
-			if (row === turn.fold || row instanceof CustomMessageComponent) continue;
+			if (row instanceof TurnFoldComponent || row instanceof CustomMessageComponent) continue;
 			if (!isFinishedActivity(row)) break;
 			finished.push(row);
 		}
-		const summary = summarizeTurn(finished, undefined, turn.startedAt);
-		if (finished.length > 0 && (turn.fold || summary.tools > 0 || summary.thinking > 0)) {
-			const fold = turn.fold ?? new TurnFoldComponent(turn.startedAt, this.folding, this.outputPad);
-			const shown = rows.flatMap((row) =>
-				!turn.fold && row === finished[0] ? [fold] : finished.includes(row) ? [] : [row],
-			);
-			this.transcript.children.splice(this.firstRowIndex(turn), rows.length, ...shown);
-			for (const row of finished) if (row instanceof AssistantMessageComponent) row.setThinkingCollapsed(false);
-			fold.absorb(finished);
-			if (!turn.fold && turn.handoff) fold.setHandoff(turn.handoff);
-			turn.fold = fold;
-		}
-		this.collapseRunningThinking();
+		this.absorb(turn, rows, finished, undefined);
+		this.showRunning();
 	}
 
-	/** Replace the rows of one turn with its fold row and visible rows; returns the row, or undefined without one. */
+	/** Fold the rows of one turn into its parts before its reply; returns the last part, or undefined without one. */
 	private fold(turn: Turn): TurnFoldComponent | undefined {
 		const rows = this.rowsOf(turn);
 		if (!rows) return undefined;
 
 		const reply = rows.findLast(isReply);
 		const replyIndex = reply ? rows.lastIndexOf(reply) : -1;
-		const folds = (row: Component, index: number): boolean =>
-			row !== turn.fold &&
-			index !== replyIndex &&
-			!(row instanceof CustomMessageComponent) &&
-			(replyIndex < 0 || index < replyIndex || row instanceof ToolExecutionComponent);
-		const activity = rows.filter(folds);
-		for (const row of rows) if (row instanceof AssistantMessageComponent) row.setThinkingCollapsed(false);
-		const summary = summarizeTurn(activity, reply, turn.startedAt);
-		if (!turn.fold && summary.tools === 0 && summary.thinking === 0) return undefined;
+		const activity = rows.filter(
+			(row, index) =>
+				!(row instanceof TurnFoldComponent) &&
+				!(row instanceof CustomMessageComponent) &&
+				index !== replyIndex &&
+				(replyIndex < 0 || index < replyIndex || row instanceof ToolExecutionComponent),
+		);
+		for (const row of rows) if (row instanceof AssistantMessageComponent) row.setPlace("full");
+		this.absorb(turn, rows, activity, reply);
 
-		// A new row takes the place of the first row it folds, or of the reply if that comes first; the rest keep order.
-		const fold = turn.fold ?? new TurnFoldComponent(turn.startedAt, this.folding, this.outputPad);
-		const shown: Component[] = [];
-		let placed = turn.fold !== undefined;
-		rows.forEach((row, index) => {
-			const folded = folds(row, index);
-			if (!placed && (folded || index === replyIndex)) {
-				shown.push(fold);
-				placed = true;
-			}
-			if (!folded) shown.push(row);
-		});
-		this.transcript.children.splice(this.firstRowIndex(turn), rows.length, ...shown);
-		fold.absorb(activity);
-		fold.finish(reply);
-		return fold;
+		const last = turn.parts.at(-1);
+		if (!last) return undefined;
+		last.finish(reply);
+		if (reply && turn.parts.filter((part) => part.hasRow()).length > 1) {
+			const activityRows = () => turn.parts.flatMap((part) => part.getActivityRows());
+			reply.setTurnSummary(
+				() => `Σ ${formatTurnSummary(summarizeTurn(activityRows(), reply, turn.startedAt), true)}`,
+			);
+		}
+		return last;
 	}
 
-	/** Show the thinking of the open turn's running response as its label line while the turn folds. */
-	private collapseRunningThinking(): void {
+	/**
+	 * Fold rows of a turn into its parts, in order. The last part takes rows until commentary closes it; the rows after
+	 * commentary start a new part, which takes the place of its first row, or of the reply when that comes first. A reply
+	 * with thinking gets a part of its own when no part takes rows, since its thinking counts in the last part.
+	 */
+	private absorb(
+		turn: Turn,
+		rows: readonly Component[],
+		activity: readonly Component[],
+		reply: AssistantMessageComponent | undefined,
+	): void {
+		const last = turn.parts.at(-1);
+		let startedAt = last?.endedAt() ?? turn.startedAt;
+		const continued = last && !last.isClosed() ? { part: last, rows: [] as Component[] } : undefined;
+		let open = continued;
+		const created: { part: TurnFoldComponent; rows: Component[] }[] = [];
+		const startPart = () => {
+			const group = { part: new TurnFoldComponent(startedAt, this.folding, this.outputPad), rows: [] };
+			created.push(group);
+			return group;
+		};
+		for (const row of activity) {
+			open ??= startPart();
+			open.rows.push(row);
+			if (isCommentary(row)) {
+				startedAt = messageEnd(row) ?? startedAt;
+				open = undefined;
+			}
+		}
+		if (!open && reply && hasThinking(reply)) startPart();
+		if (activity.length === 0 && created.length === 0) return;
+
+		const folded = new Set(activity);
+		const replyIndex = reply ? rows.indexOf(reply) : -1;
+		const anchoredAt = (group: { rows: Component[] }): number => {
+			const first = group.rows.length > 0 ? rows.indexOf(group.rows[0]) : replyIndex;
+			return replyIndex >= 0 && first > replyIndex ? replyIndex : first;
+		};
+		const shown = rows.flatMap((row, index) => [
+			...created.filter((group) => anchoredAt(group) === index).map((group) => group.part),
+			...(folded.has(row) ? [] : [row]),
+		]);
+		this.transcript.children.splice(this.firstRowIndex(turn), rows.length, ...shown);
+		if (continued) continued.part.absorb(continued.rows);
+		for (const group of created) group.part.absorb(group.rows);
+
+		if (created.length === 0) return;
+		turn.parts.at(-1)?.setHandoff(undefined);
+		turn.parts.push(...created.map((group) => group.part));
+		turn.parts.at(-1)?.setHandoff(turn.handoff);
+	}
+
+	/** Show the thinking of the open turn's running response by its last lines while the turn folds. */
+	private showRunning(): void {
 		const rows = this.openTurn ? this.rowsOf(this.openTurn) : undefined;
 		for (const row of rows ?? []) {
-			if (row instanceof AssistantMessageComponent) row.setThinkingCollapsed(this.folding);
+			if (row instanceof AssistantMessageComponent) row.setPlace(this.folding ? "live" : "full");
 		}
 	}
 
@@ -226,21 +263,17 @@ export class TurnFolds {
 		for (const child of this.transcript.children) {
 			if (child instanceof TurnFoldComponent) child.setFolding(folding);
 		}
-		this.collapseRunningThinking();
+		this.showRunning();
 	}
 
-	/** Open or fold the row of the last turn. Returns false when there is no such row to toggle. */
+	/** Open or fold the last row of the transcript. Returns false when there is no such row to toggle. */
 	toggleLast(): boolean {
 		if (!this.folding) return false;
-		const children = this.transcript.children;
-		for (let i = children.length - 1; i >= 0; i--) {
-			const child = children[i];
-			if (child instanceof TurnFoldComponent) {
-				child.toggle();
-				return true;
-			}
-		}
-		return false;
+		const last = this.transcript.children.findLast(
+			(child): child is TurnFoldComponent => child instanceof TurnFoldComponent && child.hasRow(),
+		);
+		last?.toggle();
+		return last !== undefined;
 	}
 
 	/** Pad new fold rows like the rest of the transcript; existing rows are updated through {@link transcriptRows}. */
@@ -264,13 +297,23 @@ function isReply(row: Component): row is AssistantMessageComponent {
 
 /**
  * Whether a row is commentary: a response with text that also called tools, such as a progress report between steps.
- * A folded turn keeps its text visible below the row.
+ * It ends a part of a folded turn and stays visible below the part's row.
  */
 function isCommentary(row: Component): row is AssistantMessageComponent {
 	return (
 		row instanceof AssistantMessageComponent &&
 		(row.getMessage()?.content.some((part) => part.type === "text" && part.text.trim() !== "") ?? false)
 	);
+}
+
+function hasThinking(row: AssistantMessageComponent): boolean {
+	return row.getMessage()?.content.some((part) => part.type === "thinking" && part.thinking.trim() !== "") ?? false;
+}
+
+/** When a message's response ended, in ms since the epoch; undefined before it has one. */
+function messageEnd(row: AssistantMessageComponent): number | undefined {
+	const message = row.getMessage();
+	return message ? message.timestamp + (message.durationMs ?? 0) : undefined;
 }
 
 /** Whether a row of a running turn can fold: not a response being written or the reply, not a tool call that runs. */
@@ -280,7 +323,7 @@ function isFinishedActivity(row: Component): boolean {
 	return true;
 }
 
-/** Count what a turn did from its rows. */
+/** Count what a part of a turn, or a whole turn, did from its rows. */
 function summarizeTurn(
 	activity: readonly Component[],
 	reply: AssistantMessageComponent | undefined,
@@ -313,16 +356,23 @@ function summarizeTurn(
 	return { tools, thinking, errors, durationMs, usage: sumUsage(steps) };
 }
 
-/** The row text without its open/closed glyph, for example `12 tools · 9 thinking · 1:40 · +38k ctx · $1.204 · 2 errors`. */
-function formatTurnSummary(summary: TurnSummary): string {
+/**
+ * The row text without its open/closed glyph, for example `12 tools · 9 thinking · 1:40 · +38k ctx · $1.204`, with
+ * `· 2 errors` at the end when errors are asked for.
+ */
+function formatTurnSummary(summary: TurnSummary, withErrors: boolean): string {
 	const parts: string[] = [];
 	if (summary.tools > 0) parts.push(`${summary.tools} ${summary.tools === 1 ? "tool" : "tools"}`);
 	if (summary.thinking > 0) parts.push(`${summary.thinking} thinking`);
 	if (summary.durationMs !== undefined) parts.push(formatDuration(summary.durationMs));
 	const usage = formatUsage(summary.usage);
 	if (usage) parts.push(usage);
-	if (summary.errors > 0) parts.push(`${summary.errors} ${summary.errors === 1 ? "error" : "errors"}`);
+	if (withErrors && summary.errors > 0) parts.push(formatErrors(summary.errors));
 	return parts.join(" · ");
+}
+
+function formatErrors(errors: number): string {
+	return `${errors} ${errors === 1 ? "error" : "errors"}`;
 }
 
 function formatDuration(durationMs: number): string {
@@ -334,9 +384,10 @@ function formatDuration(durationMs: number): string {
 }
 
 /**
- * The fold row of one turn, followed by the turn's activity while it is open, or by the text of its commentary while it
- * is folded. With folding off it shows the activity alone, as before folding existed. The reply stays outside, after this component. A running turn adds rows as they
- * finish ({@link absorb}) and gets its reply once it has one ({@link finish}).
+ * One part of a turn: its row, followed by the part's activity while it is open, or by the commentary that ends the
+ * part while it is folded. With folding off, or without a tool call or thinking to count, it shows the activity alone,
+ * as before folding existed. The reply stays outside, after the turn's last part. A running turn adds rows to its last
+ * part as they finish ({@link absorb}) and gives that part its reply once it has one ({@link finish}).
  */
 export class TurnFoldComponent extends Container {
 	private readonly activity = new TranscriptContainer();
@@ -365,20 +416,20 @@ export class TurnFoldComponent extends Container {
 		this.update();
 	}
 
-	/** The rows folded into this turn. */
+	/** The rows folded into this part. */
 	getActivityRows(): readonly Component[] {
 		return this.activity.children;
 	}
 
-	/** Fold more rows of the turn, after the ones folded before. */
+	/** Fold more rows of the turn into this part, after the ones folded before. */
 	absorb(rows: readonly Component[]): void {
 		for (const row of rows) this.activity.addChild(row);
 		this.update();
 	}
 
 	/**
-	 * Mark the turn finished with its reply, whose thinking folds with the turn; undefined for a turn cut short. A
-	 * running handoff goes, because the reply says what the turn did.
+	 * Mark this last part of a turn finished with the turn's reply, whose thinking it counts; undefined for a turn cut
+	 * short. A running handoff goes, because the reply says what the turn did.
 	 */
 	finish(reply: AssistantMessageComponent | undefined): void {
 		this.reply = reply;
@@ -386,14 +437,32 @@ export class TurnFoldComponent extends Container {
 		this.update();
 	}
 
-	/** Show what a model wrote about the turn. */
-	setHandoff(handoff: TurnHandoff): void {
+	/** Show what a model wrote about the turn, or nothing. */
+	setHandoff(handoff: TurnHandoff | undefined): void {
 		this.handoff = handoff;
 	}
 
-	/** Open or fold this turn. Does nothing while folding is off. */
+	/** Whether commentary ended this part, so the turn's next rows start another one. */
+	isClosed(): boolean {
+		const last = this.activity.children.at(-1);
+		return last !== undefined && isCommentary(last);
+	}
+
+	/** When the commentary that ended this part was written; undefined while the part takes more rows. */
+	endedAt(): number | undefined {
+		const last = this.activity.children.at(-1);
+		return last && isCommentary(last) ? messageEnd(last) : undefined;
+	}
+
+	/** Whether this part has a row: it counts a tool call or thinking. */
+	hasRow(): boolean {
+		const { tools, thinking } = this.summary();
+		return tools > 0 || thinking > 0;
+	}
+
+	/** Open or fold this part. Does nothing while folding is off or without a row. */
 	toggle(): void {
-		if (!this.folding) return;
+		if (!this.folding || !this.hasRow()) return;
 		this.open = !this.open;
 		this.update();
 	}
@@ -410,41 +479,41 @@ export class TurnFoldComponent extends Container {
 		this.outputPad = outputPad;
 	}
 
+	private summary(): TurnSummary {
+		return summarizeTurn(this.activity.children, this.reply, this.startedAt);
+	}
+
 	private update(): void {
-		const folded = this.folding && !this.open;
-		const commentary = this.activity.children.filter(isCommentary);
-		this.children = !this.folding
+		const folds = this.folding && this.hasRow();
+		const folded = folds && !this.open;
+		const last = this.activity.children.at(-1);
+		const commentary = last && isCommentary(last) ? last : undefined;
+		this.children = !folds
 			? [this.activity]
 			: this.open
 				? [this.header, this.activity]
-				: [this.header, ...commentary];
-		for (const row of commentary) row.setActivityFolded(folded);
-		this.reply?.setActivityFolded(folded);
+				: [this.header, ...(commentary ? [commentary] : [])];
+		for (const row of this.activity.children) {
+			if (row instanceof AssistantMessageComponent) row.setPlace(folded && row === commentary ? "folded" : "full");
+		}
+		this.reply?.setPlace(folded ? "folded" : "full");
 	}
 
 	private renderRow(width: number): string {
-		const summary = summarizeTurn(this.activity.children, this.reply, this.startedAt);
+		const summary = this.summary();
 		const glyph = this.open ? "▾" : "▸";
-		const text = formatTurnSummary({ ...summary, errors: 0 });
-		const errors = formatTurnSummary({
-			tools: 0,
-			thinking: 0,
-			durationMs: undefined,
-			errors: summary.errors,
-			usage: { added: undefined, cost: undefined },
-		});
-		const errorPart = errors ? theme.fg("error", ` · ${errors}`) : "";
+		const errorPart = summary.errors > 0 ? theme.fg("error", ` · ${formatErrors(summary.errors)}`) : "";
 		const summaryPart =
 			this.handoff?.kind === "finished" && !this.open ? theme.fg("dim", ` · ${this.handoff.summary}`) : "";
 		return truncateToWidth(
-			`${" ".repeat(this.outputPad)}${theme.fg("muted", `${glyph} ${text}`)}${errorPart}${summaryPart}`,
+			`${" ".repeat(this.outputPad)}${theme.fg("muted", `${glyph} ${formatTurnSummary(summary, false)}`)}${errorPart}${summaryPart}`,
 			width,
 		);
 	}
 
 	/**
 	 * The lines below the row: a running handoff in three lines cut to the width, so the row keeps its height while
-	 * the handoff changes; a finished one in full while the turn is open, since the row cuts it.
+	 * the handoff changes; a finished one in full while the part is open, since the row cuts it.
 	 */
 	private renderHandoff(width: number): string[] {
 		const indent = " ".repeat(this.outputPad + 2);

@@ -11,6 +11,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { MarkdownMessageType, MarkdownTransformer } from "../../../core/extensions/types.ts";
+import { stripAnsi } from "../../../utils/ansi.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 import { formatUsage, type StepUsage } from "./step-usage.ts";
@@ -24,12 +25,28 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
  * a streamed answer keeps the blocks it already rendered, also once the stream ends.
  */
 interface MarkdownSlot {
-	kind: "text" | "note" | "thinking";
+	kind: "text" | "thinking";
 	markdown: Markdown;
 }
 
-/** How far a note of a folded turn is indented past the transcript padding: its bullet under the text of the row. */
-const NOTE_BULLET_INDENT = 2;
+/**
+ * Where a message stands in its turn: shown in full, written while its turn folds, or the commentary or reply of a
+ * folded part of a turn, whose row counts its thinking.
+ */
+export type MessagePlace = "full" | "live" | "folded";
+
+/** How one thinking run shows: not at all, as its label line, as its last lines while it is written, or in full. */
+type ThinkingView = "none" | "label" | "window" | "text";
+
+/** How many lines a thinking run written in a folded turn shows, its last ones, so the turn keeps a steady height. */
+const THINKING_WINDOW_LINES = 4;
+
+/** How a thinking run shows, from where its message stands, whether the run is hidden, and the hidden label. */
+function thinkingView(place: MessagePlace, hidden: boolean, hiddenLabel: string): ThinkingView {
+	if (place === "folded") return "none";
+	if (hidden) return hiddenLabel.trim() ? "label" : "none";
+	return place === "live" ? "window" : "text";
+}
 
 /**
  * Component that renders a complete assistant message
@@ -48,15 +65,11 @@ export class AssistantMessageComponent extends Container {
 	private timestamp?: string;
 	private thinkingVisibilityOverrides = new Map<number, boolean>();
 	private markdownSlots: MarkdownSlot[] = [];
-	/**
-	 * Set while this message is the reply or the commentary of a folded turn: thinking folds with the turn, the text and
-	 * the stop notice stay. Commentary shows its text as a note of the turn's row.
-	 */
-	private activityFolded = false;
-	/** Set while this message runs in a folded turn: each thinking run shows as its label line. */
-	private thinkingCollapsed = false;
+	private place: MessagePlace = "full";
 	/** Set on a reply: its step usage, shown at the right below it unless its turn is folded, whose row sums it. */
 	private stepUsage: StepUsage | undefined;
+	/** Set on the reply of a turn folded into several parts: the turn's totals, shown below it while it is folded. */
+	private turnSummary: (() => string) | undefined;
 
 	constructor(
 		message?: AssistantMessage,
@@ -117,24 +130,23 @@ export class AssistantMessageComponent extends Container {
 		return !this.isStreaming && this.lastMessage !== undefined;
 	}
 
-	/** Show each thinking run as its label line, so a response written in a folded turn keeps a steady height. */
-	setThinkingCollapsed(collapsed: boolean): void {
-		if (collapsed === this.thinkingCollapsed) return;
-		this.thinkingCollapsed = collapsed;
+	/**
+	 * Show this message where it stands in its turn. Written in a folded turn, each visible thinking run shows its last
+	 * lines. Folded, its thinking goes, and an abort or error notice shows here even when the message has tool calls,
+	 * because their rows, which show it otherwise, are folded too; commentary then follows its part's row without a blank
+	 * line, so it reads as the end of that part, and a reply shows its turn's totals instead of its step usage.
+	 */
+	setPlace(place: MessagePlace): void {
+		if (place === this.place) return;
+		this.place = place;
 		if (this.lastMessage) {
 			this.updateContent(this.lastMessage);
 		}
 	}
 
-	/**
-	 * Fold or show this message's thinking with its turn. While folded, an abort or error notice shows here even when the
-	 * message has tool calls, because their rows, which show it otherwise, are folded too. A message that called tools
-	 * then shows as a note below the row, so it does not read as the reply: muted, indented under the row's text, with a
-	 * bullet on its first line and no blank line before it.
-	 */
-	setActivityFolded(folded: boolean): void {
-		if (folded === this.activityFolded) return;
-		this.activityFolded = folded;
+	/** Show the totals of this reply's turn below it while the turn is folded; they are read at each render. */
+	setTurnSummary(summary: () => string): void {
+		this.turnSummary = summary;
 		if (this.lastMessage) {
 			this.updateContent(this.lastMessage);
 		}
@@ -196,13 +208,10 @@ export class AssistantMessageComponent extends Container {
 			return markdown;
 		};
 
-		const asNote = this.activityFolded && message.stopReason === "toolUse";
-		let bulleted = false;
-
 		// Spacers are added lazily, right before the next visible content block. This puts a blank
 		// line before the first visible block and after each visible thinking run that is followed
 		// by more visible content, while hidden thinking runs without a label contribute nothing.
-		let needsSpacer = !asNote;
+		let needsSpacer = !(this.place === "folded" && message.stopReason === "toolUse");
 		const addVisibleChild = (child: Component) => {
 			if (needsSpacer) {
 				this.contentContainer.addChild(new Spacer(1));
@@ -219,40 +228,21 @@ export class AssistantMessageComponent extends Container {
 				// Assistant text messages with no background - trim the text
 				// Set paddingY=0 to avoid extra spacing before tool executions
 				const text = content.text.trim();
-				if (asNote) {
-					const bulletColumn = this.outputPad + NOTE_BULLET_INDENT;
-					const note = markdownBlock(
-						"note",
+				addVisibleChild(
+					markdownBlock(
+						"text",
 						text,
 						() =>
 							new Markdown(
 								text,
-								bulletColumn + 2,
+								this.outputPad,
 								0,
 								this.markdownTheme,
-								{ color: (line: string) => theme.fg("muted", line) },
+								undefined,
 								this.markdownOptions("assistant"),
 							),
-					);
-					addVisibleChild(bulleted ? note : withBullet(note, bulletColumn));
-					bulleted = true;
-				} else {
-					addVisibleChild(
-						markdownBlock(
-							"text",
-							text,
-							() =>
-								new Markdown(
-									text,
-									this.outputPad,
-									0,
-									this.markdownTheme,
-									undefined,
-									this.markdownOptions("assistant"),
-								),
-						),
-					);
-				}
+					),
+				);
 			} else if (content.type === "thinking") {
 				const thinkingBlocks: string[] = [];
 				for (; i < message.content.length; i++) {
@@ -272,34 +262,39 @@ export class AssistantMessageComponent extends Container {
 				}
 
 				const runIndex = thinkingRunIndex++;
-				if (this.activityFolded) {
+				const hidden = this.thinkingVisibilityOverrides.get(runIndex) ?? this.hideThinkingBlock;
+				const view = thinkingView(this.place, hidden, this.hiddenThinkingLabel);
+				// A run that shows nothing adds no spacing either.
+				if (view === "none") {
 					continue;
 				}
-				const hidden =
-					this.thinkingCollapsed || (this.thinkingVisibilityOverrides.get(runIndex) ?? this.hideThinkingBlock);
-				// A hidden run with an empty label renders nothing, including no spacing.
-				if (hidden && !this.hiddenThinkingLabel.trim()) {
-					continue;
-				}
+				const thinkingMarkdown = (thinking: string) =>
+					markdownBlock(
+						"thinking",
+						thinking,
+						() =>
+							new Markdown(
+								thinking,
+								this.outputPad,
+								0,
+								this.markdownTheme,
+								{
+									color: (text: string) => theme.fg("thinkingText", text),
+									italic: true,
+								},
+								this.markdownOptions("assistant-thinking"),
+							),
+					);
 				const thinking = thinkingBlocks.join("\n\n");
-				const thinkingComponent = hidden
-					? new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), this.outputPad, 0)
-					: markdownBlock(
-							"thinking",
-							thinking,
-							() =>
-								new Markdown(
-									thinking,
-									this.outputPad,
-									0,
-									this.markdownTheme,
-									{
-										color: (text: string) => theme.fg("thinkingText", text),
-										italic: true,
-									},
-									this.markdownOptions("assistant-thinking"),
-								),
-						);
+				const thinkingComponent =
+					view === "label"
+						? new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), this.outputPad, 0)
+						: view === "window"
+							? lastLines(
+									thinkingMarkdown(lastSourceLines(thinking, THINKING_WINDOW_LINES)),
+									THINKING_WINDOW_LINES,
+								)
+							: thinkingMarkdown(thinking);
 				addVisibleChild(
 					new MouseRegion(thinkingComponent, (event) => {
 						if (event.type !== "click" || event.button !== "left") return undefined;
@@ -319,7 +314,7 @@ export class AssistantMessageComponent extends Container {
 		// Length stops can happen before a tool call is complete, so surface them here too.
 		const hasToolCalls = message.content.some((c) => c.type === "toolCall");
 		this.hasToolCalls = hasToolCalls;
-		const showsStopNotice = !hasToolCalls || this.activityFolded;
+		const showsStopNotice = !hasToolCalls || this.place === "folded";
 		if (message.stopReason === "length") {
 			this.contentContainer.addChild(new Spacer(1));
 			this.contentContainer.addChild(
@@ -340,11 +335,14 @@ export class AssistantMessageComponent extends Container {
 			}
 		}
 
+		// Step usage and turn totals change after this update, when later calls report, so each render reads them.
 		const usage = this.stepUsage;
-		if (usage && !this.activityFolded) {
+		const turnSummary = this.turnSummary;
+		const footnote = this.place === "folded" ? turnSummary : usage ? () => formatUsage(usage) : undefined;
+		if (footnote) {
 			this.contentContainer.addChild({
 				render: (width) => {
-					const text = formatUsage(usage);
+					const text = footnote();
 					const room = width - this.outputPad - visibleWidth(text);
 					return text && room >= 0 ? [`${" ".repeat(room)}${theme.fg("dim", text)}`] : [];
 				},
@@ -366,13 +364,25 @@ export class AssistantMessageComponent extends Container {
 	}
 }
 
-/** Put a bullet at `column` of a block's first line, which the block's padding keeps blank. */
-function withBullet(block: Component, column: number): Component {
+/** The text from the `count`-th last non-empty line on, so a long thinking run is not rendered whole for its window. */
+function lastSourceLines(text: string, count: number): string {
+	const lines = text.split("\n");
+	let start = lines.length;
+	for (let kept = 0; start > 0 && kept < count; ) {
+		start--;
+		if (lines[start].trim()) kept++;
+	}
+	return lines.slice(start).join("\n");
+}
+
+/** The last `count` lines a block renders that are not blank. */
+function lastLines(block: Component, count: number): Component {
 	return {
-		render: (width) => {
-			const [first = "", ...rest] = block.render(width);
-			return [`${first.slice(0, column)}${theme.fg("muted", "•")}${first.slice(column + 1)}`, ...rest];
-		},
+		render: (width) =>
+			block
+				.render(width)
+				.filter((line) => stripAnsi(line).trim() !== "")
+				.slice(-count),
 		invalidate: () => block.invalidate(),
 	};
 }

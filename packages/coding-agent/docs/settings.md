@@ -17,7 +17,8 @@ Add `"$schema": "https://pi.dev/schemas/settings.schema.json"` to `settings.json
 | `thinkingBudgets` | object | Built-in budgets | Token budgets for `minimal`, `low`, `medium`, and `high` thinking levels. |
 | `enabledModels` | `string[]` | All available models | Model patterns used for startup selection and model cycling. Uses the same format as `--models`. |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in the transcript. |
-| `foldTurns` | boolean | `true` | Fold each turn into one row between the user message and the reply, also while it runs. Text the model wrote between tool calls stays visible below the row as muted, bulleted notes. Toggle with `app.tools.toggle`. |
+| `foldTurns` | boolean | `true` | Fold each turn into rows between the user message and the reply, also while it runs. Text the model wrote before it called tools ends a part of the turn and stays visible below that part's row; the rows after it start the next part. While a turn folds, the response being written shows the last lines of its thinking. Toggle with `app.tools.toggle`. |
+| `toolOutput` | `"compact" \| "collapsed" \| "expanded"` | `"compact"` | How tool calls show: one line each, with a preview of their output, or with all of it. `app.tools.expand` cycles it and saves the choice. |
 | `showCacheMissNotices` | boolean | `false` | Show notices for significant cache misses, successful cache warming, compaction usage, and provider recovery. |
 | `showTokenUsage` | boolean | `true` | Show what each step added to the context window and what its model call cost, at the right of its first tool row or below a reply, summed on each folded turn's row. Costs are hidden for subscriptions. |
 | `cacheWarming` | `"off" \| "streaming" \| "idle"` | `"streaming"` | Keep eligible provider prompt caches warm during active runs or, with `"idle"`, between runs. Global setting only. |

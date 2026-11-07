@@ -284,22 +284,26 @@ describe("InteractiveMode session view", () => {
 			expect(before.join("\n")).toContain("bash ls");
 
 			// The result arrives in a later write; it completes the call rendered earlier, which folds with the running turn.
+			// The commentary before the call stays: it ends the part before the call's part.
 			appendFileSync(file, `${toolResultEntry("t1", "a1", "call-1", "alpha.txt")}\n`);
 			await vi.waitFor(() => expect(screen().map((row) => row.trim())).toContain("▸ 1 tool · 0:00"), {
 				timeout: 2000,
 			});
-			expect(screen().join("\n")).not.toContain("Listing them now.");
+			expect(screen().join("\n")).toContain("Listing them now.");
+			expect(screen().join("\n")).not.toContain("bash ls");
 
 			appendFileSync(file, `${assistantEntry("a2", "t1", [{ type: "text", text: "There is one file." }])}\n`);
 			await vi.waitFor(() => expect(screen().join("\n")).toContain("There is one file."), { timeout: 2000 });
 
 			const after = screen();
-			// The task row keeps its place; the activity below it folds into one row above the reply.
+			// The task row keeps its place; the activity below the commentary folds into one row above the reply.
 			expect(after[taskRow]).toBe(before[taskRow]);
 			const rows = after.slice(taskRow).filter((row) => row.trim());
-			expect(rows.slice(0, 3).map((row) => row.trim())).toEqual([
+			expect(rows.slice(0, 4).map((row) => row.trim())).toEqual([
 				"Please list the files",
-				"▸ 1 tool · 0:00",
+				"Listing them now.",
+				// The reply's one output token is what the part added to the context.
+				"▸ 1 tool · 0:00 · +1 ctx",
 				"There is one file.",
 			]);
 			expect(after.join("\n")).not.toContain("bash ls");
