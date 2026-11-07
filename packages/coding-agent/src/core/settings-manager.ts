@@ -971,6 +971,12 @@ export class SettingsManager {
 		return this.settings.foldTurns ?? SETTINGS_DEFAULTS.foldTurns;
 	}
 
+	getToolOutput(): "compact" | "collapsed" | "expanded" {
+		// settings.json is not validated on load.
+		const mode = this.settings.toolOutput;
+		return mode === "collapsed" || mode === "expanded" || mode === "compact" ? mode : SETTINGS_DEFAULTS.toolOutput;
+	}
+
 	getShowCacheMissNotices(): boolean {
 		return this.settings.showCacheMissNotices ?? SETTINGS_DEFAULTS.showCacheMissNotices;
 	}
@@ -1000,6 +1006,12 @@ export class SettingsManager {
 	setFoldTurns(fold: boolean): void {
 		this.globalSettings.foldTurns = fold;
 		this.markModified("foldTurns");
+		this.save();
+	}
+
+	setToolOutput(mode: "compact" | "collapsed" | "expanded"): void {
+		this.globalSettings.toolOutput = mode;
+		this.markModified("toolOutput");
 		this.save();
 	}
 

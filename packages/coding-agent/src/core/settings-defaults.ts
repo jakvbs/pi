@@ -27,6 +27,7 @@ export const SETTINGS_DEFAULTS = {
 	},
 	hideThinkingBlock: false,
 	foldTurns: true,
+	toolOutput: "compact",
 	showCacheMissNotices: false,
 	showTokenUsage: true,
 	quietStartup: false,

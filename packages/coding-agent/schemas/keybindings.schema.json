@@ -245,7 +245,7 @@
     },
     "app.turn.toggle": {
       "$ref": "#/$defs/KeybindingValue",
-      "description": "Open or fold the last turn"
+      "description": "Open or fold the last row of a folded turn"
     },
     "app.session.toggleNamedFilter": {
       "$ref": "#/$defs/KeybindingValue",

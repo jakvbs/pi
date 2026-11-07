@@ -20,7 +20,7 @@ To include files or images:
 
 ## Follow Pi's work
 
-Pi shows each tool call and result while it works. Tool calls start as compact one-line rows; press `Ctrl+O` to cycle tool output through collapsed, expanded, and compact. Press `Ctrl+T` to show or hide thinking blocks.
+Pi shows each tool call and result while it works. Tool calls start as compact one-line rows; press `Ctrl+O` to cycle tool output through collapsed, expanded, and compact, and Pi keeps the choice for the next session. Press `Ctrl+T` to show or hide thinking blocks. By default each turn folds into rows between your prompt and the reply: one row per part of the work, and the text Pi writes between steps stays visible below the part it ends. While a turn runs, the response being written shows the last lines of its thinking. `Alt+H` turns folding off, and a click on a row or `Alt+O` opens one.
 
 The startup header lists the instructions and resources Pi loaded. The editor border indicates the current thinking level. The footer updates as the model uses context and reports usage.
 

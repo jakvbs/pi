@@ -163,12 +163,12 @@ On native Windows, `app.suspend` has no default because Windows terminals do not
 |--------|---------|-------------|
 | `app.tools.expand` | `ctrl+o` | Cycle tool output: collapsed → expanded → compact |
 | `app.tools.toggle` | `alt+h` | Fold turns, or show every turn in full |
-| `app.turn.toggle` | `alt+o` | Open or fold the last turn |
+| `app.turn.toggle` | `alt+o` | Open or fold the last row of a folded turn |
 | `app.message.copy` | `ctrl+x` | Copy the selected message in `/tree`; in fullscreen mode, copy the active selection when `fullscreenCopyOnSelect` is `false`; otherwise copy the last assistant message. On OAuth sign-in screens, copy the sign-in URL |
 | `app.message.followUp` | `alt+enter` (`ctrl+q` on Windows and WSL) | Queue follow-up message |
 | `app.message.dequeue` | `alt+up` (`alt+q` on Windows and WSL) | Restore queued messages to editor |
 
-Tool output starts in compact mode. Compact tool output shows one line per call with its status and abbreviated arguments, without results or images. Click a compact row in fullscreen mode to expand it, or cycle `ctrl+o` back to expanded. Other expandable transcript entries remain collapsed in compact mode. This changes only the display, not the model context.
+Tool output starts in the mode saved in the `toolOutput` setting, compact by default, and each press of `ctrl+o` saves the mode it selects. Compact tool output shows one line per call with its status and abbreviated arguments, without results or images. Click a compact row in fullscreen mode to expand it, or cycle `ctrl+o` back to expanded. Other expandable transcript entries remain collapsed in compact mode. This changes only the display, not the model context.
 
 ### Tree Navigation
 

@@ -577,6 +577,27 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("toolOutput", () => {
+		it("should default to compact and persist the chosen mode", async () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getToolOutput()).toBe("compact");
+
+			manager.setToolOutput("expanded");
+			await manager.flush();
+
+			const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
+			expect(savedSettings.toolOutput).toBe("expanded");
+			expect(SettingsManager.create(projectDir, agentDir).getToolOutput()).toBe("expanded");
+		});
+
+		it("should treat an unknown mode as compact", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ toolOutput: "full" }));
+
+			expect(SettingsManager.create(projectDir, agentDir).getToolOutput()).toBe("compact");
+		});
+	});
+
 	describe("markdown.mermaid", () => {
 		it("defaults to streaming and persists rendering modes", async () => {
 			const manager = SettingsManager.create(projectDir, agentDir);

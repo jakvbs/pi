@@ -58,7 +58,7 @@ const APP_KEYBINDINGS = {
 	},
 	"app.turn.toggle": {
 		defaultKeys: "alt+o",
-		description: "Open or fold the last turn",
+		description: "Open or fold the last row of a folded turn",
 	},
 	"app.session.toggleNamedFilter": {
 		defaultKeys: "ctrl+n",

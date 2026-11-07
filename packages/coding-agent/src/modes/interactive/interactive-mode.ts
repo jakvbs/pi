@@ -723,6 +723,7 @@ export class InteractiveMode {
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+		this.toolDisplayMode = this.settingsManager.getToolOutput();
 		this.outputPad = this.settingsManager.getOutputPad();
 		this.turnFolds = new TurnFolds(this.chatContainer, this.settingsManager.getFoldTurns(), this.outputPad);
 
@@ -2266,6 +2267,7 @@ export class InteractiveMode {
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+		this.applyToolDisplayMode(this.settingsManager.getToolOutput());
 		this.outputPad = this.settingsManager.getOutputPad();
 		this.turnFolds.setOutputPad(this.outputPad);
 		this.turnFolds.setFolding(this.settingsManager.getFoldTurns());
@@ -4921,7 +4923,9 @@ export class InteractiveMode {
 			expanded: "compact",
 			compact: "collapsed",
 		};
-		this.setToolDisplayMode(next[this.toolDisplayMode]);
+		const mode = next[this.toolDisplayMode];
+		this.setToolDisplayMode(mode);
+		this.settingsManager.setToolOutput(mode);
 	}
 
 	private setToolsExpanded(expanded: boolean): void {
@@ -4930,7 +4934,13 @@ export class InteractiveMode {
 
 	private setToolDisplayMode(mode: ToolDisplayMode): void {
 		if (mode === this.toolDisplayMode) return;
+		this.applyToolDisplayMode(mode);
+		this.showStatus(`Tool output: ${mode}`);
+	}
 
+	/** Show every tool row, and the other expandable rows, in a tool output mode. */
+	private applyToolDisplayMode(mode: ToolDisplayMode): void {
+		if (mode === this.toolDisplayMode) return;
 		this.toolDisplayMode = mode;
 		const expanded = this.toolOutputExpanded;
 		const activeHeader = this.customHeader ?? this.builtInHeader;
@@ -4946,7 +4956,6 @@ export class InteractiveMode {
 				}
 			}
 		}
-		this.showStatus(`Tool output: ${mode}`);
 	}
 
 	/** Update rendered assistant messages without rebuilding live tool components. */
@@ -6846,6 +6855,7 @@ export class InteractiveMode {
 				return;
 			}
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+			this.toolDisplayMode = this.settingsManager.getToolOutput();
 			this.outputPad = this.settingsManager.getOutputPad();
 			this.turnFolds.setOutputPad(this.outputPad);
 			this.turnFolds.setFolding(this.settingsManager.getFoldTurns());
@@ -7265,7 +7275,7 @@ export class InteractiveMode {
 | \`${expandTools}\` | Toggle tool output expansion |
 | \`${toggleThinking}\` | Toggle thinking block visibility |
 | \`${toggleFolding}\` | Fold turns, or show them in full |
-| \`${toggleTurn}\` | Open or fold the last turn |
+| \`${toggleTurn}\` | Open or fold the last row of a folded turn |
 | \`${externalEditor}\` | Edit message in external editor |
 | \`${copyMessage}\` | Copy selection or last assistant message |
 | \`${followUp}\` | Queue follow-up message |
