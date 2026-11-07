@@ -21,6 +21,7 @@ import type {
 	SessionShareDestination,
 	Settings,
 	ThinkingBudgetsSettings,
+	TranscriptDetail,
 	TransportSetting,
 	TuiMode,
 	WarningSettings,
@@ -46,6 +47,7 @@ export type {
 	Settings,
 	TerminalSettings,
 	ThinkingBudgetsSettings,
+	TranscriptDetail,
 	TransportSetting,
 	TuiMode,
 	WarningSettings,
@@ -967,14 +969,12 @@ export class SettingsManager {
 		return this.settings.hideThinkingBlock ?? SETTINGS_DEFAULTS.hideThinkingBlock;
 	}
 
-	getFoldTurns(): boolean {
-		return this.settings.foldTurns ?? SETTINGS_DEFAULTS.foldTurns;
-	}
-
-	getToolOutput(): "compact" | "collapsed" | "expanded" {
+	getTranscriptDetail(): TranscriptDetail {
 		// settings.json is not validated on load.
-		const mode = this.settings.toolOutput;
-		return mode === "collapsed" || mode === "expanded" || mode === "compact" ? mode : SETTINGS_DEFAULTS.toolOutput;
+		const detail = this.settings.transcriptDetail;
+		return detail === "folded" || detail === "compact" || detail === "collapsed" || detail === "expanded"
+			? detail
+			: SETTINGS_DEFAULTS.transcriptDetail;
 	}
 
 	getShowCacheMissNotices(): boolean {
@@ -1003,15 +1003,9 @@ export class SettingsManager {
 		this.save();
 	}
 
-	setFoldTurns(fold: boolean): void {
-		this.globalSettings.foldTurns = fold;
-		this.markModified("foldTurns");
-		this.save();
-	}
-
-	setToolOutput(mode: "compact" | "collapsed" | "expanded"): void {
-		this.globalSettings.toolOutput = mode;
-		this.markModified("toolOutput");
+	setTranscriptDetail(detail: TranscriptDetail): void {
+		this.globalSettings.transcriptDetail = detail;
+		this.markModified("transcriptDetail");
 		this.save();
 	}
 

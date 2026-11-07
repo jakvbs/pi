@@ -47,14 +47,13 @@ const APP_KEYBINDINGS = {
 		description: "Cycle to previous model",
 	},
 	"app.model.select": { defaultKeys: "ctrl+l", description: "Open model selector" },
-	"app.tools.expand": { defaultKeys: "ctrl+o", description: "Toggle tool output" },
+	"app.tools.expand": {
+		defaultKeys: "ctrl+o",
+		description: "Show more of the agent's work: folded turns, compact, collapsed, expanded",
+	},
 	"app.thinking.toggle": {
 		defaultKeys: "ctrl+t",
 		description: "Toggle thinking blocks",
-	},
-	"app.tools.toggle": {
-		defaultKeys: "alt+h",
-		description: "Turn folding of turns on or off",
 	},
 	"app.turn.toggle": {
 		defaultKeys: "alt+o",

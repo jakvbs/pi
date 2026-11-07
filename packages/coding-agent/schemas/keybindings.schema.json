@@ -233,15 +233,11 @@
     },
     "app.tools.expand": {
       "$ref": "#/$defs/KeybindingValue",
-      "description": "Toggle tool output"
+      "description": "Show more of the agent's work: folded turns, compact, collapsed, expanded"
     },
     "app.thinking.toggle": {
       "$ref": "#/$defs/KeybindingValue",
       "description": "Toggle thinking blocks"
-    },
-    "app.tools.toggle": {
-      "$ref": "#/$defs/KeybindingValue",
-      "description": "Turn folding of turns on or off"
     },
     "app.turn.toggle": {
       "$ref": "#/$defs/KeybindingValue",

@@ -212,13 +212,12 @@
       "type": "boolean",
       "default": false
     },
-    "foldTurns": {
-      "type": "boolean",
-      "description": "Fold each turn into rows between the user message and the reply, one per part that commentary ends.",
-      "default": true
-    },
-    "toolOutput": {
+    "transcriptDetail": {
       "anyOf": [
+        {
+          "type": "string",
+          "const": "folded"
+        },
         {
           "type": "string",
           "const": "compact"
@@ -232,8 +231,8 @@
           "const": "expanded"
         }
       ],
-      "description": "How tool calls show: one line each, with a preview of their output, or with all of it.",
-      "default": "compact"
+      "description": "How much of the agent's work the transcript shows: turns folded into rows, each tool call on one line, with a preview of its output, or with all of it.",
+      "default": "folded"
     },
     "showCacheMissNotices": {
       "type": "boolean",
