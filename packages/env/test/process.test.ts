@@ -176,6 +176,36 @@ describe("input and output", () => {
 		expect(output.every((byte) => byte === 120)).toBe(true);
 	}, 30_000);
 
+	it("delivers all output of a program that exits while a slow link holds its output back", async () => {
+		const { connection, cwd } = connect();
+		// More than the daemon keeps unsent before its readers wait, so the link is full when `quick` writes.
+		const flood = await openProcess(connection, {
+			cwd,
+			argv: node(
+				`process.stdin.once("data", () => setTimeout(() => process.stdout.write(Buffer.alloc(6 * 1024 * 1024, 120)), 100))`,
+			),
+			onStdout: () => {},
+		});
+		const stdout = collector();
+		// More than a 64 KiB pipe: the rest waits in the pipe after the daemon read one chunk and held it back.
+		const quick = await openProcess(connection, {
+			cwd,
+			argv: node(
+				`process.stdin.once("data", () => setTimeout(() => { process.stdout.write(Buffer.alloc(100_000, 121), () => process.exit(0)); }, 300))`,
+			),
+			onStdout: stdout.onData,
+		});
+		flood.write(new Uint8Array([1]));
+		quick.write(new Uint8Array([1]));
+		await new Promise((done) => setTimeout(done, 50));
+		// This process reads nothing while blocked, a slow link: `quick` exits and stays quiet past the daemon's grace.
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
+		expect(await quick.exited).toBe(0);
+		expect(stdout.bytes().length).toBe(100_000);
+		flood.closeStdin();
+		expect(await flood.exited).toBe(0);
+	}, 30_000);
+
 	it("refuses input after stdin was closed while the program keeps running", async () => {
 		const { connection, cwd } = connect();
 		const started = Promise.withResolvers<void>();

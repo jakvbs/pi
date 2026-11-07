@@ -215,11 +215,16 @@ pub fn run(
         let wait = match idle_until {
             Some(idle) => {
                 let now = Instant::now();
-                if now >= idle {
+                if now < idle {
+                    idle - now
+                } else if output.holds_readers(EXIT_STDIO_GRACE) {
+                    // A reader the link holds back has not seen its pipe go quiet.
+                    idle_until = Some(now + EXIT_STDIO_GRACE);
+                    EXIT_STDIO_GRACE
+                } else {
                     // A descendant may hold the pipes open after the program exited; stop waiting for it.
                     break;
                 }
-                idle - now
             }
             None => Duration::from_secs(3600),
         };

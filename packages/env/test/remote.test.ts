@@ -5,6 +5,7 @@ import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/conte
 import { getOrThrow, type ShellOutputInfo } from "@earendil-works/pi-durable/env";
 import { afterAll, describe, expect, it } from "vitest";
 import { Connection, nodePlatform } from "../src/connection.ts";
+import { openProcess } from "../src/process.ts";
 import { RemoteExecutionEnv } from "../src/remote-env.ts";
 import { daemon } from "./daemon.ts";
 
@@ -107,6 +108,43 @@ describe("RemoteExecutionEnv", () => {
 		const bounded = getOrThrow(await env.listFiles(".", { maxEntries: 5000 }, context));
 		expect([bounded.entries.length, bounded.truncated]).toEqual([5000, true]);
 		// Creating 10,000 files takes several seconds on Windows CI.
+	}, 30_000);
+
+	it("delivers all output of a command that exits while a slow link holds its output back", async () => {
+		const { env, connection } = environment();
+		// More than the daemon keeps unsent before its readers wait, so the link is full when the command writes.
+		const flood = await openProcess(connection, {
+			cwd: env.cwd,
+			argv: [
+				process.execPath,
+				"-e",
+				`process.stdin.once("data", () => setTimeout(() => process.stdout.write(Buffer.alloc(6 * 1024 * 1024, 120)), 100))`,
+			],
+			onStdout: () => {},
+		});
+		let output = "";
+		// More than a 64 KiB pipe: the rest waits in the pipe after the daemon read one chunk and held it back.
+		const command = env.exec(
+			[
+				process.execPath,
+				"-e",
+				`setTimeout(() => process.stdout.write(Buffer.alloc(100_000, 121), () => process.exit(0)), 300)`,
+			],
+			{
+				onOutput: (text: string) => {
+					output += text;
+				},
+			},
+			context,
+		);
+		flood.write(new Uint8Array([1]));
+		await new Promise((done) => setTimeout(done, 50));
+		// This process reads nothing while blocked, a slow link: the command exits and stays quiet past the daemon's grace.
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
+		expect(getOrThrow(await command).exitCode).toBe(0);
+		expect(output.length).toBe(100_000);
+		flood.closeStdin();
+		expect(await flood.exited).toBe(0);
 	}, 30_000);
 
 	it("times out a command that produces no output", async () => {

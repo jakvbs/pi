@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Unsent bulk bytes above which unwindowed command output waits.
 const BULK_LIMIT: usize = 4 * 1024 * 1024;
@@ -18,6 +18,8 @@ struct Queues {
     control: VecDeque<Frame>,
     bulk: VecDeque<(Frame, Option<Arc<AtomicUsize>>)>,
     bulk_bytes: usize,
+    /// When the unsent bulk output last fell back to the limit, which lets waiting readers read again.
+    released_at: Option<Instant>,
     closed: bool,
 }
 
@@ -60,6 +62,16 @@ impl Output {
         }
     }
 
+    /// Whether a reader may still be held back by this link: more than the bulk limit is unsent, or the link made room
+    /// less than `grace` ago. A command's grace after its exit counts silence of its pipes, which a held-back reader
+    /// does not read.
+    pub fn holds_readers(&self, grace: Duration) -> bool {
+        let queues = self.queues.lock().unwrap();
+        !queues.closed
+            && (queues.bulk_bytes > BULK_LIMIT
+                || queues.released_at.is_some_and(|at| at.elapsed() < grace))
+    }
+
     pub fn close(&self) {
         let mut queues = self.queues.lock().unwrap();
         queues.closed = true;
@@ -77,7 +89,11 @@ impl Output {
                         break (frame, None);
                     }
                     if let Some((frame, unsent)) = queues.bulk.pop_front() {
+                        let held = queues.bulk_bytes > BULK_LIMIT;
                         queues.bulk_bytes -= frame.payload.len();
+                        if held && queues.bulk_bytes <= BULK_LIMIT {
+                            queues.released_at = Some(Instant::now());
+                        }
                         break (frame, unsent);
                     }
                     if queues.closed {
