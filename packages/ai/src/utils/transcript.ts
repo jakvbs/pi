@@ -1,4 +1,13 @@
-import type { Context, Message, SystemMessage, Tool, ToolReference, TranscriptContext } from "../types.ts";
+import type {
+	Context,
+	Message,
+	SystemMessage,
+	Tool,
+	ToolCall,
+	ToolReference,
+	ToolResultMessage,
+	TranscriptContext,
+} from "../types.ts";
 import { contentText, getSystemMessageText } from "./text.ts";
 
 export type { TranscriptContext } from "../types.ts";
@@ -23,14 +32,74 @@ export function createInitialSystemMessage(
 }
 
 /**
- * Fold `Context.systemPrompt` and `Context.tools` into a leading system message.
- * This is the only entry point that produces a {@link TranscriptContext}; every
- * provider-facing function expects the result.
+ * Fold `Context.systemPrompt` and `Context.tools` into a leading system message and make the
+ * messages replayable with {@link makeReplayable}. This is the only entry point that produces a
+ * {@link TranscriptContext}; every provider-facing function expects the result, so a provider an
+ * extension registers gets the same replayable transcript as a built-in one.
  */
 export function normalizeContext(context: Context): TranscriptContext {
 	const initialMessage = createInitialSystemMessage(context.systemPrompt, context.tools);
 	const messages = initialMessage ? [initialMessage, ...context.messages] : context.messages;
-	return { messages } as TranscriptContext;
+	return { messages: makeReplayable(messages) } as TranscriptContext;
+}
+
+/**
+ * Return the messages in a shape every provider API accepts:
+ * - missing content becomes empty content;
+ * - errored and aborted assistant turns are dropped: they never ran their tools and may end in a
+ *   partial tool call;
+ * - a tool call without a result before the next assistant or user message gets an error result.
+ *   A session ends on such a call when pi exits while the tool runs;
+ * - a system message between a tool call and its results moves after the results.
+ *
+ * Running it on its own output changes nothing.
+ */
+export function makeReplayable(messages: Message[]): Message[] {
+	const result: Message[] = [];
+	let pendingToolCalls: ToolCall[] = [];
+	const answeredToolCallIds = new Set<string>();
+	const heldSystemMessages: Message[] = [];
+	const closePendingToolCalls = () => {
+		for (const toolCall of pendingToolCalls) {
+			if (answeredToolCallIds.has(toolCall.id)) continue;
+			const missingResult: ToolResultMessage = {
+				role: "toolResult",
+				toolCallId: toolCall.id,
+				toolName: toolCall.name,
+				content: [{ type: "text", text: "No result provided" }],
+				isError: true,
+				timestamp: Date.now(),
+			};
+			result.push(missingResult);
+		}
+		pendingToolCalls = [];
+		answeredToolCallIds.clear();
+		result.push(...heldSystemMessages);
+		heldSystemMessages.length = 0;
+	};
+
+	for (const rawMessage of messages) {
+		// Trust boundary: untyped callers (custom tools, hand-built histories, old session files)
+		// can omit content although the types require it (#6259, #6276).
+		const message = rawMessage.content == null ? { ...rawMessage, content: [] } : rawMessage;
+		if (message.role === "assistant") {
+			closePendingToolCalls();
+			if (message.stopReason === "error" || message.stopReason === "aborted") continue;
+			pendingToolCalls = message.content.filter((block): block is ToolCall => block.type === "toolCall");
+			result.push(message);
+		} else if (message.role === "toolResult") {
+			answeredToolCallIds.add(message.toolCallId);
+			result.push(message);
+		} else if (message.role === "system") {
+			if (pendingToolCalls.length > 0) heldSystemMessages.push(message);
+			else result.push(message);
+		} else {
+			closePendingToolCalls();
+			result.push(message);
+		}
+	}
+	closePendingToolCalls();
+	return result;
 }
 
 /**

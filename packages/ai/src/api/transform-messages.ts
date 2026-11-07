@@ -8,6 +8,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { makeReplayable } from "../utils/transcript.ts";
 
 const NON_VISION_USER_IMAGE_PLACEHOLDER = "(image omitted: model does not support images)";
 const NON_VISION_TOOL_IMAGE_PLACEHOLDER = "(tool image omitted: model does not support images)";
@@ -95,13 +96,13 @@ export function transformMessages<TApi extends Api>(
 ): Message[] {
 	// Build a map of original tool call IDs to normalized IDs
 	const toolCallIdMap = new Map<string, string>();
-	// Normalize null/undefined content from untyped callers (custom tools, hand-built
-	// histories, old session files) so downstream code can rely on the type contract.
-	const normalizedMessages = messages.map((msg) => (msg.content == null ? { ...msg, content: [] } : msg));
-	const imageAwareMessages = downgradeUnsupportedImages(normalizedMessages, model);
+	// Callers also pass message lists that did not come through normalizeContext (a single reply,
+	// hand-built histories), so make them replayable here too. A tool result added for a missing
+	// one follows its call, so the pass below maps its ID like a real result's.
+	const imageAwareMessages = downgradeUnsupportedImages(makeReplayable(messages), model);
 
-	// First pass: transform messages (unsupported image downgrade, thinking blocks, tool call ID normalization)
-	const transformed = imageAwareMessages.map((msg) => {
+	// Transform thinking blocks and normalize tool call IDs
+	return imageAwareMessages.map((msg) => {
 		// System and user messages pass through unchanged
 		if (msg.role === "system" || msg.role === "user") {
 			return msg;
@@ -175,82 +176,4 @@ export function transformMessages<TApi extends Api>(
 		}
 		return msg;
 	});
-
-	// Second pass: insert synthetic empty tool results for orphaned tool calls
-	// This preserves thinking signatures and satisfies API requirements
-	const result: Message[] = [];
-	let pendingToolCalls: ToolCall[] = [];
-	let existingToolResultIds = new Set<string>();
-	// System messages are transparent to tool-call accounting: one that lands between a tool
-	// call and its results is held back and emitted after the results (synthetic ones
-	// included), so it never causes a duplicate result for a call that is answered later.
-	const heldSystemMessages: Message[] = [];
-	const closePendingToolCalls = () => {
-		if (pendingToolCalls.length > 0) {
-			for (const tc of pendingToolCalls) {
-				if (!existingToolResultIds.has(tc.id)) {
-					result.push({
-						role: "toolResult",
-						toolCallId: tc.id,
-						toolName: tc.name,
-						content: [{ type: "text", text: "No result provided" }],
-						isError: true,
-						timestamp: Date.now(),
-					} as ToolResultMessage);
-				}
-			}
-			pendingToolCalls = [];
-			existingToolResultIds = new Set();
-		}
-		result.push(...heldSystemMessages);
-		heldSystemMessages.length = 0;
-	};
-
-	for (let i = 0; i < transformed.length; i++) {
-		const msg = transformed[i];
-
-		if (msg.role === "assistant") {
-			// If we have pending orphaned tool calls from a previous assistant, insert synthetic results now
-			closePendingToolCalls();
-
-			// Skip errored/aborted assistant messages entirely.
-			// These are incomplete turns that shouldn't be replayed:
-			// - May have partial content (reasoning without message, incomplete tool calls)
-			// - Replaying them can cause API errors (e.g., OpenAI "reasoning without following item")
-			// - The model should retry from the last valid state
-			const assistantMsg = msg as AssistantMessage;
-			if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
-				continue;
-			}
-
-			// Track tool calls from this assistant message
-			const toolCalls = assistantMsg.content.filter((b) => b.type === "toolCall") as ToolCall[];
-			if (toolCalls.length > 0) {
-				pendingToolCalls = toolCalls;
-				existingToolResultIds = new Set();
-			}
-
-			result.push(msg);
-		} else if (msg.role === "toolResult") {
-			existingToolResultIds.add(msg.toolCallId);
-			result.push(msg);
-		} else if (msg.role === "system") {
-			if (pendingToolCalls.length > 0) {
-				heldSystemMessages.push(msg);
-			} else {
-				result.push(msg);
-			}
-		} else if (msg.role === "user") {
-			// A new user turn interrupts tool flow - insert synthetic results for orphaned calls
-			closePendingToolCalls();
-			result.push(msg);
-		} else {
-			result.push(msg);
-		}
-	}
-
-	// If the conversation ends with unresolved tool calls, synthesize results now.
-	closePendingToolCalls();
-
-	return result;
 }

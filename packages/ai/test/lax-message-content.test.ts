@@ -1,9 +1,9 @@
 /**
  * The Message types require `content` to always be present, but untyped
  * callers (custom tools, hand-built histories, old session files) can violate
- * that contract. `transformMessages` is the choke point before every provider
- * request and is intentionally lax: it normalizes null/missing content to an
- * empty array (issues #6259, #6276).
+ * that contract. `makeReplayable`, which both `normalizeContext` (every request)
+ * and `transformMessages` run, is intentionally lax: it normalizes null/missing
+ * content to an empty array (issues #6259, #6276).
  */
 
 import { describe, expect, it } from "vitest";
