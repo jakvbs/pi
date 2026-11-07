@@ -360,6 +360,9 @@ function isNonEmptyArrayOf(value, guard) {
   return Array.isArray(value) && value.length > 0 && value.every(guard);
 }
 
+// src/session-ledger/progress.ts
+import { RESTORED_SKILLS_MESSAGE_TYPE } from "@earendil-works/pi-coding-agent";
+
 // src/tokens.ts
 import { estimateTokens as estimateMessageTokens } from "@earendil-works/pi-coding-agent";
 function estimateStringTokens(text) {
@@ -394,7 +397,7 @@ function estimateEntryTokens(entry) {
 // src/session-ledger/progress.ts
 var SOURCE_ENTRY_TYPES = /* @__PURE__ */ new Set(["message", "custom_message", "branch_summary"]);
 function isSourceEntry(entry) {
-  return SOURCE_ENTRY_TYPES.has(entry.type);
+  return SOURCE_ENTRY_TYPES.has(entry.type) && entry.customType !== RESTORED_SKILLS_MESSAGE_TYPE;
 }
 function entryIndexById(entries) {
   const idToIndex = /* @__PURE__ */ new Map();

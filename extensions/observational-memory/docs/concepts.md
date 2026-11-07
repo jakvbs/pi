@@ -142,7 +142,7 @@ It is not:
 
 Source provenance lives on `Observation.sourceEntryIds` and `Reflection.supportingObservationIds`.
 
-Progress counting uses raw/source tokens after the marker. Raw/source entries are `message`, `custom_message`, and `branch_summary` entries; memory ledger entries and compaction entries do not add raw-token progress.
+Progress counting uses raw/source tokens after the marker. Raw/source entries are `message`, `custom_message`, and `branch_summary` entries; memory ledger entries and compaction entries do not add raw-token progress. Pi's message that restores skills after compaction (custom type `RESTORED_SKILLS_MESSAGE_TYPE`) only repeats skills already on the branch, so it is not source: the observer never reads it and it adds no progress.
 
 ## Visible, full, and drift
 

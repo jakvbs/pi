@@ -1,3 +1,4 @@
+import { RESTORED_SKILLS_MESSAGE_TYPE } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -70,6 +71,20 @@ describe("session-ledger V3 progress helpers", () => {
 		expect(rawTokensAfterIndex(entries, 0)).toBe(5); // raw-2: 2 + sum-1: 3
 		expect(rawTokensAfterIndex(entries, 1)).toBe(5);
 		expect(rawTokensAfterIndex(entries, 2)).toBe(3);
+	});
+
+	it("does not count the message that restores skills after compaction as source", () => {
+		const restoredSkills = textCustomMessage("restored-1", "x".repeat(4000), { customType: RESTORED_SKILLS_MESSAGE_TYPE });
+		const entries = [
+			textCustomMessage("raw-1", "aaaa"),
+			observationsRecordedEntry("om-1", { observations: [observation("aaaaaaaaaaaa")], coversUpToId: "raw-1" }),
+			compactionEntry("cmp-1", { firstKeptEntryId: "raw-1" }),
+			restoredSkills,
+			textCustomMessage("raw-2", "bbbbbbbb", { customType: "note" }),
+		];
+
+		expect(isSourceEntry(restoredSkills)).toBe(false);
+		expect(rawTokensSinceObservationCoverage(entries)).toBe(2); // raw-2 only
 	});
 
 	it("keeps independent coverage markers for observations, reflections, and drops", () => {

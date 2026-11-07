@@ -1,3 +1,4 @@
+import { RESTORED_SKILLS_MESSAGE_TYPE } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockAgents = vi.hoisted(() => ({
@@ -189,6 +190,31 @@ describe("V3 consolidation trigger", () => {
 		fireTurnEnd();
 
 		expect(runtime.launchConsolidationTask).not.toHaveBeenCalled();
+	});
+
+	it("does not observe the message that restores skills after compaction", () => {
+		const covered = [
+			textCustomMessage("raw-1", "aaaa"),
+			observationsRecordedEntry("om-obs", { observations: [obsA], coversUpToId: "raw-1" }),
+			reflectionsRecordedEntry("om-ref", { reflections: [refA], coversUpToId: "raw-1" }),
+			observationsDroppedEntry("om-drop", { observationIds: ["aaaaaaaaaaaa"], coversUpToId: "raw-1" }),
+			compactionEntry("cmp-1", { firstKeptEntryId: "raw-1" }),
+		];
+		const skills = "x".repeat(4000);
+		const restored = setup({
+			entries: [...covered, textCustomMessage("raw-2", skills, { customType: RESTORED_SKILLS_MESSAGE_TYPE })],
+			observeAfterTokens: 10,
+		});
+		const other = setup({
+			entries: [...covered, textCustomMessage("raw-2", skills, { customType: "note" })],
+			observeAfterTokens: 10,
+		});
+
+		restored.fireTurnEnd();
+		other.fireTurnEnd();
+
+		expect(restored.runtime.launchConsolidationTask).not.toHaveBeenCalled();
+		expect(other.runtime.launchConsolidationTask).toHaveBeenCalled();
 	});
 
 	it("does not launch from either entrypoint in passive mode", () => {

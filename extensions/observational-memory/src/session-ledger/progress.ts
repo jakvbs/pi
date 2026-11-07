@@ -1,3 +1,4 @@
+import { RESTORED_SKILLS_MESSAGE_TYPE } from "@earendil-works/pi-coding-agent";
 import { estimateEntryTokens } from "../tokens.ts";
 import { branchLedger, type BranchLedgerEntry } from "./ledger.ts";
 import {
@@ -14,8 +15,12 @@ import {
 
 const SOURCE_ENTRY_TYPES = new Set(["message", "custom_message", "branch_summary"]);
 
+/**
+ * Whether `entry` is conversation the observer reads and the token clocks count. Pi's message that restores skills
+ * after compaction only repeats skills already on the branch, so it is not source.
+ */
 export function isSourceEntry(entry: Entry): boolean {
-	return SOURCE_ENTRY_TYPES.has(entry.type);
+	return SOURCE_ENTRY_TYPES.has(entry.type) && entry.customType !== RESTORED_SKILLS_MESSAGE_TYPE;
 }
 
 export function entryIndexById(entries: Entry[]): Map<string, number> {
