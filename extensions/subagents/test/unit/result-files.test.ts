@@ -1,0 +1,788 @@
+import assert from "node:assert/strict";
+import fsDefault, * as fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import * as os from "node:os";
+import * as path from "node:path";
+import { describe, it } from "node:test";
+import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
+import { FileLeaseBusyError } from "../../src/shared/file-lease.ts";
+import { acknowledgeMissionObserverSnapshot, cleanupResultIndexes, removeResultIndex, resultCandidateFilesForSession, resultFilesForSession, resultFilesForToolCall, resultPayloadPathForIndexedRun, resultPayloadPathForMissionObserverRun, resultPayloadPathForSessionRun, retireResultSnapshot, withResultRunLease, writeAsyncResultFile, writePendingAsyncResultFile, writeResultIndexForData } from "../../src/runs/background/result-files.ts";
+
+const JSON_EXTENSION = ".json";
+const MAX_JSON_FILE_STEM_BYTES = MAX_INDEX_SEGMENT_BYTES - Buffer.byteLength(JSON_EXTENSION, "utf-8");
+
+function pendingPath(resultsDir: string, sessionId: string, runId: string): string {
+	return path.join(resultsDir, "result-pending", encodeIndexSegment(sessionId), `${encodeIndexSegment(runId, MAX_JSON_FILE_STEM_BYTES)}${JSON_EXTENSION}`);
+}
+
+describe("result file indexes", () => {
+	it("resolves run ids without enumerating session indexes", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-run-index-"));
+		const originalReaddirSync = fsDefault.readdirSync;
+		try {
+			const resultPath = path.join(resultsDir, "direct-run.json");
+			writeAsyncResultFile(resultPath, { id: "direct-run", runId: "direct-run", sessionId: "session-a", success: true });
+			fsDefault.readdirSync = (() => { throw new Error("result index enumerated"); }) as typeof fsDefault.readdirSync;
+			syncBuiltinESMExports();
+
+			assert.equal(resultPayloadPathForIndexedRun(resultsDir, "direct-run"), resultPath);
+			assert.equal(resultPayloadPathForIndexedRun(resultsDir, "missing-run"), undefined);
+		} finally {
+			fsDefault.readdirSync = originalReaddirSync;
+			syncBuiltinESMExports();
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("removes orphan index entries without deleting flat result files", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-index-"));
+		try {
+			writeAsyncResultFile(path.join(resultsDir, "kept.json"), { id: "kept", runId: "kept", sessionId: "session-a", success: true });
+			writeAsyncResultFile(path.join(resultsDir, "missing.json"), { id: "missing", runId: "missing", sessionId: "session-a", toolCallId: "call-missing", success: true });
+			fs.rmSync(path.join(resultsDir, "missing.json"));
+			fs.writeFileSync(path.join(resultsDir, "unindexed.json"), JSON.stringify({ id: "unindexed", sessionId: "session-a" }), "utf-8");
+
+			assert.equal(cleanupResultIndexes(resultsDir, Date.now() + 86_400_001, 86_400_000) > 0, true);
+
+			assert.deepEqual(resultFilesForSession(resultsDir, "session-a"), ["kept.json"]);
+			assert.equal(fs.existsSync(path.join(resultsDir, "kept.json")), true);
+			assert.equal(fs.existsSync(path.join(resultsDir, "unindexed.json")), true);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("promotes an indexed pending result payload", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-pending-payload-"));
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			const resultPath = path.join(resultsDir, "late.json");
+			fs.mkdirSync(resultPath, { recursive: true });
+
+			assert.deepEqual(writeAsyncResultFile(resultPath, { id: "late", runId: "late", sessionId: "session-a", success: true }), { state: "pending" });
+			assert.equal(fs.existsSync(pendingPath(resultsDir, "session-a", "late")), true);
+			fs.rmSync(resultPath, { recursive: true, force: true });
+
+			assert.deepEqual(resultFilesForSession(resultsDir, "session-a"), ["late.json"]);
+			assert.equal(JSON.parse(fs.readFileSync(resultPath, "utf-8")).success, true);
+			assert.equal(fs.existsSync(pendingPath(resultsDir, "session-a", "late")), false);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("writes an indexed pending result without publishing it", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-pending-only-"));
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			const resultPath = path.join(resultsDir, "pending-only.json");
+			fs.mkdirSync(resultPath, { recursive: true });
+
+			writePendingAsyncResultFile(resultPath, { id: "pending-only", runId: "pending-only", sessionId: "session-a", success: true });
+
+			assert.equal(fs.statSync(resultPath).isDirectory(), true);
+			assert.deepEqual(resultFilesForSession(resultsDir, "session-a"), []);
+			assert.deepEqual(resultCandidateFilesForSession(resultsDir, "session-a"), ["pending-only.json"]);
+			assert.equal(resultPayloadPathForSessionRun(resultsDir, "session-a", "pending-only"), pendingPath(resultsDir, "session-a", "pending-only"));
+			assert.equal(resultPayloadPathForIndexedRun(resultsDir, "pending-only"), pendingPath(resultsDir, "session-a", "pending-only"));
+		} finally {
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps pending results for long session ids below filesystem component limits", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-long-session-"));
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			const sessionId = `/Users/zhouatie/.config/pi/sessions/${"界".repeat(100)}.jsonl`;
+			const runId = "pending-long-session";
+			const resultPath = path.join(resultsDir, `${runId}.json`);
+			fs.mkdirSync(resultPath);
+
+			writePendingAsyncResultFile(resultPath, { id: runId, runId, sessionId, success: true });
+
+			const payloadPath = pendingPath(resultsDir, sessionId, runId);
+			assert.ok(Buffer.byteLength(path.basename(path.dirname(payloadPath)), "utf-8") <= 255);
+			assert.equal(fs.existsSync(payloadPath), true);
+			assert.deepEqual(resultCandidateFilesForSession(resultsDir, sessionId), [`${runId}.json`]);
+			assert.equal(resultPayloadPathForSessionRun(resultsDir, sessionId, runId), payloadPath);
+			fs.rmSync(path.join(resultsDir, "result-index"), { recursive: true });
+			assert.equal(resultPayloadPathForIndexedRun(resultsDir, runId), undefined);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps pending results for near-limit run ids below filesystem component limits", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-long-run-"));
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			const sessionId = "session-a";
+			for (const runId of ["x".repeat(250), "y".repeat(251)]) {
+				const resultPath = path.join(resultsDir, `${runId}.json`);
+				if (runId.length === 250) fs.mkdirSync(resultPath);
+				writePendingAsyncResultFile(resultPath, { id: runId, runId, sessionId, success: true });
+
+				const payloadPath = pendingPath(resultsDir, sessionId, runId);
+				const pendingFile = path.basename(payloadPath);
+				assert.ok(Buffer.byteLength(pendingFile, "utf-8") <= 255);
+				assert.equal(fs.existsSync(payloadPath), true);
+				assert.equal(resultPayloadPathForSessionRun(resultsDir, sessionId, runId), payloadPath);
+			}
+			assert.equal(path.basename(pendingPath(resultsDir, sessionId, "x".repeat(250))), `${"x".repeat(250)}.json`);
+			assert.match(path.basename(pendingPath(resultsDir, sessionId, "y".repeat(251))), /^~sha256-[a-f0-9]{64}\.json$/);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps a legacy valid index while the result payload is not visible yet", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-legacy-late-payload-"));
+		try {
+			const resultPath = path.join(resultsDir, "late.json");
+			writeResultIndexForData(resultPath, { id: "late", runId: "late", sessionId: "session-a", success: true });
+
+			assert.deepEqual(resultFilesForSession(resultsDir, "session-a"), []);
+
+			fs.writeFileSync(resultPath, JSON.stringify({ id: "late", runId: "late", sessionId: "session-a", success: true }), "utf-8");
+			assert.deepEqual(resultFilesForSession(resultsDir, "session-a"), ["late.json"]);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps an unindexed pending result recoverable when its session index cannot be written", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-index-failure-"));
+		try {
+			fs.writeFileSync(path.join(resultsDir, "result-index"), "not a directory", "utf-8");
+			const resultPath = path.join(resultsDir, "blocked.json");
+
+			assert.throws(() => writeAsyncResultFile(resultPath, { id: "blocked", runId: "blocked", sessionId: "session-a", success: true }));
+			assert.equal(fs.existsSync(resultPath), false);
+			assert.equal(fs.existsSync(pendingPath(resultsDir, "session-a", "blocked")), true);
+			assert.equal(resultPayloadPathForSessionRun(resultsDir, "session-a", "blocked"), pendingPath(resultsDir, "session-a", "blocked"));
+			assert.equal(resultPayloadPathForIndexedRun(resultsDir, "blocked"), undefined);
+			assert.deepEqual(resultCandidateFilesForSession(resultsDir, "session-a"), ["blocked.json"]);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("treats a missing mission observer index directory as absent without logging", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-observer-enotdir-"));
+		const originalError = console.error;
+		const errors: unknown[][] = [];
+		try {
+			fs.writeFileSync(path.join(resultsDir, "result-index"), "not a directory", "utf-8");
+			console.error = (...args: unknown[]) => { errors.push(args); };
+
+			assert.equal(resultPayloadPathForMissionObserverRun(resultsDir, "mission-run"), undefined);
+			assert.deepEqual(errors, []);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not commit a result payload without a session id", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-no-session-"));
+		try {
+			const resultPath = path.join(resultsDir, "blocked.json");
+
+			assert.throws(() => writeAsyncResultFile(resultPath, { id: "blocked", runId: "blocked", success: true }), /sessionId/);
+			assert.equal(fs.existsSync(resultPath), false);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("prefers pending payload over an older public result", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-pending-wins-"));
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			const resultPath = path.join(resultsDir, "blocked.json");
+			writeAsyncResultFile(resultPath, { id: "blocked", runId: "blocked", sessionId: "session-a", success: false });
+			fs.rmSync(resultPath, { force: true });
+			fs.mkdirSync(resultPath, { recursive: true });
+
+			assert.deepEqual(writeAsyncResultFile(resultPath, { id: "blocked", runId: "blocked", sessionId: "session-a", success: true }), { state: "pending" });
+			fs.rmSync(resultPath, { recursive: true, force: true });
+			fs.writeFileSync(resultPath, JSON.stringify({ id: "blocked", runId: "blocked", sessionId: "session-a", success: false }), "utf-8");
+
+			assert.deepEqual(resultFilesForSession(resultsDir, "session-a"), ["blocked.json"]);
+			assert.equal(JSON.parse(fs.readFileSync(resultPath, "utf-8")).success, true);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps a newer pending payload readable when Windows cannot replace the public result", (t) => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-windows-pending-wins-"));
+		try {
+			const resultPath = path.join(resultsDir, "blocked.json");
+			writeAsyncResultFile(resultPath, { id: "blocked", runId: "blocked", sessionId: "session-a", success: false });
+			writePendingAsyncResultFile(resultPath, { id: "blocked", runId: "blocked", sessionId: "session-a", success: true });
+
+			t.mock.method(fsDefault, "renameSync", () => {
+				const error = new Error("destination exists") as NodeJS.ErrnoException;
+				error.code = "EEXIST";
+				throw error;
+			});
+			syncBuiltinESMExports();
+
+			const payloadPath = resultPayloadPathForSessionRun(resultsDir, "session-a", "blocked");
+			assert.equal(payloadPath, pendingPath(resultsDir, "session-a", "blocked"));
+			assert.equal(JSON.parse(fs.readFileSync(payloadPath, "utf-8")).success, true);
+			assert.equal(JSON.parse(fs.readFileSync(resultPath, "utf-8")).success, false);
+			assert.equal(fs.existsSync(pendingPath(resultsDir, "session-a", "blocked")), true);
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("removes pending payloads with result indexes", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-pending-cleanup-"));
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			const resultPath = path.join(resultsDir, "pending-cleanup.json");
+			fs.mkdirSync(resultPath, { recursive: true });
+			writeAsyncResultFile(resultPath, { id: "pending-cleanup", runId: "pending-cleanup", sessionId: "session-a", success: true });
+
+			assert.equal(fs.existsSync(pendingPath(resultsDir, "session-a", "pending-cleanup")), true);
+			removeResultIndex(resultsDir, "session-a", "pending-cleanup");
+			assert.equal(fs.existsSync(pendingPath(resultsDir, "session-a", "pending-cleanup")), false);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("leaves nothing behind once a consumer has taken the payload, wherever the writer is interrupted", (t) => {
+		// Renames are the only writer steps readers can see. A consumer starts polling at each
+		// one in turn; from the moment its cleanup returns, nothing may reappear.
+		for (let startAt = 0, points = Infinity; startAt <= points; startAt++) {
+			const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-consumed-"));
+			const resultPath = path.join(resultsDir, "workflow-result.json");
+			const originalRenameSync = fsDefault.renameSync;
+			let point = 0;
+			let consumed = false;
+			let inConsumer = false;
+			const consumerStep = (): void => {
+				if (consumed) {
+					const retained = fs.readdirSync(path.join(resultsDir, "result-index"), { recursive: true }).filter((entry) => String(entry).endsWith(".json"));
+					assert.deepEqual(retained, [], `consumer started at point ${startAt}, checked at point ${point}`);
+					assert.equal(fs.existsSync(resultPath), false);
+					return;
+				}
+				inConsumer = true;
+				try {
+					if (!resultPayloadPathForSessionRun(resultsDir, "session-a", "consumed")) return;
+					fs.rmSync(resultPath, { force: true });
+					removeResultIndex(resultsDir, "session-a", "consumed", "call-a");
+					consumed = true;
+				} finally {
+					inConsumer = false;
+				}
+			};
+			try {
+				fs.writeFileSync(path.join(resultsDir, "mission.json"), "{}", "utf-8");
+				t.mock.method(fsDefault, "renameSync", (source: fs.PathLike, target: fs.PathLike) => {
+					if (inConsumer) return originalRenameSync(source, target);
+					if (point++ >= startAt) consumerStep();
+					originalRenameSync(source, target);
+					if (point++ >= startAt) consumerStep();
+				});
+				syncBuiltinESMExports();
+				writeAsyncResultFile(resultPath, { id: "consumed", runId: "consumed", sessionId: "session-a", toolCallId: "call-a", asyncDir: resultsDir, success: true });
+				points = point;
+				consumerStep();
+				consumerStep();
+				assert.equal(consumed, true);
+			} finally {
+				t.mock.restoreAll();
+				syncBuiltinESMExports();
+				fs.rmSync(resultsDir, { recursive: true, force: true });
+			}
+		}
+	});
+
+	it("keeps a pending-only result findable by run id when looked up while it is being written", (t) => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-lookup-during-write-"));
+		const originalRenameSync = fsDefault.renameSync;
+		const originalError = console.error;
+		let inLookup = false;
+		const lookup = (): void => {
+			inLookup = true;
+			try {
+				resultPayloadPathForIndexedRun(resultsDir, "paused");
+			} finally {
+				inLookup = false;
+			}
+		};
+		try {
+			console.error = () => {};
+			const resultPath = path.join(resultsDir, "paused.json");
+			fs.mkdirSync(resultPath);
+			t.mock.method(fsDefault, "renameSync", (source: fs.PathLike, target: fs.PathLike) => {
+				if (inLookup) return originalRenameSync(source, target);
+				lookup();
+				originalRenameSync(source, target);
+				lookup();
+			});
+			syncBuiltinESMExports();
+			writePendingAsyncResultFile(resultPath, { id: "paused", runId: "paused", sessionId: "session-a", success: false });
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			assert.equal(resultPayloadPathForIndexedRun(resultsDir, "paused"), pendingPath(resultsDir, "session-a", "paused"));
+		} finally {
+			console.error = originalError;
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("indexes results with oversized provider tool-call ids", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-long-tool-call-"));
+		try {
+			const runId = "workflow-long-tool-call";
+			const toolCallId = `call_${"opaque/+=".repeat(80)}`;
+			const resultPath = path.join(resultsDir, `${runId}.json`);
+
+			writeAsyncResultFile(resultPath, { id: runId, runId, sessionId: "session-a", toolCallId, success: true });
+
+			assert.deepEqual(resultFilesForToolCall(resultsDir, toolCallId), [`${runId}.json`]);
+			removeResultIndex(resultsDir, "session-a", runId, toolCallId);
+			assert.deepEqual(resultFilesForToolCall(resultsDir, toolCallId), []);
+			assert.equal(fs.existsSync(resultPath), true);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("commits a result payload when only an optional index fails", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-optional-index-"));
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			fs.mkdirSync(path.join(resultsDir, "result-index"), { recursive: true });
+			fs.writeFileSync(path.join(resultsDir, "result-index", "tool-calls"), "not a directory", "utf-8");
+			const resultPath = path.join(resultsDir, "kept.json");
+
+			writeAsyncResultFile(resultPath, { id: "kept", runId: "kept", sessionId: "session-a", toolCallId: "call-a", success: true });
+
+			assert.equal(fs.existsSync(resultPath), true);
+			assert.deepEqual(resultFilesForSession(resultsDir, "session-a"), ["kept.json"]);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("round-trips results for Windows session file paths", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-win-session-"));
+		try {
+			const sessionId = String.raw`C:\Users\theap\.pi\agent\sessions\leaf.jsonl`;
+			const runId = "win-session-run";
+			const resultPath = path.join(resultsDir, `${runId}.json`);
+			writeAsyncResultFile(resultPath, { id: runId, runId, sessionId, success: true });
+
+			const sessionDirs = fs.readdirSync(path.join(resultsDir, "result-index", "sessions"));
+			assert.equal(sessionDirs.length, 1);
+			assert.match(sessionDirs[0]!, /^~sha256-[a-f0-9]{64}$/);
+			assert.deepEqual(resultFilesForSession(resultsDir, sessionId), [`${runId}.json`]);
+			assert.deepEqual(resultCandidateFilesForSession(resultsDir, sessionId), [`${runId}.json`]);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("treats an unaddressable legacy session alias as absent and keeps canonical fallback candidates", (t) => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-legacy-enametoolong-"));
+		const sessionId = String.raw`C:\Users\theap\.pi\agent\sessions\leaf.jsonl`;
+		const runId = "legacy-alias-fallback";
+		const resultPath = path.join(resultsDir, `${runId}.json`);
+		const legacyDir = path.join(resultsDir, "result-index", "sessions", encodeURIComponent(sessionId));
+		const originalReadFileSync = fsDefault.readFileSync;
+		const originalReaddirSync = fsDefault.readdirSync;
+		const originalError = console.error;
+		const errors: unknown[][] = [];
+		try {
+			writeAsyncResultFile(resultPath, { id: runId, runId, sessionId, success: true });
+			const canonicalDir = path.join(resultsDir, "result-index", "sessions", encodeIndexSegment(sessionId));
+			const [canonicalIndexFile] = fs.readdirSync(canonicalDir);
+			assert.ok(canonicalIndexFile);
+			const canonicalPendingPath = pendingPath(resultsDir, sessionId, runId);
+			fs.mkdirSync(path.dirname(canonicalPendingPath), { recursive: true });
+			fs.copyFileSync(resultPath, canonicalPendingPath);
+
+			const nameTooLong = new Error("legacy alias is too long") as NodeJS.ErrnoException;
+			nameTooLong.code = "ENAMETOOLONG";
+			fsDefault.readFileSync = ((filePath: fs.PathOrFileDescriptor, ...args: unknown[]) => {
+				if (String(filePath).startsWith(legacyDir)) throw nameTooLong;
+				return (originalReadFileSync as (...input: unknown[]) => unknown)(filePath, ...args);
+			}) as typeof fsDefault.readFileSync;
+			fsDefault.readdirSync = ((dirPath: fs.PathLike, ...args: unknown[]) => {
+				if (String(dirPath) === legacyDir) throw nameTooLong;
+				return (originalReaddirSync as (...input: unknown[]) => unknown)(dirPath, ...args);
+			}) as typeof fsDefault.readdirSync;
+			console.error = (...args: unknown[]) => { errors.push(args); };
+			syncBuiltinESMExports();
+
+			assert.deepEqual(resultCandidateFilesForSession(resultsDir, sessionId), [`${runId}.json`]);
+			fs.copyFileSync(resultPath, canonicalPendingPath);
+			fs.rmSync(path.join(canonicalDir, canonicalIndexFile));
+			assert.equal(resultPayloadPathForSessionRun(resultsDir, sessionId, runId), canonicalPendingPath);
+			assert.deepEqual(errors, []);
+		} finally {
+			fsDefault.readFileSync = originalReadFileSync;
+			fsDefault.readdirSync = originalReaddirSync;
+			console.error = originalError;
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("leaves an unaddressable legacy index untouched during cleanup", (t) => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-cleanup-enametoolong-"));
+		const sessionId = String.raw`C:\Users\theap\.pi\agent\sessions\leaf.jsonl`;
+		const runId = "legacy-cleanup";
+		const originalStatSync = fsDefault.statSync;
+		const originalError = console.error;
+		const errors: unknown[][] = [];
+		try {
+			writeAsyncResultFile(path.join(resultsDir, `${runId}.json`), { id: runId, runId, sessionId, success: true });
+			const canonicalDir = path.join(resultsDir, "result-index", "sessions", encodeIndexSegment(sessionId));
+			const legacyDir = path.join(resultsDir, "result-index", "sessions", encodeURIComponent(sessionId));
+			fs.renameSync(canonicalDir, legacyDir);
+			const [legacyIndexFile] = fs.readdirSync(legacyDir);
+			assert.ok(legacyIndexFile);
+			const legacyIndexPath = path.join(legacyDir, legacyIndexFile);
+			const nameTooLong = new Error("legacy alias is too long") as NodeJS.ErrnoException;
+			nameTooLong.code = "ENAMETOOLONG";
+			t.mock.method(fsDefault, "statSync", ((filePath: fs.PathLike) => {
+				if (String(filePath) === legacyIndexPath) throw nameTooLong;
+				return originalStatSync(filePath);
+			}) as typeof fsDefault.statSync);
+			console.error = (...args: unknown[]) => { errors.push(args); };
+			syncBuiltinESMExports();
+
+			assert.equal(cleanupResultIndexes(resultsDir, Date.now() + 86_400_001, 86_400_000), 0);
+			assert.equal(fs.existsSync(legacyIndexPath), true);
+			assert.deepEqual(errors, []);
+		} finally {
+			console.error = originalError;
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("reads a pre-hash URI-encoded session index after the encoding change", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-legacy-session-"));
+		try {
+			const sessionId = String.raw`C:\Users\theap\.pi\agent\sessions\leaf.jsonl`;
+			const runId = "legacy-session-run";
+			const resultPath = path.join(resultsDir, `${runId}.json`);
+			writeAsyncResultFile(resultPath, { id: runId, runId, sessionId, success: true });
+
+			const currentDir = path.join(resultsDir, "result-index", "sessions", encodeIndexSegment(sessionId));
+			const historicalDir = path.join(resultsDir, "result-index", "sessions", encodeURIComponent(sessionId));
+			fs.renameSync(currentDir, historicalDir);
+
+			assert.deepEqual(resultFilesForSession(resultsDir, sessionId), [`${runId}.json`]);
+			assert.equal(resultPayloadPathForSessionRun(resultsDir, sessionId, runId), resultPath);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("reads a pre-hash extension-like run index filename", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-legacy-run-"));
+		try {
+			const sessionId = "session-a";
+			const runId = "legacy.jsonl";
+			const resultPath = path.join(resultsDir, `${runId}.json`);
+			writeAsyncResultFile(resultPath, { id: runId, runId, sessionId, success: true });
+
+			const indexDir = path.join(resultsDir, "result-index", "sessions", encodeIndexSegment(sessionId));
+			const [currentFile] = fs.readdirSync(indexDir);
+			assert.ok(currentFile);
+			fs.renameSync(path.join(indexDir, currentFile), path.join(indexDir, `${runId}.json`));
+
+			assert.equal(resultPayloadPathForSessionRun(resultsDir, sessionId, runId), resultPath);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("reads a pre-hash extension-like pending filename", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-legacy-pending-"));
+		const originalError = console.error;
+		try {
+			const sessionId = "session-a";
+			const runId = "legacy.jsonl";
+			const resultPath = path.join(resultsDir, `${runId}.json`);
+			fs.mkdirSync(resultPath);
+			console.error = () => {};
+			writePendingAsyncResultFile(resultPath, { id: runId, runId, sessionId, success: true });
+
+			const currentPath = pendingPath(resultsDir, sessionId, runId);
+			const historicalPath = path.join(path.dirname(currentPath), `${runId}.json`);
+			fs.renameSync(currentPath, historicalPath);
+
+			assert.equal(resultPayloadPathForSessionRun(resultsDir, sessionId, runId), historicalPath);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("throws access-denied direct session index reads", (t) => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-eacces-index-"));
+		const error = new Error("permission denied") as NodeJS.ErrnoException;
+		error.code = "EACCES";
+		try {
+			writeAsyncResultFile(path.join(resultsDir, "blocked.json"), { id: "blocked", runId: "blocked", sessionId: "session-a", success: true });
+			t.mock.method(fsDefault, "readFileSync", () => { throw error; });
+			syncBuiltinESMExports();
+
+			assert.throws(() => resultPayloadPathForSessionRun(resultsDir, "session-a", "blocked"), (thrown) => thrown === error);
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("returns no session candidates when the session index is unlistable", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-eperm-scan-"));
+		const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+		error.code = "EPERM";
+		const originalReaddirSync = fsDefault.readdirSync;
+		try {
+			fsDefault.readdirSync = (() => { throw error; }) as typeof fsDefault.readdirSync;
+			syncBuiltinESMExports();
+			assert.deepEqual(resultCandidateFilesForSession(resultsDir, "session-a"), []);
+		} finally {
+			fsDefault.readdirSync = originalReaddirSync;
+			syncBuiltinESMExports();
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("a run's paused result replaced by its final result", () => {
+	const runId = "replaced-run";
+	const sessionId = "session-a";
+	// The runner's paused result has no tool-call id and its final result adds one; state and timestamp can match.
+	const paused = (asyncDir: string) => ({ id: runId, runId, sessionId, asyncDir, state: "paused", timestamp: 1_000, summary: "Paused." });
+	const final = (asyncDir: string) => ({ id: runId, toolCallId: "call-a", sessionId, asyncDir, state: "paused", timestamp: 1_000, summary: "Paused after interrupt. Waiting for explicit next action." });
+	const publishPaused = (publicPath: string): void => withResultRunLease(path.dirname(publicPath), runId, () => writePendingAsyncResultFile(publicPath, paused(path.dirname(publicPath))));
+	const publishFinal = (publicPath: string): void => withResultRunLease(path.dirname(publicPath), runId, () => { writeAsyncResultFile(publicPath, final(path.dirname(publicPath))); });
+	const fixture = (fileName = `${runId}.json`) => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-replaced-"));
+		fs.writeFileSync(path.join(dir, "mission.json"), "{}", "utf-8");
+		return { dir, publicPath: path.join(dir, fileName) };
+	};
+	const readPublic = (publicPath: string, toolCallId?: string) => ({ runId, sessionId, ...(toolCallId ? { toolCallId } : {}), snapshot: fs.readFileSync(publicPath, "utf-8") });
+	const assertFinalIndexed = (dir: string, publicPath: string): void => {
+		assert.equal(JSON.parse(fs.readFileSync(publicPath, "utf-8")).toolCallId, "call-a");
+		assert.equal(resultPayloadPathForSessionRun(dir, sessionId, runId), publicPath);
+		assert.equal(resultPayloadPathForIndexedRun(dir, runId), publicPath);
+		assert.equal(resultPayloadPathForMissionObserverRun(dir, runId), publicPath);
+		assert.deepEqual(resultFilesForToolCall(dir, "call-a"), [path.basename(publicPath)]);
+	};
+	const indexAndPendingFiles = (dir: string): string[] => ["result-index", "result-pending"]
+		.flatMap((name) => fs.existsSync(path.join(dir, name)) ? fs.readdirSync(path.join(dir, name), { recursive: true }).map(String) : [])
+		.filter((entry) => entry.endsWith(".json"));
+
+	it("keeps the final result and its indexes when a consumer retires the paused result it read", () => {
+		for (const fileName of [`${runId}.json`, "workflow-result.json"]) {
+			for (const promoted of [false, true]) {
+				const { dir, publicPath } = fixture(fileName);
+				try {
+					publishPaused(publicPath);
+					if (promoted) resultPayloadPathForIndexedRun(dir, runId);
+					const read = { runId, sessionId, snapshot: fs.readFileSync(promoted ? publicPath : pendingPath(dir, sessionId, runId), "utf-8") };
+					publishFinal(publicPath);
+
+					assert.equal(retireResultSnapshot(publicPath, read), "replaced", `${fileName} promoted=${promoted}`);
+					assertFinalIndexed(dir, publicPath);
+
+					assert.equal(retireResultSnapshot(publicPath, readPublic(publicPath, "call-a")), "retired");
+					assert.equal(fs.existsSync(publicPath), false);
+					assert.deepEqual(indexAndPendingFiles(dir), []);
+				} finally {
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			}
+		}
+	});
+
+	it("never publishes a final result inside a consumer's retirement", (t) => {
+		const originalRmSync = fsDefault.rmSync;
+		const { dir, publicPath } = fixture();
+		try {
+			publishPaused(publicPath);
+			resultPayloadPathForIndexedRun(dir, runId);
+			const pausedRead = readPublic(publicPath);
+			let retiring = false;
+			let blocked = 0;
+			t.mock.method(fsDefault, "rmSync", (target: fs.PathLike, options?: fs.RmOptions) => {
+				if (retiring && String(target) === publicPath) {
+					retiring = false;
+					assert.throws(() => publishFinal(publicPath), /Timed out waiting/);
+					blocked += 1;
+				}
+				return originalRmSync(target, options);
+			});
+			syncBuiltinESMExports();
+			retiring = true;
+			assert.equal(retireResultSnapshot(publicPath, pausedRead), "retired");
+			assert.equal(blocked, 1);
+			publishFinal(publicPath);
+			assertFinalIndexed(dir, publicPath);
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps the final result's mission observer index when the paused result's observer acknowledges", () => {
+		const { dir, publicPath } = fixture();
+		try {
+			publishPaused(publicPath);
+			resultPayloadPathForIndexedRun(dir, runId);
+			const read = readPublic(publicPath);
+			publishFinal(publicPath);
+
+			assert.equal(acknowledgeMissionObserverSnapshot(publicPath, read), "replaced");
+			assertFinalIndexed(dir, publicPath);
+
+			assert.equal(acknowledgeMissionObserverSnapshot(publicPath, readPublic(publicPath, "call-a")), "acknowledged");
+			assert.equal(resultPayloadPathForMissionObserverRun(dir, runId), undefined);
+			assert.equal(resultPayloadPathForSessionRun(dir, sessionId, runId), publicPath);
+			assert.equal(resultPayloadPathForIndexedRun(dir, runId), publicPath);
+			assert.deepEqual(resultFilesForToolCall(dir, "call-a"), [path.basename(publicPath)]);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps a pending final result that a reader promotes while the paused result is being retired", (t) => {
+		const { dir, publicPath } = fixture();
+		const originalRenameSync = fsDefault.renameSync;
+		const originalRmSync = fsDefault.rmSync;
+		try {
+			publishPaused(publicPath);
+			resultPayloadPathForIndexedRun(dir, runId);
+			const read = readPublic(publicPath);
+			// The final result's promotion is denied, so it stays pending next to the public paused result.
+			t.mock.method(fsDefault, "renameSync", (source: fs.PathLike, target: fs.PathLike) => {
+				if (String(target) === publicPath) throw Object.assign(new Error("denied"), { code: "EPERM" });
+				return originalRenameSync(source, target);
+			});
+			syncBuiltinESMExports();
+			publishFinal(publicPath);
+			t.mock.restoreAll();
+			assert.equal(fs.readFileSync(publicPath, "utf-8"), read.snapshot);
+			assert.equal(fs.existsSync(pendingPath(dir, sessionId, runId)), true);
+			// Another process's ordinary lookup promotes the pending final result just before a deletion.
+			let promoted = false;
+			t.mock.method(fsDefault, "rmSync", (target: fs.PathLike, options?: fs.RmOptions) => {
+				if (!promoted) {
+					promoted = true;
+					resultPayloadPathForIndexedRun(dir, runId);
+				}
+				return originalRmSync(target, options);
+			});
+			syncBuiltinESMExports();
+
+			assert.equal(retireResultSnapshot(publicPath, read), "replaced");
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			assertFinalIndexed(dir, publicPath);
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("treats an older public result beside the pending one a consumer read as not newer, and a later one as newer", (t) => {
+		for (const laterPublished of [false, true]) {
+			const { dir, publicPath } = fixture();
+			const originalRenameSync = fsDefault.renameSync;
+			try {
+				publishPaused(publicPath);
+				resultPayloadPathForIndexedRun(dir, runId);
+				const stalePublic = fs.readFileSync(publicPath, "utf-8");
+				// The final result's promotion is denied, so the consumer reads it from pending beside the paused one.
+				t.mock.method(fsDefault, "renameSync", (source: fs.PathLike, target: fs.PathLike) => {
+					if (String(target) === publicPath) throw Object.assign(new Error("denied"), { code: "EPERM" });
+					return originalRenameSync(source, target);
+				});
+				syncBuiltinESMExports();
+				publishFinal(publicPath);
+				t.mock.restoreAll();
+				syncBuiltinESMExports();
+				const read = { runId, sessionId, toolCallId: "call-a", stalePublic, snapshot: fs.readFileSync(pendingPath(dir, sessionId, runId), "utf-8") };
+				if (!laterPublished) {
+					assert.equal(acknowledgeMissionObserverSnapshot(publicPath, read), "acknowledged");
+					assert.equal(retireResultSnapshot(publicPath, read), "retired");
+					assert.deepEqual([fs.existsSync(publicPath), ...indexAndPendingFiles(dir)], [false]);
+					continue;
+				}
+				withResultRunLease(dir, runId, () => { writeAsyncResultFile(publicPath, { ...final(dir), summary: "Completed after resume." }); });
+				assert.equal(acknowledgeMissionObserverSnapshot(publicPath, read), "replaced");
+				assert.equal(retireResultSnapshot(publicPath, read), "replaced");
+				assert.equal(JSON.parse(fs.readFileSync(publicPath, "utf-8")).summary, "Completed after resume.");
+				assertFinalIndexed(dir, publicPath);
+			} finally {
+				t.mock.restoreAll();
+				syncBuiltinESMExports();
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
+		}
+	});
+
+	it("neither steals a busy run lease nor removes anything without it, while lookups take no lease", () => {
+		const { dir, publicPath } = fixture();
+		try {
+			publishPaused(publicPath);
+			resultPayloadPathForIndexedRun(dir, runId);
+			const read = readPublic(publicPath);
+			withResultRunLease(dir, runId, () => {
+				assert.throws(() => retireResultSnapshot(publicPath, read), /Timed out waiting/);
+				assert.throws(() => acknowledgeMissionObserverSnapshot(publicPath, read), /Timed out waiting/);
+				assert.throws(() => retireResultSnapshot(publicPath, read, publicPath, 0), FileLeaseBusyError);
+				assert.throws(() => acknowledgeMissionObserverSnapshot(publicPath, read, 0), FileLeaseBusyError);
+				assert.equal(resultPayloadPathForSessionRun(dir, sessionId, runId), publicPath);
+				assert.equal(resultPayloadPathForIndexedRun(dir, runId), publicPath);
+				assert.equal(resultPayloadPathForMissionObserverRun(dir, runId), publicPath);
+				assert.deepEqual(resultFilesForSession(dir, sessionId), [path.basename(publicPath)]);
+			});
+			assert.equal(fs.readFileSync(publicPath, "utf-8"), read.snapshot);
+			assert.equal(resultPayloadPathForMissionObserverRun(dir, runId), publicPath);
+			assert.equal(retireResultSnapshot(publicPath, read), "retired");
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
