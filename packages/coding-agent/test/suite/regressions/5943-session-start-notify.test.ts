@@ -52,6 +52,7 @@ type RebindContext = {
 
 type ReloadCommandContext = {
 	hideThinkingBlock: boolean;
+	takeTranscriptDetail: (detail: "folded" | "compact" | "collapsed" | "expanded") => void;
 	turnFolds: { setOutputPad(outputPad: number): void; setFolding(folding: boolean): void };
 	session: {
 		isStreaming: boolean;
@@ -123,6 +124,7 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 	const editor = overrides.editor ?? {};
 	return {
 		hideThinkingBlock: overrides.hideThinkingBlock ?? false,
+		takeTranscriptDetail: () => {},
 		turnFolds: overrides.turnFolds ?? { setOutputPad: () => {}, setFolding: () => {} },
 		session: {
 			isStreaming: false,

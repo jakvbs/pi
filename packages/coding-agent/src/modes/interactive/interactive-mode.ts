@@ -155,7 +155,15 @@ import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
 import { billsSubscription, FooterComponent, formatTokens } from "./components/footer.ts";
-import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
+import {
+	expandKeyText,
+	formatKeyText,
+	keyDisplayText,
+	keyHint,
+	keyText,
+	rawKeyHint,
+	setExpandPresses,
+} from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { createMarkdownTransform } from "./components/markdown-transform.ts";
 import { createMermaidMarkdownTransformer } from "./components/mermaid.ts";
@@ -491,6 +499,9 @@ interface ExtensionChangelogUpdate {
 	markdown: string;
 }
 
+/** The transcript detail levels in the order `app.tools.expand` cycles them, each showing more of the agent's work. */
+const TRANSCRIPT_DETAILS: readonly TranscriptDetail[] = ["folded", "compact", "collapsed", "expanded"];
+
 export class InteractiveMode {
 	private runtimeHost: AgentSessionRuntime;
 	private renderer: TuiMainScreen | TuiAltScreen;
@@ -727,7 +738,7 @@ export class InteractiveMode {
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
-		this.transcriptDetail = this.settingsManager.getTranscriptDetail();
+		this.takeTranscriptDetail(this.settingsManager.getTranscriptDetail());
 		this.outputPad = this.settingsManager.getOutputPad();
 		this.turnFolds = new TurnFolds(this.chatContainer, this.transcriptDetail === "folded", this.outputPad);
 
@@ -1112,7 +1123,7 @@ export class InteractiveMode {
 					hint("app.suspend", "to suspend"),
 					hint("app.tools.expand", "to show more of the work"),
 					hint("app.thinking.toggle", "to expand thinking"),
-					hint("app.turn.toggle", "to open the last turn"),
+					hint("app.turn.toggle", "to open the last folded row"),
 					hint("app.message.copy", "to copy the last message"),
 				].join("\n");
 			const expandedInstructions = () =>
@@ -1156,7 +1167,7 @@ export class InteractiveMode {
 			const compactOnboarding = () =>
 				theme.fg(
 					"dim",
-					`Press ${keyText("app.tools.expand")} to show full startup help${showDetails ? " and loaded resources" : ""}.`,
+					`Press ${expandKeyText()} to show full startup help${showDetails ? " and loaded resources" : ""}.`,
 				);
 			const onboarding = () =>
 				theme.fg("dim", `Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.`);
@@ -4919,15 +4930,16 @@ export class InteractiveMode {
 
 	/** Show one level more of the agent's work, and folded turns again after the full output; saves the level. */
 	private cycleTranscriptDetail(): void {
-		const next: Record<TranscriptDetail, TranscriptDetail> = {
-			folded: "compact",
-			compact: "collapsed",
-			collapsed: "expanded",
-			expanded: "folded",
-		};
-		const detail = next[this.transcriptDetail];
+		const detail =
+			TRANSCRIPT_DETAILS[(TRANSCRIPT_DETAILS.indexOf(this.transcriptDetail) + 1) % TRANSCRIPT_DETAILS.length];
 		this.setTranscriptDetail(detail);
 		this.settingsManager.setTranscriptDetail(detail);
+	}
+
+	/** Make `detail` the transcript's level, which the hints of entries that open only at the expanded level count to. */
+	private takeTranscriptDetail(detail: TranscriptDetail): void {
+		this.transcriptDetail = detail;
+		setExpandPresses(TRANSCRIPT_DETAILS.length - 1 - TRANSCRIPT_DETAILS.indexOf(detail));
 	}
 
 	/**
@@ -4954,7 +4966,7 @@ export class InteractiveMode {
 	/** Fold the turns or show them in full, and show every tool row and the other expandable rows, at a level. */
 	private applyTranscriptDetail(detail: TranscriptDetail): void {
 		if (detail === this.transcriptDetail) return;
-		this.transcriptDetail = detail;
+		this.takeTranscriptDetail(detail);
 		this.turnFolds.setFolding(detail === "folded");
 		const mode = this.toolDisplayMode;
 		const expanded = this.toolOutputExpanded;
@@ -6864,7 +6876,7 @@ export class InteractiveMode {
 				return;
 			}
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
-			this.transcriptDetail = this.settingsManager.getTranscriptDetail();
+			this.takeTranscriptDetail(this.settingsManager.getTranscriptDetail());
 			this.outputPad = this.settingsManager.getOutputPad();
 			this.turnFolds.setOutputPad(this.outputPad);
 			this.turnFolds.setFolding(this.transcriptDetail === "folded");

@@ -2,7 +2,7 @@ import { Box, Container, Markdown, type MarkdownTheme, MouseRegion, Text } from 
 import type { ParsedSkillBlock } from "../../../core/agent-session.ts";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
-import { keyText } from "./keybinding-hints.ts";
+import { expandKeyText } from "./keybinding-hints.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 
 /**
@@ -81,7 +81,7 @@ export class SkillInvocationMessageComponent extends Box {
 			const line =
 				theme.fg("customMessageLabel", `\x1b[1m[skill]\x1b[22m `) +
 				theme.fg("customMessageText", this.skillBlock.name) +
-				theme.fg("dim", ` (${keyText("app.tools.expand")} to expand)`);
+				theme.fg("dim", ` (${expandKeyText()} to expand)`);
 			content.addChild(new Text(line, 0, 0));
 		}
 

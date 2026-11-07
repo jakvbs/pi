@@ -12,7 +12,7 @@ import {
 import { stripAnsi } from "../../../utils/ansi.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
-import { keyHint, keyText } from "./keybinding-hints.ts";
+import { expandHint, keyHint, keyText } from "./keybinding-hints.ts";
 import { truncateToVisualLines } from "./visual-truncate.ts";
 
 // Preview line limit when not expanded (matches tool execution behavior)
@@ -184,7 +184,7 @@ export class BashExecutionComponent extends Container {
 					);
 				} else {
 					statusParts.push(
-						`${theme.fg("muted", `... ${hiddenLineCount} more lines (`)}${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`,
+						`${theme.fg("muted", `... ${hiddenLineCount} more lines (`)}${expandHint("to expand")}${theme.fg("muted", ")")}`,
 					);
 				}
 			}
