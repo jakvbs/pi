@@ -9,6 +9,9 @@ import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "../utilities.ts";
 import { createHarness, getMessageText, getUserTexts, type Harness } from "./harness.ts";
 
+const RESTORED_INTRO =
+	"Compaction removed these skills from the conversation. They are restored here as they were last loaded.";
+
 const ALREADY_LOADED =
 	"This skill is already loaded and has not changed since it was last loaded earlier in this conversation. Follow those instructions.";
 
@@ -135,6 +138,57 @@ describe("repeated skill commands", () => {
 			"The conversation history before this point was compacted into the following summary:\n\n<summary>\nsummary of the first skill run\n</summary>",
 			`${fullBlock("Use the skill body.")}\n\nsecond`,
 			"third",
+		]);
+	});
+
+	it("restores the skill after manual compaction summarized it", async () => {
+		let firstKeptEntryId = "";
+		const { harness, requests, fullBlock } = await createSkillHarness("Use the skill body.", [
+			(pi) => {
+				pi.on("session_before_compact", async (event) => ({
+					compaction: { summary: "earlier work", firstKeptEntryId, tokensBefore: event.preparation.tokensBefore },
+				}));
+			},
+		]);
+
+		await harness.session.prompt("/skill:test first");
+		await harness.session.prompt("two");
+		const userEntries = harness.sessionManager
+			.getEntries()
+			.filter((entry) => entry.type === "message" && entry.message.role === "user");
+		firstKeptEntryId = userEntries[1]!.id;
+		await harness.session.compact();
+		await harness.session.prompt("three");
+
+		expect(requests[2]).toEqual([
+			"The conversation history before this point was compacted into the following summary:\n\n<summary>\nearlier work\n</summary>",
+			"two",
+			`${RESTORED_INTRO}\n${fullBlock("Use the skill body.")}`,
+			"three",
+		]);
+	});
+
+	it("restores the skill after a compaction an extension returns from turn_end", async () => {
+		let turns = 0;
+		const { harness, requests, fullBlock } = await createSkillHarness("Use the skill body.", [
+			(pi) => {
+				pi.on("turn_end", () => {
+					turns++;
+					if (turns !== 2) return;
+					return {
+						entries: [{ type: "compaction", summary: "memory", firstKeptEntryId: null }],
+						continue: true,
+					};
+				});
+			},
+		]);
+
+		await harness.session.prompt("/skill:test first");
+		await harness.session.prompt("two");
+
+		expect(requests[2]).toEqual([
+			"The conversation history before this point was compacted into the following summary:\n\n<summary>\nmemory\n</summary>",
+			`${RESTORED_INTRO}\n${fullBlock("Use the skill body.")}`,
 		]);
 	});
 });

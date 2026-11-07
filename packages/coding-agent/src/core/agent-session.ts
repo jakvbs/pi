@@ -58,7 +58,6 @@ import {
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
-import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { processImage } from "../utils/image-process.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
@@ -79,7 +78,7 @@ import {
 	prepareCompaction,
 	shouldCompact,
 } from "./compaction/index.ts";
-import { formatSkillBlock } from "./context-blocks.ts";
+import { formatSkillBlock, skillBlockContent } from "./context-blocks.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
@@ -123,6 +122,7 @@ import type { ModelRuntime } from "./model-runtime.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
+import { buildRestoredSkillsMessage, RESTORED_SKILLS_MESSAGE_TYPE } from "./restored-skills.ts";
 import { exportSessionToJsonl } from "./session-export.ts";
 import {
 	type BranchSummaryEntry,
@@ -132,6 +132,7 @@ import {
 	type SessionEntry,
 	SessionManager,
 	type SessionProjection,
+	sessionEntryToContextMessages,
 } from "./session-manager.ts";
 import {
 	applyToolModifiers,
@@ -989,44 +990,57 @@ export class AgentSession {
 	}
 
 	private _applyBoundaryDrafts(manager: SessionManager, drafts: SessionBoundaryDraft[]): SessionEntry[] {
-		const appended: SessionEntry[] = [];
+		const entryIds: string[] = [];
 		for (const draft of drafts) {
-			let entryId: string;
 			switch (draft.type) {
 				case "custom":
-					entryId = manager.appendCustomEntry(draft.customType, draft.data);
+					entryIds.push(manager.appendCustomEntry(draft.customType, draft.data));
 					break;
 				case "custom_message":
-					entryId = manager.appendCustomMessageEntry(
-						draft.customType,
-						draft.content,
-						draft.display,
-						draft.details,
+					entryIds.push(
+						manager.appendCustomMessageEntry(draft.customType, draft.content, draft.display, draft.details),
 					);
 					break;
 				case "context_edit":
-					entryId = manager.appendContextEdit(draft.targetId, draft.replacement);
+					entryIds.push(manager.appendContextEdit(draft.targetId, draft.replacement));
 					break;
 				case "compaction": {
 					const tokensBefore = estimateProjectedContextTokens(
 						manager.buildSessionProjection(),
 						manager.getBranch(),
 					).tokens;
-					entryId = manager.appendCompaction(
-						draft.summary,
-						draft.firstKeptEntryId,
-						tokensBefore,
-						draft.details,
-						true,
-						draft.usage,
+					entryIds.push(
+						manager.appendCompaction(
+							draft.summary,
+							draft.firstKeptEntryId,
+							tokensBefore,
+							draft.details,
+							true,
+							draft.usage,
+						),
 					);
+					const restoredId = this._appendRestoredSkills(manager);
+					if (restoredId) entryIds.push(restoredId);
 					break;
 				}
 			}
-			const entry = manager.getEntry(entryId);
-			if (entry) appended.push(entry);
 		}
-		return appended;
+		return entryIds.flatMap((entryId) => manager.getEntry(entryId) ?? []);
+	}
+
+	/**
+	 * After a compaction, append the message that restores the skills it removed from model context. Returns its entry
+	 * id, or undefined when compaction removed no skill.
+	 */
+	private _appendRestoredSkills(manager: SessionManager): string | undefined {
+		const restored = buildRestoredSkillsMessage(
+			manager.getBranch().flatMap(sessionEntryToContextMessages),
+			manager.buildSessionProjection().messages,
+			this._resourceLoader.getSkills().skills,
+			this.model?.contextWindow,
+		);
+		if (!restored) return undefined;
+		return manager.appendCustomMessageEntry(RESTORED_SKILLS_MESSAGE_TYPE, restored.content, true, restored.details);
 	}
 
 	private _createBoundaryPreviewManager(drafts: SessionBoundaryDraft[]): SessionManager {
@@ -2295,11 +2309,10 @@ export class AgentSession {
 
 		try {
 			const content = readFileSync(skill.filePath, "utf-8");
-			const body = stripFrontmatter(content).trim();
 			return formatSkillBlock({
 				name: skill.name,
 				location: skill.filePath,
-				content: `References are relative to ${skill.baseDir}.\n\n${body}`,
+				content: skillBlockContent(skill.baseDir, content),
 				userMessage: args || undefined,
 			});
 		} catch (err) {
@@ -3012,6 +3025,7 @@ export class AgentSession {
 			}
 
 			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
+			this._appendRestoredSkills(this.sessionManager);
 			const newEntries = this.sessionManager.getEntries();
 			this._refreshFinalizedContext();
 			const estimatedTokensAfter = estimateMessagesTokens(this.sessionManager.buildSessionProjection().messages);
@@ -3338,6 +3352,7 @@ export class AgentSession {
 			abortController.signal.throwIfAborted();
 
 			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
+			this._appendRestoredSkills(this.sessionManager);
 			const newEntries = this.sessionManager.getEntries();
 			this._refreshFinalizedContext();
 			const estimatedTokensAfter = estimateMessagesTokens(this.sessionManager.buildSessionProjection().messages);

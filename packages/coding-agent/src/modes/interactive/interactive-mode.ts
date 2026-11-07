@@ -109,6 +109,7 @@ import { findMatchingProviders } from "../../core/provider-matching.ts";
 import { RADIUS_PROVIDER_ID } from "../../core/radius.ts";
 import { planRadiusMcpServer } from "../../core/radius-mcp.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
+import { RESTORED_SKILLS_MESSAGE_TYPE } from "../../core/restored-skills.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { SESSION_VIEW_POLL_MS, type SessionFileTail, type SessionTailRead } from "../../core/session-file-tail.ts";
 import {
@@ -177,6 +178,7 @@ import {
 } from "./components/oauth-selector.ts";
 import { piLogoLines, piWordmark, supportsPiLogo } from "./components/pi-logo.ts";
 import { createLoginMenuSelector } from "./components/radius-login-selector.ts";
+import { renderRestoredSkillsMessage } from "./components/restored-skills-message.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
@@ -4168,7 +4170,9 @@ export class InteractiveMode {
 			}
 			case "custom": {
 				if (message.display) {
-					const renderer = this.session.extensionRunner.getMessageRenderer(message.customType);
+					const renderer =
+						this.session.extensionRunner.getMessageRenderer(message.customType) ??
+						(message.customType === RESTORED_SKILLS_MESSAGE_TYPE ? renderRestoredSkillsMessage : undefined);
 					const component = new CustomMessageComponent(
 						message,
 						renderer,

@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import type { MarkdownTransformContext, MessageRenderer, MessageRenderOptions } from "../src/core/extensions/types.ts";
 import type { CustomMessage } from "../src/core/messages.ts";
 import { CustomMessageComponent } from "../src/modes/interactive/components/custom-message.ts";
+import { renderRestoredSkillsMessage } from "../src/modes/interactive/components/restored-skills-message.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
@@ -76,5 +77,25 @@ describe("CustomMessageComponent", () => {
 			messageId: "entry-1",
 			timestamp: "2025-01-15T10:30:00.000Z",
 		});
+	});
+
+	test("shows a restored-skills message as one line of skill names, not the skills' text", () => {
+		initTheme("dark");
+		const message: CustomMessage = {
+			role: "custom",
+			customType: "restored-skills",
+			content: [{ type: "text", text: '<skill name="alpha" location="/a">\nlong instructions\n</skill>' }],
+			display: true,
+			details: { restored: ["alpha", "beta"], tooLarge: ["gamma"] },
+			timestamp: Date.now(),
+		};
+		const component = new CustomMessageComponent(message, renderRestoredSkillsMessage, undefined, 1);
+
+		expect(
+			component
+				.render(120)
+				.map((line) => stripAnsi(line).trimEnd())
+				.filter((line) => line.length > 0),
+		).toEqual([" [skills restored after compaction] alpha, beta · too large, named only: gamma"]);
 	});
 });

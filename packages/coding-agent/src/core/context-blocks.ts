@@ -1,5 +1,6 @@
 // Blocks that carry a whole file into model context, and how model context carries their repeats.
 import type { JsonValue, Message } from "@earendil-works/pi-ai";
+import { stripFrontmatter } from "../utils/frontmatter.ts";
 
 /** Parsed skill block from a user message */
 export interface ParsedSkillBlock {
@@ -13,6 +14,11 @@ export interface ParsedSkillBlock {
 export function formatSkillBlock(block: ParsedSkillBlock): string {
 	const skillBlock = `<skill name="${block.name}" location="${block.location}">\n${block.content}\n</skill>`;
 	return block.userMessage ? `${skillBlock}\n\n${block.userMessage}` : skillBlock;
+}
+
+/** The content of the skill block for a skill file's text: what `/skill:name` sends. */
+export function skillBlockContent(baseDir: string, fileText: string): string {
+	return `References are relative to ${baseDir}.\n\n${stripFrontmatter(fileText).trim()}`;
 }
 
 /**
@@ -112,7 +118,7 @@ export function collapseRepeatedContextBlocks(messages: Message[]): Message[] {
 }
 
 /** The path of a {@link WholeFileDetails} mark. Details come from session files and extension tools, so check them. */
-function wholeFilePath(details: JsonValue | undefined): string | undefined {
+export function wholeFilePath(details: JsonValue | undefined): string | undefined {
 	if (typeof details !== "object" || details === null || !("wholeFile" in details)) return undefined;
 	const wholeFile = details.wholeFile;
 	if (typeof wholeFile !== "object" || wholeFile === null || !("path" in wholeFile)) return undefined;
