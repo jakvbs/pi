@@ -48,7 +48,7 @@ export {
 	shouldCompact,
 } from "./core/compaction/index.ts";
 // Skills
-export { type ParsedSkillBlock, parseSkillBlock } from "./core/context-blocks.ts";
+export { type ParsedSkillBlock, parseSkillBlock, type WholeFileDetails } from "./core/context-blocks.ts";
 export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
 // Extension system
 export type {

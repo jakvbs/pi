@@ -98,7 +98,7 @@ describe("Coding Agent Tools", () => {
 			expect(getTextOutput(result)).toBe(content);
 			// No truncation message since file fits within limits
 			expect(getTextOutput(result)).not.toContain("Use offset=");
-			expect(result.details).toBeUndefined();
+			expect(result.details).toEqual({ wholeFile: { path: testFile } });
 			expect(result.structuredContent).toBe(content);
 		});
 

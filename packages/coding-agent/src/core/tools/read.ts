@@ -5,6 +5,7 @@ import { type Static, Type } from "typebox";
 import { TextDecoder } from "util";
 import { processImage } from "../../utils/image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
+import type { WholeFileDetails } from "../context-blocks.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { headOf, type OutputHead, OutputHeadCollector } from "./output-head.ts";
 import { DEFAULT_TOOL_OUTPUT_MAX_TOKENS, limitOutput, toolOutputMaxBytes } from "./output-limit.ts";
@@ -41,6 +42,8 @@ export type ReadToolOutput = Static<typeof readOutputSchema>;
 
 export interface ReadToolDetails {
 	truncation?: TruncationResult;
+	/** Set when the result text is the whole file, so model context can refer to an unchanged repeat. */
+	wholeFile?: WholeFileDetails["wholeFile"];
 }
 
 /**
@@ -285,6 +288,7 @@ export function createReadToolDefinition(
 								});
 								const outputText = limited.truncation.truncated ? limited.text : limited.text + moreLines;
 								if (limited.truncation.truncated) details = { truncation: limited.truncation };
+								else if (startLine === 0 && moreLines === "") details = { wholeFile: { path: absolutePath } };
 								content = [{ type: "text", text: outputText }];
 							}
 

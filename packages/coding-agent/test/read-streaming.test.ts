@@ -31,7 +31,7 @@ function referenceRead(
 	path: string,
 	offset: number | undefined,
 	limit: number | undefined,
-): { text: string; details: { truncation: TruncationResult } | undefined } {
+): { text: string; details: { truncation: TruncationResult } | { wholeFile: { path: string } } | undefined } {
 	const allLines = textContent.split("\n");
 	const totalFileLines = allLines.length;
 	const startLine = offset ? Math.max(0, offset - 1) : 0;
@@ -67,7 +67,10 @@ function referenceRead(
 	});
 	return limited.truncation.truncated
 		? { text: limited.text, details: { truncation: limited.truncation } }
-		: { text: limited.text + moreLines, details: undefined };
+		: {
+				text: limited.text + moreLines,
+				details: startLine === 0 && moreLines === "" ? { wholeFile: { path } } : undefined,
+			};
 }
 
 type ReadOutcome = { text: string; details: unknown } | { error: string };

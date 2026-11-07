@@ -2290,6 +2290,8 @@ pi.registerTool({
 
 **Result fields:** Every result, including partial results passed to `onUpdate`, needs model-facing `content` and a `details` value. Use `details: undefined` when there is nothing to store; the type of `details` must match across all results of the tool.
 
+**Whole files:** When a result's text content is the whole content of one file, add `wholeFile: { path }` with the absolute path to `details` (type `WholeFileDetails`). The built-in `read` tool does this for a complete, untruncated text read. When the latest earlier full copy of that file in the model's context has the same text, the model gets a short note that the file has not changed instead of a second copy. The session keeps the full result.
+
 **Usage accounting:** If a tool makes nested LLM calls, return their combined `Usage` as `usage`. Pi persists it on the tool result and includes it in footer, `/session`, and RPC session totals. `tool_result` handlers can inspect or replace this value.
 
 **Signaling errors:** To mark a tool execution as failed, throw an error from `execute`, or return a result with `isError: true`. Both report an error result to the LLM; a returned result also keeps `details` and `structuredContent` for rendering and scripts. Other returned values never set the error flag.
