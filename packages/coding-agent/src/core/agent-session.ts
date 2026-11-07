@@ -138,6 +138,7 @@ import {
 	DEFAULT_TOOL_NAMES,
 	type SettingsManager,
 } from "./settings-manager.ts";
+import { formatSkillBlock } from "./skill-block.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { BUILTIN_PATH_PREFIX, createSyntheticSourceInfo, isSyntheticPath, type SourceInfo } from "./source-info.ts";
 import {
@@ -171,33 +172,6 @@ const runtimeStreamFunctions = new WeakMap<StreamFn, ModelRuntime>();
 /** Mark `streamFn` as resolving auth through `modelRuntime` on its own. */
 export function markRuntimeStreamFunction(streamFn: StreamFn, modelRuntime: ModelRuntime): void {
 	runtimeStreamFunctions.set(streamFn, modelRuntime);
-}
-
-// ============================================================================
-// Skill Block Parsing
-// ============================================================================
-
-/** Parsed skill block from a user message */
-export interface ParsedSkillBlock {
-	name: string;
-	location: string;
-	content: string;
-	userMessage: string | undefined;
-}
-
-/**
- * Parse a skill block from message text.
- * Returns null if the text doesn't contain a skill block.
- */
-export function parseSkillBlock(text: string): ParsedSkillBlock | null {
-	const match = text.match(/^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/);
-	if (!match) return null;
-	return {
-		name: match[1],
-		location: match[2],
-		content: match[3],
-		userMessage: match[4]?.trim() || undefined,
-	};
 }
 
 /** Tool execution events of calls a tool made through `ctx.executeTool()` carry `parentToolCallId`. */
@@ -2322,8 +2296,12 @@ export class AgentSession {
 		try {
 			const content = readFileSync(skill.filePath, "utf-8");
 			const body = stripFrontmatter(content).trim();
-			const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
-			return args ? `${skillBlock}\n\n${args}` : skillBlock;
+			return formatSkillBlock({
+				name: skill.name,
+				location: skill.filePath,
+				content: `References are relative to ${skill.baseDir}.\n\n${body}`,
+				userMessage: args || undefined,
+			});
 		} catch (err) {
 			// Emit error like extension commands do
 			this._extensionRunner.emitError({

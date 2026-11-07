@@ -7,6 +7,7 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
+import { collapseRepeatedSkillBlocks } from "./skill-block.ts";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -144,9 +145,11 @@ export function createCustomMessage(
  * - Agent's transormToLlm option (for prompt calls and queued messages)
  * - Compaction's generateSummary (for summarization)
  * - Custom extensions and tools
+ *
+ * A repeated identical skill block is sent once in full (see collapseRepeatedSkillBlocks).
  */
 export function convertToLlm(messages: AgentMessage[]): Message[] {
-	return messages
+	const converted = messages
 		.map((m): Message | undefined => {
 			switch (m.role) {
 				case "bashExecution":
@@ -193,4 +196,5 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 			}
 		})
 		.filter((m) => m !== undefined);
+	return collapseRepeatedSkillBlocks(converted);
 }

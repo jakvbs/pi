@@ -50,6 +50,8 @@ Arguments after `/skill:name` are appended to the loaded instructions as a user 
 /skill:pdf-tools extract report.pdf
 ```
 
+Running `/skill:name` again while an identical copy of the skill is still in the model's context sends a short note that the skill is already loaded, followed by the new request, instead of a second full copy. The skill is sent in full again when its file changed or when compaction summarized the earlier copy.
+
 Set `disable-model-invocation: true` in frontmatter when a skill should be available only through its explicit command. The `enableSkillCommands` [setting](settings.md) controls whether skill commands appear in interactive command discovery; manually entered `/skill:name` commands still work.
 
 <a id="choose-where-it-loads"></a>
