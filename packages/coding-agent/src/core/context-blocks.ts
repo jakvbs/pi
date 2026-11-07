@@ -1,4 +1,4 @@
-// The text a `/skill:name` command expands to, and how model context carries repeats of it.
+// Blocks that carry a whole file into model context, and how model context carries their repeats.
 import type { Message } from "@earendil-works/pi-ai";
 
 /** Parsed skill block from a user message */
@@ -31,37 +31,38 @@ export function parseSkillBlock(text: string): ParsedSkillBlock | null {
 }
 
 /**
- * Keep the first copy of each skill block in `messages` and replace every later identical copy with a short
- * note. A copy stays in full when no identical copy precedes it in these messages, for example after
- * compaction summarized the earlier one, or when the skill file changed between invocations. The result for
- * a message depends only on the messages before it, so appending messages keeps the prompt-cache prefix.
+ * Send each version of a whole file to the model in full once. A block becomes a short note when the latest earlier
+ * full copy from the same source has the same content; every other block stays in full. A changed file, a file whose
+ * earlier copy compaction summarized, and a block that does not parse therefore cost a copy and never lose content.
+ * The result for a message depends only on the messages before it, so appending messages keeps the prompt-cache prefix.
  */
-export function collapseRepeatedSkillBlocks(messages: Message[]): Message[] {
-	const loaded = new Set<string>();
-	const collapse = (text: string): string => {
+export function collapseRepeatedContextBlocks(messages: Message[]): Message[] {
+	// Source of a block, for example `skill:/path/SKILL.md`, to the content of its latest full copy.
+	const latest = new Map<string, string>();
+	const isRepeat = (source: string, content: string): boolean => {
+		if (latest.get(source) === content) return true;
+		latest.set(source, content);
+		return false;
+	};
+	const collapseText = (text: string): string => {
 		const block = parseSkillBlock(text);
-		if (!block) return text;
-		const key = JSON.stringify([block.name, block.location, block.content]);
-		if (!loaded.has(key)) {
-			loaded.add(key);
-			return text;
-		}
-		return formatSkillBlock({ ...block, content: SKILL_ALREADY_LOADED });
+		if (!block || !isRepeat(`skill:${block.location}`, block.content)) return text;
+		return formatSkillBlock({ ...block, content: SKILL_UNCHANGED });
 	};
 	return messages.map((message) => {
 		if (message.role !== "user") return message;
 		if (typeof message.content === "string") {
-			const content = collapse(message.content);
+			const content = collapseText(message.content);
 			return content === message.content ? message : { ...message, content };
 		}
 		const content = message.content.map((part) => {
 			if (part.type !== "text") return part;
-			const text = collapse(part.text);
+			const text = collapseText(part.text);
 			return text === part.text ? part : { ...part, text };
 		});
 		return content.every((part, index) => part === message.content[index]) ? message : { ...message, content };
 	});
 }
 
-const SKILL_ALREADY_LOADED =
-	"This skill is already loaded. Its full instructions appear earlier in this conversation. Follow them.";
+const SKILL_UNCHANGED =
+	"This skill is already loaded and has not changed since it was last loaded earlier in this conversation. Follow those instructions.";

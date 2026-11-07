@@ -47,6 +47,8 @@ export {
 	serializeConversation,
 	shouldCompact,
 } from "./core/compaction/index.ts";
+// Skills
+export { type ParsedSkillBlock, parseSkillBlock } from "./core/context-blocks.ts";
 export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
 // Extension system
 export type {
@@ -323,8 +325,6 @@ export {
 	type SettingsManagerCreateOptions,
 	type TuiMode,
 } from "./core/settings-manager.ts";
-// Skills
-export { type ParsedSkillBlock, parseSkillBlock } from "./core/skill-block.ts";
 export {
 	formatSkillsForPrompt,
 	type LoadSkillsFromDirOptions,

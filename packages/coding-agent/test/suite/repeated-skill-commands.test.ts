@@ -10,7 +10,7 @@ import { createTestExtensionsResult, createTestResourceLoader } from "../utiliti
 import { createHarness, getMessageText, getUserTexts, type Harness } from "./harness.ts";
 
 const ALREADY_LOADED =
-	"This skill is already loaded. Its full instructions appear earlier in this conversation. Follow them.";
+	"This skill is already loaded and has not changed since it was last loaded earlier in this conversation. Follow those instructions.";
 
 describe("repeated skill commands", () => {
 	const harnesses: Harness[] = [];
@@ -88,6 +88,22 @@ describe("repeated skill commands", () => {
 		expect(requests[1]).toEqual([
 			`${fullBlock("Use the old body.")}\n\nfirst`,
 			`${fullBlock("Use the new body.")}\n\nsecond`,
+		]);
+	});
+
+	it("sends the skill in full when it changed back to a version loaded before the latest one", async () => {
+		const { harness, requests, skillPath, fullBlock } = await createSkillHarness("Use the first body.");
+
+		await harness.session.prompt("/skill:test first");
+		writeFileSync(skillPath, "Use the second body.");
+		await harness.session.prompt("/skill:test second");
+		writeFileSync(skillPath, "Use the first body.");
+		await harness.session.prompt("/skill:test third");
+
+		expect(requests[2]).toEqual([
+			`${fullBlock("Use the first body.")}\n\nfirst`,
+			`${fullBlock("Use the second body.")}\n\nsecond`,
+			`${fullBlock("Use the first body.")}\n\nthird`,
 		]);
 	});
 
