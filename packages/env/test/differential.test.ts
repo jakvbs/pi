@@ -323,6 +323,8 @@ describe("RemoteExecutionEnv against NodeExecutionEnv", () => {
 			({
 				env,
 				outputWindow: undefined,
+				// As the Harness for a tool without its own limits, under the default settings.
+				outputLimits: { maxBytes: 20_000, maxLines: Number.MAX_SAFE_INTEGER, retain: "head" },
 				output: (chunk: string | Uint8Array) => output.push(String(chunk)),
 				// As the Harness: the output so far (these outputs stay below the tool's limits).
 				retainedOutput: () => ({ text: output.join(""), truncated: false }),
