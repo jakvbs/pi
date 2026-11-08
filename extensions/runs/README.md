@@ -33,6 +33,6 @@ Only the launching session can resume a run. A durable record does not transfer 
 ## Install and test
 
 ```bash
-pi install ~/projects/pi/extensions/runs
-cd ~/projects/pi/extensions/runs && npm test && npm run typecheck
+pi install ~/.repos/pi/extensions/runs
+cd ~/.repos/pi/extensions/runs && npm test && npm run typecheck
 ```

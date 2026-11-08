@@ -26,6 +26,6 @@ Every known value is saved to `~/.pi/agent/usage/<provider>.json`, which all ses
 ## Install and test
 
 ```bash
-pi install ~/projects/pi/extensions/usage
-cd ~/projects/pi/extensions/usage && npm test && npm run typecheck
+pi install ~/.repos/pi/extensions/usage
+cd ~/.repos/pi/extensions/usage && npm test && npm run typecheck
 ```

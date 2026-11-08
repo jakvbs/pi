@@ -1,6 +1,6 @@
 # Extensions
 
-pi extensions maintained in this fork. Each directory is a standalone package outside the root npm workspaces; pi loads it by path from `packages` in `~/.pi/agent/settings.json` (for example `../../projects/pi/extensions/web-access`).
+pi extensions maintained in this fork. Each directory is a standalone package outside the root npm workspaces; pi loads it by path from `packages` in `~/.pi/agent/settings.json` (for example `../../.repos/pi/extensions/web-access`).
 
 ## Own and imported extensions
 
