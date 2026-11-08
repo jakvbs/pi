@@ -69,9 +69,9 @@ export function readStatus(asyncDir: string): SubagentStatus | undefined {
 	return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as SubagentStatus) : undefined;
 }
 
-// pi-subagents rewrites status.json only when activity changes, so file age says nothing; the runner pid does.
-function runnerAlive(status: SubagentStatus): boolean {
-	if (status.pid === undefined) return true;
+/** Checks the runner process, treating a queued or running status without a PID as potentially live. */
+export function runnerAlive(status: SubagentStatus): boolean {
+	if (status.pid === undefined) return status.state === "queued" || status.state === "running";
 	const bootId = existsSync("/proc/sys/kernel/random/boot_id")
 		? readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()
 		: undefined;
@@ -80,7 +80,7 @@ function runnerAlive(status: SubagentStatus): boolean {
 		process.kill(status.pid, 0);
 		return true;
 	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "EPERM";
+		return error instanceof Error && "code" in error && error.code === "EPERM";
 	}
 }
 

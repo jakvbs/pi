@@ -4,15 +4,32 @@ Adds the `run` tool. A run is one `scout-agent` working in the background on its
 
 - `start` takes a `label` and `task`, returns as soon as the agent starts, and wakes the launching session when the agent ends. An optional `prepare` command (for example `npm ci`) runs in a new worktree first and blocks `start` for up to 15 minutes.
 - `list` shows runs and their states. `show` shows one run's details, commits, and latest report.
-- `steer` sends a `message` to the agent. `stop` requests a stop. `resume` continues the agent with a `message` and records another attempt. If the last attempt ended without a session file, it starts a fresh agent in the same worktree with `task.md` followed by the message.
+- `steer` sends a `message` to the agent. `stop` requests a stop. `resume` continues the agent with a `message` and records another attempt. It refuses when the worktree is clean and no runner is alive; start a fresh run on the same `branch` instead. If a resumable attempt ended without a session file, it starts a fresh agent in the same worktree with `task.md` followed by the message.
 
 Actions that target a run take its `id` or a unique suffix. By default, `start` uses the session's checkout and creates `run/<id>` from its HEAD, so a session in a linked worktree branches from its own work. An explicit `branch` is created the same way when it does not exist; otherwise the run works on it and reuses its worktree.
+
+## Roles
+
+`start` accepts an optional `role` of `worker`, `review`, `repair`, `survey`, or `question`. It reads `spec/roles.json` at the root of the session's cwd repository, even when `repo` targets another repository. If the file is absent, it uses `runs.roles` from the effective pi settings. Both use the same map:
+
+```json
+{
+	"question": {
+		"model": "pi-sub-anthropic/claude-opus-5-5:medium",
+		"reading": ["~/.repos/legible/skills/scout-mode/SKILL.md"]
+	}
+}
+```
+
+Each configured role requires `model` and `reading`; reading paths must be absolute or start with `~/`. An invalid field or a missing role is an error, not a reason to try another configuration. An explicit `model` overrides the role's model but keeps its reading. Without a role, model selection stays unchanged.
+
+The task includes a deduplicated "Required reading" list, plus the ticket and target worktree's root `AGENTS.md` when present. Paths already named in the task are not repeated. A rejected launch reports the role, model, configuration source, and preserved branch and worktree; it never substitutes another model.
 
 ## Record
 
 Each run lives in `~/.local/state/pi/runs/<id>/`, or `$PI_RUNS_DIR/<id>/` when `PI_RUNS_DIR` is set. The folder contains:
 
-- `run.json` holds the repository, base commit, branch, worktree path, agent, optional model, skills, attempts, outcomes, commits, and session path when known.
+- `run.json` holds the repository, base commit, branch, worktree path, agent, optional role, model and configuration source, skills, attempts, outcomes, commits, and session path when known.
 - `task.md` holds the task sent to the agent, including the ticket path when supplied.
 - `report-<n>.md` holds the last assistant text for attempt `n`, starting at 1, when that text is available at settlement.
 - `sessions/` stores the child sessions.

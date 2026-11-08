@@ -1,12 +1,14 @@
 // The `run` tool: one scout-agent per run, on its own branch and worktree, with a record that outlives the session.
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { StringEnum, Type } from "@earendil-works/pi-ai";
+import { join, resolve } from "node:path";
+import { StringEnum } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type Static, Type } from "typebox";
 import { lastAttempt, listRuns, newRunId, type RunRecord, readRun, runDir, runState, runsRoot, writeRun } from "./record.ts";
-import { readStatus, settleRun } from "./settle.ts";
-import { callSubagents, launchDetails, SUBAGENT_ASYNC_COMPLETE_EVENT } from "./subagents-rpc.ts";
+import { resolveRole, roleSchema, withRequiredReading } from "./roles.ts";
+import { readStatus, runnerAlive, settleRun } from "./settle.ts";
+import { callSubagents, launchDetails, SUBAGENT_ASYNC_COMPLETE_EVENT, type SubagentsMethod } from "./subagents-rpc.ts";
 import { prepareWorktree, primaryCheckout, removeWorktree } from "./worktree.ts";
 
 const AGENT = "scout-agent";
@@ -24,7 +26,10 @@ const parameters = Type.Object({
 		}),
 	),
 	ticket: Type.Optional(Type.String({ description: "start: path of the ticket this run works on; appended to the task." })),
-	model: Type.Optional(Type.String({ description: "start: provider/model[:thinking]; default is the agent's." })),
+	role: Type.Optional(roleSchema),
+	model: Type.Optional(
+		Type.String({ description: "start: provider/model[:thinking]; overrides the role's model, otherwise the agent's default." }),
+	),
 	skills: Type.Optional(Type.Array(Type.String(), { description: "start: skills listed to the agent even outside its catalog." })),
 	prepare: Type.Optional(Type.String({ description: "start: shell command run in a new worktree before the agent starts, e.g. npm ci." })),
 	message: Type.Optional(Type.String({ description: "steer, resume: the message for the agent." })),
@@ -87,13 +92,15 @@ export default function (pi: ExtensionAPI) {
 	);
 }
 
-async function start(
-	root: string,
-	pi: ExtensionAPI,
-	params: { label?: string; task?: string; repo?: string; branch?: string; ticket?: string; model?: string; skills?: string[]; prepare?: string },
-	cwd: string,
-): Promise<string> {
+async function start(root: string, pi: ExtensionAPI, params: Static<typeof parameters>, cwd: string): Promise<string> {
 	const label = required(params.label, "label");
+	const originalTask = required(params.task, "task");
+	const roleConfig = params.role ? resolveRole(cwd, params.role, () => pi.getSettings()) : undefined;
+	const model = params.model ?? roleConfig?.model;
+	const selection = {
+		...(params.role ? { role: params.role } : {}),
+		...(model ? { model, modelSource: params.model ? "run start model parameter" : roleConfig?.source } : {}),
+	};
 	const checkout = params.repo ?? cwd;
 	const repo = primaryCheckout(checkout);
 	const id = newRunId(label, new Date());
@@ -101,70 +108,108 @@ async function start(
 	mkdirSync(dir, { recursive: true });
 	const branch = params.branch ?? `run/${id}`;
 	const { base, worktree, created } = prepareWorktree(checkout, branch, join(dir, "worktree"));
-	const task = params.ticket ? `${required(params.task, "task")}\n\nTicket: ${params.ticket}` : required(params.task, "task");
+	const agentsFile = resolve(worktree, "AGENTS.md");
+	const task = withRequiredReading(originalTask, [
+		...(roleConfig?.reading ?? []),
+		...(params.ticket ? [params.ticket] : []),
+		...(existsSync(agentsFile) ? [agentsFile] : []),
+	]);
 	writeFileSync(join(dir, "task.md"), `${task}\n`);
 	try {
 		if (params.prepare && created) execSync(params.prepare, { cwd: worktree, stdio: "pipe", timeout: PREPARE_TIMEOUT_MS });
-		const launch = launchDetails(
-			await callSubagents(pi.events, "spawn", {
-				agent: AGENT,
-				task,
-				cwd: worktree,
-				sessionDir: join(dir, "sessions"),
-				context: "fresh",
-				async: true,
-				...(params.model ? { model: params.model } : {}),
-				...(params.skills?.length ? { skill: params.skills } : {}),
-			}),
-		);
-		const record: RunRecord = {
-			version: 1,
-			id,
-			label,
-			...(params.ticket ? { ticket: params.ticket } : {}),
-			repo,
-			base,
-			branch,
-			worktree,
-			agent: AGENT,
-			...(params.model ? { model: params.model } : {}),
-			skills: params.skills ?? [],
-			attempts: [{ subagentRunId: launch.asyncId, asyncDir: launch.asyncDir, startedAt: new Date().toISOString() }],
-			commits: [],
-		};
-		writeRun(root, record);
-		return `Started run ${id} on branch ${branch} in ${worktree}. You will be woken when the agent ends; then read it with run show.`;
 	} catch (error) {
 		if (created) removeWorktree(repo, branch, worktree);
 		throw error;
 	}
+	const launch = await launchAgent(
+		pi,
+		"spawn",
+		{
+			agent: AGENT,
+			task,
+			cwd: worktree,
+			sessionDir: join(dir, "sessions"),
+			context: "fresh",
+			async: true,
+			...(model ? { model } : {}),
+			...(params.skills?.length ? { skill: params.skills } : {}),
+		},
+		{ ...selection, branch, worktree },
+	);
+	const record: RunRecord = {
+		version: 1,
+		id,
+		label,
+		...(params.ticket ? { ticket: params.ticket } : {}),
+		repo,
+		base,
+		branch,
+		worktree,
+		agent: AGENT,
+		...selection,
+		skills: params.skills ?? [],
+		attempts: [{ subagentRunId: launch.asyncId, asyncDir: launch.asyncDir, startedAt: new Date().toISOString() }],
+		commits: [],
+	};
+	writeRun(root, record);
+	return `Started run ${id} on branch ${branch} in ${worktree}. You will be woken when the agent ends; then read it with run show.`;
 }
 
 async function resume(root: string, pi: ExtensionAPI, record: RunRecord, message: string): Promise<string> {
 	record = settleRun(root, record);
 	const attempt = lastAttempt(record);
 	const status = readStatus(attempt.asyncDir);
+	if (
+		!(status && runnerAlive(status)) &&
+		!execFileSync("git", ["-C", record.worktree, "status", "--porcelain", "--untracked-files=all"], { encoding: "utf8" }).trim()
+	) {
+		throw new Error(
+			`Cannot resume run ${record.id}: its worktree is clean and no runner is alive. Start a fresh run on branch '${record.branch}'.`,
+		);
+	}
 	const sessionFile = status?.steps?.[0]?.sessionFile;
 	const dir = runDir(root, record.id);
-	const launch = launchDetails(
+	const launch =
 		!status || runState(record) === "running" || (sessionFile && existsSync(sessionFile))
-			? await callSubagents(pi.events, "resume", { id: attempt.subagentRunId, message })
-			: await callSubagents(pi.events, "spawn", {
-					agent: record.agent,
-					task: `${readFileSync(join(dir, "task.md"), "utf8").trimEnd()}\n\n${message}`,
-					cwd: record.worktree,
-					sessionDir: join(dir, "sessions"),
-					context: "fresh",
-					async: true,
-					...(record.model ? { model: record.model } : {}),
-					...(record.skills.length ? { skill: record.skills } : {}),
-				}),
-	);
+			? await launchAgent(pi, "resume", { id: attempt.subagentRunId, message }, record)
+			: await launchAgent(
+					pi,
+					"spawn",
+					{
+						agent: record.agent,
+						task: `${readFileSync(join(dir, "task.md"), "utf8").trimEnd()}\n\n${message}`,
+						cwd: record.worktree,
+						sessionDir: join(dir, "sessions"),
+						context: "fresh",
+						async: true,
+						...(record.model ? { model: record.model } : {}),
+						...(record.skills.length ? { skill: record.skills } : {}),
+					},
+					record,
+				);
 	writeRun(root, {
 		...record,
 		attempts: [...record.attempts, { subagentRunId: launch.asyncId, asyncDir: launch.asyncDir, startedAt: new Date().toISOString() }],
 	});
 	return `Resumed run ${record.id} (attempt ${record.attempts.length + 1}).`;
+}
+
+async function launchAgent(
+	pi: ExtensionAPI,
+	method: SubagentsMethod,
+	params: Record<string, unknown>,
+	selection: Pick<RunRecord, "role" | "model" | "modelSource" | "branch" | "worktree">,
+) {
+	try {
+		return launchDetails(await callSubagents(pi.events, method, params));
+	} catch (error) {
+		const context = selection.model
+			? `Run role '${selection.role ?? "none"}', model '${selection.model}', configured by ${selection.modelSource ?? "run record"}: `
+			: "";
+		throw new Error(
+			`${context}${error instanceof Error ? error.message : String(error)} Work is preserved on branch '${selection.branch}' in ${selection.worktree}.`,
+		);
+	}
 }
 
 function summary(record: RunRecord): string {
@@ -181,6 +226,8 @@ function show(root: string, record: RunRecord): string {
 		`branch: ${record.branch} (base ${record.base.slice(0, 12)})`,
 		`worktree: ${record.worktree}`,
 		`model: ${record.model ?? "agent default"}`,
+		...(record.role ? [`role: ${record.role}`] : []),
+		...(record.modelSource ? [`model source: ${record.modelSource}`] : []),
 		...(record.ticket ? [`ticket: ${record.ticket}`] : []),
 		`attempts: ${record.attempts.length}`,
 		...(record.sessionFile ? [`session: ${record.sessionFile}`] : []),

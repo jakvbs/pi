@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { RunRole } from "./roles.ts";
 
 /** How an attempt ended. `lost` means the pi-subagents run directory disappeared before the run was settled. */
 export type OutcomeState = "done" | "failed" | "stopped" | "lost";
@@ -32,7 +33,9 @@ export interface RunRecord {
 	branch: string;
 	worktree: string;
 	agent: string;
+	role?: RunRole;
 	model?: string;
+	modelSource?: string;
 	skills: string[];
 	attempts: [Attempt, ...Attempt[]];
 	commits: string[];
