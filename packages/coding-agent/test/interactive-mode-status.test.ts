@@ -269,7 +269,12 @@ describe("InteractiveMode pending user bash output", () => {
 		for (const component of pendingBashComponents) pendingMessagesContainer.addChild(component);
 		const fakeThis: any = {
 			isInitialized: true,
-			toolOutputExpanded: false,
+			// The fork drives expansion through the transcript detail level and the turn folds.
+			transcriptDetail: "collapsed",
+			turnFolds: { setFolding: vi.fn(), end: vi.fn(), start: vi.fn() },
+			settingsManager: { getTranscriptDetail: () => "collapsed" },
+			customHeader: undefined,
+			builtInHeader: { setExpanded: vi.fn() },
 			loadedResourcesContainer: new Container(),
 			chatContainer: new Container(),
 			pendingMessagesContainer,
@@ -285,12 +290,19 @@ describe("InteractiveMode pending user bash output", () => {
 		};
 		for (const name of [
 			"setToolsExpanded",
+			"setTranscriptDetail",
+			"applyTranscriptDetail",
+			"takeTranscriptDetail",
+			"addBashComponentToChat",
 			"updatePendingMessagesDisplay",
 			"getAllQueuedMessages",
 			"flushPendingBashComponents",
 			"handleEvent",
 		]) {
 			fakeThis[name] = (InteractiveMode as any).prototype[name].bind(fakeThis);
+		}
+		for (const name of ["toolDisplayMode", "toolOutputExpanded"]) {
+			Object.defineProperty(fakeThis, name, Object.getOwnPropertyDescriptor(InteractiveMode.prototype, name)!);
 		}
 		return fakeThis;
 	}
