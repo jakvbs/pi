@@ -1,15 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type * as ObserverAgentModule from "../src/agents/observer/agent.ts";
+import type * as DebugLogModule from "../src/debug-log.ts";
 
 const mockAgents = vi.hoisted(() => ({ runObserver: vi.fn() }));
 const debugLogSpy = vi.hoisted(() => vi.fn());
 
 vi.mock("../src/debug-log.ts", async (importOriginal) => ({
-	...(await importOriginal<typeof import("../src/debug-log.ts")>()),
+	...(await importOriginal<typeof DebugLogModule>()),
 	debugLog: debugLogSpy,
 }));
 
 vi.mock("../src/agents/observer/agent.ts", async (importOriginal) => ({
-	...(await importOriginal<typeof import("../src/agents/observer/agent.ts")>()),
+	...(await importOriginal<typeof ObserverAgentModule>()),
 	runObserver: mockAgents.runObserver,
 }));
 
