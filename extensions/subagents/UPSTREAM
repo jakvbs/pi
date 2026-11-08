@@ -1,4 +1,4 @@
 [upstream]
 	url = https://github.com/nicobailon/pi-subagents
 	branch = main
-	commit = 52e68e9ef0e563d5c97b28519f9999f1b5fbbbea
+	commit = 3ff4f75545edf2695d5ea82bf46a1ea9ef2008a8
