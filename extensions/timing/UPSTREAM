@@ -2,7 +2,7 @@
 	url = https://github.com/narumiruna/pi-extensions
 	branch = main
 	path = packages/pi-stamp
-	commit = 74496358ab9988bab36cb584724a0f439601cfef
+	commit = 14d05c53e2530b04c61f9cad7efc41de10143135
 [reference "pi-run-timer"]
 	url = https://github.com/CarlosGtrz/carlosgtrz-pi-extensions
 	branch = master
