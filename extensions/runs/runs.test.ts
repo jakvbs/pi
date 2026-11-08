@@ -108,7 +108,7 @@ test("a finished run records its outcome, report, session and commits once", () 
 	assert.equal(settleRun(root, settled, NOW), settled);
 });
 
-test("a run on an existing branch reuses its worktree and starts from its tip", () => {
+test("a run reuses its branch's worktree, and a new branch starts at the HEAD of the checkout it came from", () => {
 	const repo = repoWithOneCommit();
 	const root = mkdtempSync(join(tmpdir(), "runs-root-"));
 	const first = prepareWorktree(repo, "run/a", join(root, "a", "worktree"));
@@ -118,6 +118,9 @@ test("a run on an existing branch reuses its worktree and starts from its tip", 
 	const second = prepareWorktree(repo, "run/a", join(root, "b", "worktree"));
 	assert.deepEqual(second, { base: git(repo, "rev-parse", "run/a"), worktree: first.worktree, created: false });
 	assert.equal(primaryCheckout(first.worktree), repo);
+	const third = prepareWorktree(first.worktree, "run/b", join(root, "c", "worktree"));
+	assert.equal(third.base, git(first.worktree, "rev-parse", "HEAD"));
+	assert.notEqual(third.base, git(repo, "rev-parse", "HEAD"));
 });
 
 test("the pi-subagents client resolves a reply's data and rejects its error", async () => {

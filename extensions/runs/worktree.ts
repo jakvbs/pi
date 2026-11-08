@@ -23,20 +23,21 @@ export function worktreeOf(repo: string, branch: string): string | undefined {
 }
 
 /**
- * Gives a run a worktree on its branch and returns the commit the run starts from. A new branch starts at the
- * repository's HEAD; an existing branch keeps its worktree, so a repair run sees the work of the run before it.
+ * Gives a run a worktree on its branch and returns the commit the run starts from. `checkout` is any checkout of
+ * the repository: a new branch starts at its HEAD, so a session in a linked worktree branches from its own work.
+ * An existing branch keeps its worktree, so a repair run sees the work of the run before it.
  */
-export function prepareWorktree(repo: string, branch: string, path: string): { base: string; worktree: string; created: boolean } {
-	const exists = git(repo, ["branch", "--list", branch]) !== "";
+export function prepareWorktree(checkout: string, branch: string, path: string): { base: string; worktree: string; created: boolean } {
+	const exists = git(checkout, ["branch", "--list", branch]) !== "";
 	if (!exists) {
-		const base = git(repo, ["rev-parse", "HEAD"]);
-		git(repo, ["worktree", "add", "-b", branch, path, base]);
+		const base = git(checkout, ["rev-parse", "HEAD"]);
+		git(checkout, ["worktree", "add", "-b", branch, path, base]);
 		return { base, worktree: path, created: true };
 	}
-	const base = git(repo, ["rev-parse", `refs/heads/${branch}`]);
-	const existing = worktreeOf(repo, branch);
+	const base = git(checkout, ["rev-parse", `refs/heads/${branch}`]);
+	const existing = worktreeOf(checkout, branch);
 	if (existing) return { base, worktree: existing, created: false };
-	git(repo, ["worktree", "add", path, branch]);
+	git(checkout, ["worktree", "add", path, branch]);
 	return { base, worktree: path, created: false };
 }
 

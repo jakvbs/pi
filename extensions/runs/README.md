@@ -2,11 +2,11 @@
 
 Adds the `run` tool. A run is one `scout-agent` working in the background on its own Git branch and worktree, with a record that survives session restarts.
 
-- `start` takes a `label` and `task`, returns at once, and wakes the launching session when the agent ends.
+- `start` takes a `label` and `task`, returns as soon as the agent starts, and wakes the launching session when the agent ends. An optional `prepare` command (for example `npm ci`) runs in a new worktree first and blocks `start` for up to 15 minutes.
 - `list` shows runs and their states. `show` shows one run's details, commits, and latest report.
 - `steer` sends a `message` to the agent. `stop` requests a stop. `resume` continues the agent with a `message` and records another attempt.
 
-Actions that target a run take its `id` or a unique suffix. By default, `start` uses the session's repository and creates `run/<id>` from HEAD. An explicit `branch` reuses that branch and its worktree if one exists.
+Actions that target a run take its `id` or a unique suffix. By default, `start` uses the session's checkout and creates `run/<id>` from its HEAD, so a session in a linked worktree branches from its own work. An explicit `branch` is created the same way when it does not exist; otherwise the run works on it and reuses its worktree.
 
 ## Record
 

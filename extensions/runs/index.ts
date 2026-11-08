@@ -19,7 +19,9 @@ const parameters = Type.Object({
 	task: Type.Optional(Type.String({ description: "start: the agent's task. Name required reading (skills, files) and the deliverable." })),
 	repo: Type.Optional(Type.String({ description: "start: any path inside the repository; default is the session directory." })),
 	branch: Type.Optional(
-		Type.String({ description: "start: continue on this existing branch and its worktree; omitted creates run/<id> from HEAD." }),
+		Type.String({
+			description: "start: work on this branch, reusing its worktree when it has one; omitted creates run/<id> from the checkout's HEAD.",
+		}),
 	),
 	ticket: Type.Optional(Type.String({ description: "start: path of the ticket this run works on; appended to the task." })),
 	model: Type.Optional(Type.String({ description: "start: provider/model[:thinking]; default is the agent's." })),
@@ -92,12 +94,13 @@ async function start(
 	cwd: string,
 ): Promise<string> {
 	const label = required(params.label, "label");
-	const repo = primaryCheckout(params.repo ?? cwd);
+	const checkout = params.repo ?? cwd;
+	const repo = primaryCheckout(checkout);
 	const id = newRunId(label, new Date());
 	const dir = runDir(root, id);
 	mkdirSync(dir, { recursive: true });
 	const branch = params.branch ?? `run/${id}`;
-	const { base, worktree, created } = prepareWorktree(repo, branch, join(dir, "worktree"));
+	const { base, worktree, created } = prepareWorktree(checkout, branch, join(dir, "worktree"));
 	const task = params.ticket ? `${required(params.task, "task")}\n\nTicket: ${params.ticket}` : required(params.task, "task");
 	writeFileSync(join(dir, "task.md"), `${task}\n`);
 	try {
