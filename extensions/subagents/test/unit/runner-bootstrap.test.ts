@@ -180,3 +180,18 @@ test("fresh-launch barrier also keeps heavy execution behind proceed", async () 
 	assert.equal(await exitPromise, 0);
 	fs.rmSync(root, { recursive: true, force: true });
 });
+
+test("runner started through a symlinked path still runs its config", async () => {
+	const linkRoot = fs.mkdtempSync(path.join(os.tmpdir(), "runner-symlink-"));
+	const realDir = fileURLToPath(new URL("../../src/runs/background/", import.meta.url));
+	const linkedDir = path.join(linkRoot, "background");
+	fs.symlinkSync(realDir, linkedDir, "dir");
+	const configPath = path.join(linkRoot, "config.json");
+	fs.writeFileSync(configPath, JSON.stringify({ id: "run" }));
+	const child = fork(path.join(linkedDir, "subagent-runner-bootstrap.ts"), [configPath], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
+	let stderr = "";
+	child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+	const exitCode = await new Promise<number | null>((resolve) => child.once("exit", (code) => resolve(code)));
+	assert.equal(exitCode, 1);
+	assert.match(stderr, /Invalid runner configuration/);
+});

@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { acquireSessionLease } from "../shared/session-lease.ts";
 import { readProcessTerminalCandidate, writeProcessTerminalCandidate, markProcessTerminalCandidateLeaseRelease } from "./process-terminal-candidate.ts";
@@ -247,7 +247,17 @@ function monitorTestParent(): void {
 	setInterval(check, 250).unref();
 }
 
-const isRunnerEntrypoint = Boolean(process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href);
+// Node resolves the entry module through symlinks but leaves argv[1] as typed, so compare real paths.
+function isEntrypoint(argvPath: string | undefined): boolean {
+	if (!argvPath) return false;
+	try {
+		return fs.realpathSync(argvPath) === fs.realpathSync(fileURLToPath(import.meta.url));
+	} catch {
+		return false;
+	}
+}
+
+const isRunnerEntrypoint = isEntrypoint(process.argv[1]);
 if (isRunnerEntrypoint) {
 	monitorTestParent();
 	const configArg = process.argv[2];
