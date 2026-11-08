@@ -63,7 +63,8 @@ export function settleAttempt(status: SubagentStatus | undefined, runnerAlive: b
 	}
 }
 
-function readStatus(asyncDir: string): SubagentStatus | undefined {
+/** Reads an attempt's pi-subagents status when its directory still exists. */
+export function readStatus(asyncDir: string): SubagentStatus | undefined {
 	const file = join(asyncDir, "status.json");
 	return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as SubagentStatus) : undefined;
 }

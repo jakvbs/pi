@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { StringEnum, Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { lastAttempt, listRuns, newRunId, type RunRecord, readRun, runDir, runState, runsRoot, writeRun } from "./record.ts";
-import { settleRun } from "./settle.ts";
+import { readStatus, settleRun } from "./settle.ts";
 import { callSubagents, launchDetails, SUBAGENT_ASYNC_COMPLETE_EVENT } from "./subagents-rpc.ts";
 import { prepareWorktree, primaryCheckout, removeWorktree } from "./worktree.ts";
 
@@ -141,8 +141,23 @@ async function start(
 }
 
 async function resume(root: string, pi: ExtensionAPI, record: RunRecord, message: string): Promise<string> {
+	record = settleRun(root, record);
+	const attempt = lastAttempt(record);
+	const sessionFile = readStatus(attempt.asyncDir)?.steps?.[0]?.sessionFile;
+	const dir = runDir(root, record.id);
 	const launch = launchDetails(
-		await callSubagents(pi.events, "resume", { id: lastAttempt(record).subagentRunId, message }),
+		runState(record) === "running" || (sessionFile && existsSync(sessionFile))
+			? await callSubagents(pi.events, "resume", { id: attempt.subagentRunId, message })
+			: await callSubagents(pi.events, "spawn", {
+					agent: record.agent,
+					task: `${readFileSync(join(dir, "task.md"), "utf8").trimEnd()}\n\n${message}`,
+					cwd: record.worktree,
+					sessionDir: join(dir, "sessions"),
+					context: "fresh",
+					async: true,
+					...(record.model ? { model: record.model } : {}),
+					...(record.skills.length ? { skill: record.skills } : {}),
+				}),
 	);
 	writeRun(root, {
 		...record,

@@ -4,7 +4,7 @@ Adds the `run` tool. A run is one `scout-agent` working in the background on its
 
 - `start` takes a `label` and `task`, returns as soon as the agent starts, and wakes the launching session when the agent ends. An optional `prepare` command (for example `npm ci`) runs in a new worktree first and blocks `start` for up to 15 minutes.
 - `list` shows runs and their states. `show` shows one run's details, commits, and latest report.
-- `steer` sends a `message` to the agent. `stop` requests a stop. `resume` continues the agent with a `message` and records another attempt.
+- `steer` sends a `message` to the agent. `stop` requests a stop. `resume` continues the agent with a `message` and records another attempt. If the last attempt ended without a session file, it starts a fresh agent in the same worktree with `task.md` followed by the message.
 
 Actions that target a run take its `id` or a unique suffix. By default, `start` uses the session's checkout and creates `run/<id>` from its HEAD, so a session in a linked worktree branches from its own work. An explicit `branch` is created the same way when it does not exist; otherwise the run works on it and reuses its worktree.
 
@@ -20,7 +20,7 @@ Each run lives in `~/.local/state/pi/runs/<id>/`, or `$PI_RUNS_DIR/<id>/` when `
 
 ## Settlement and crashes
 
-Settlement copies an ended attempt's outcome, report when available, session path, and branch commits into the record. The extension checks for settlement on `subagent:async-complete`, at session start, and on every `list` or `show`. An already-settled attempt stays unchanged.
+Settlement copies an ended attempt's outcome, report when available, session path, and branch commits into the record. The extension checks for settlement on `subagent:async-complete`, at session start, and on every `list`, `show`, or `resume`. An already-settled attempt stays unchanged.
 
 The check reads pi-subagents' `status.json` and checks the runner process, not the file's age. A live queued or running attempt stays `running`. A completed attempt becomes `done`, and a paused or stopped attempt becomes `stopped`. A queued or running attempt whose runner died becomes `failed`. Missing status becomes `lost`; other terminal states become `failed`.
 
