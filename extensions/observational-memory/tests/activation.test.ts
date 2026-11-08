@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockAgents = vi.hoisted(() => ({ runObserver: vi.fn() }));
+const debugLogSpy = vi.hoisted(() => vi.fn());
+
+vi.mock("../src/debug-log.ts", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../src/debug-log.ts")>()),
+	debugLog: debugLogSpy,
+}));
 
 vi.mock("../src/agents/observer/agent.ts", async (importOriginal) => ({
 	...(await importOriginal<typeof import("../src/agents/observer/agent.ts")>()),
@@ -140,6 +146,7 @@ function observedConversation(): TestEntry[] {
 
 beforeEach(() => {
 	mockAgents.runObserver.mockReset();
+	debugLogSpy.mockReset();
 });
 
 describe("turn_end memory activation", () => {
@@ -235,6 +242,16 @@ describe("turn_end memory activation", () => {
 		// 400 source tokens since u2; the cut at u3 frees 200 of them.
 		setContextTokens(1_100);
 		expect(await run()).toBeUndefined();
+		expect(debugLogSpy).toHaveBeenLastCalledWith("activation.waiting", {
+			contextTokens: 1_100,
+			threshold: 1_000,
+			freedTokens: 200,
+			keptShareTokens: 200,
+			contextAfterCut: 900,
+			limitAfterCut: 800,
+			shortfallTokens: 100,
+			reason: "the cut would leave the context above threshold minus the kept share (20% of the threshold, independent of compaction.keepRecentTokens)",
+		});
 		setContextTokens(1_000);
 		expect((await run()).entries[0].firstKeptEntryId).toBe("u3");
 	});

@@ -376,7 +376,9 @@ branch (`?` until the first reply after a compaction; hidden
 when memory is passive or the threshold does not fit the model's context window,
 where Pi's own compaction comes first). Activation waits when the cut would leave
 less than ~20% of the threshold free, so it does not fire every turn when the
-system prompt, tools and memory alone nearly fill the threshold. Pi's own
+system prompt, tools and memory alone nearly fill the threshold. The ~20% share
+is fixed and does not follow `compaction.keepRecentTokens`; the debug log entry
+`activation.waiting` shows it in tokens and how many tokens the cut is short. Pi's own
 window-pressure compaction remains independent.
 
 ---

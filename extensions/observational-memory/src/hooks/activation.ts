@@ -132,12 +132,18 @@ async function activate(
 	// less than `keepRecentTokens` of room under the threshold would fire again
 	// within a turn or two, each time folding a sliver and rewriting the cached
 	// prompt; wait for the observer or for Pi's own compaction instead.
-	if (contextTokens - plan.freedTokens > threshold - keepRecentTokens) {
+	const contextAfterCut = contextTokens - plan.freedTokens;
+	const limitAfterCut = threshold - keepRecentTokens;
+	if (contextAfterCut > limitAfterCut) {
 		debugLog("activation.waiting", {
 			contextTokens,
 			threshold,
 			freedTokens: plan.freedTokens,
-			reason: "the cut would leave less than the kept share of the threshold free",
+			keptShareTokens: keepRecentTokens,
+			contextAfterCut,
+			limitAfterCut,
+			shortfallTokens: contextAfterCut - limitAfterCut,
+			reason: `the cut would leave the context above threshold minus the kept share (${ACTIVATION_KEEP_RECENT_RATIO * 100}% of the threshold, independent of compaction.keepRecentTokens)`,
 		});
 		return undefined;
 	}
