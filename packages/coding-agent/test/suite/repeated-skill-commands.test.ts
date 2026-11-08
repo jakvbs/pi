@@ -3,11 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, type TranscriptContext } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import type { AgentSessionEvent } from "../../src/core/agent-session.ts";
 import type { ExtensionFactory } from "../../src/core/extensions/index.ts";
 import type { ResourceLoader } from "../../src/core/resource-loader.ts";
 import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "../utilities.ts";
-import { createHarness, getMessageText, getUserTexts, type Harness } from "./harness.ts";
+import { createHarness, getMessageText, getUserTexts, type Harness, type HarnessOptions } from "./harness.ts";
 
 const RESTORED_INTRO =
 	"Compaction removed these skills from the conversation. They are restored here as they were last loaded.";
@@ -24,7 +25,22 @@ describe("repeated skill commands", () => {
 		while (tempDirs.length > 0) rmSync(tempDirs.pop()!, { recursive: true, force: true });
 	});
 
-	async function createSkillHarness(body: string, extensions: ExtensionFactory[] = []) {
+	/** The compaction ends and appended custom messages in `events`, in order, as the transcript would show them. */
+	function compactionAnnouncements(events: AgentSessionEvent[]): string[] {
+		return events.flatMap((event) => {
+			if (event.type === "compaction_end") return [`compaction_end ${event.reason}`];
+			if (event.type === "entry_appended" && event.entry.type === "custom_message") {
+				return [`entry_appended ${event.entry.customType}`];
+			}
+			return [];
+		});
+	}
+
+	async function createSkillHarness(
+		body: string,
+		extensions: ExtensionFactory[] = [],
+		options: Pick<HarnessOptions, "models" | "settings"> = { settings: { compaction: { keepRecentTokens: 1 } } },
+	) {
 		const skillDir = mkdtempSync(join(tmpdir(), "pi-repeated-skill-"));
 		tempDirs.push(skillDir);
 		const skillPath = join(skillDir, "SKILL.md");
@@ -50,7 +66,7 @@ describe("repeated skill commands", () => {
 				diagnostics: [],
 			}),
 		};
-		const harness = await createHarness({ resourceLoader, settings: { compaction: { keepRecentTokens: 1 } } });
+		const harness = await createHarness({ resourceLoader, ...options });
 		harnesses.push(harness);
 		const requests: string[][] = [];
 		const reply = (context: TranscriptContext) => {
@@ -158,6 +174,10 @@ describe("repeated skill commands", () => {
 			.filter((entry) => entry.type === "message" && entry.message.role === "user");
 		firstKeptEntryId = userEntries[1]!.id;
 		await harness.session.compact();
+		expect(compactionAnnouncements(harness.events)).toEqual([
+			"compaction_end manual",
+			"entry_appended restored-skills",
+		]);
 		await harness.session.prompt("three");
 
 		expect(requests[2]).toEqual([
@@ -165,6 +185,35 @@ describe("repeated skill commands", () => {
 			"two",
 			`${RESTORED_INTRO}\n${fullBlock("Use the skill body.")}`,
 			"three",
+		]);
+	});
+
+	it("announces the restored skills after threshold compaction", async () => {
+		const { harness } = await createSkillHarness(
+			"Use the skill body.",
+			[
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "earlier work",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+						},
+					}));
+				},
+			],
+			{
+				models: [{ id: "faux-1", contextWindow: 2600, maxTokens: 100 }],
+				settings: { compaction: { enabled: true, reserveTokens: 400, keepRecentTokens: 1 } },
+			},
+		);
+		harness.setResponses([fauxAssistantMessage("a".repeat(12_000))]);
+
+		await harness.session.prompt("/skill:test first");
+
+		expect(compactionAnnouncements(harness.events)).toEqual([
+			"compaction_end threshold",
+			"entry_appended restored-skills",
 		]);
 	});
 

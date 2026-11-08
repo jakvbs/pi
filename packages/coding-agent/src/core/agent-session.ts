@@ -1033,8 +1033,8 @@ export class AgentSession {
 							draft.usage,
 						),
 					);
-					const restoredId = this._appendRestoredSkills(manager);
-					if (restoredId) entryIds.push(restoredId);
+					const restoredSkills = this._appendRestoredSkills(manager);
+					if (restoredSkills) entryIds.push(restoredSkills.id);
 					break;
 				}
 			}
@@ -1043,10 +1043,10 @@ export class AgentSession {
 	}
 
 	/**
-	 * After a compaction, append the message that restores the skills it removed from model context. Returns its entry
-	 * id, or undefined when compaction removed no skill.
+	 * After a compaction, append the message that restores the skills it removed from model context. Returns its entry,
+	 * or undefined when compaction removed no skill.
 	 */
-	private _appendRestoredSkills(manager: SessionManager): string | undefined {
+	private _appendRestoredSkills(manager: SessionManager): SessionEntry | undefined {
 		const restored = buildRestoredSkillsMessage(
 			manager.getBranch().flatMap(sessionEntryToContextMessages),
 			manager.buildSessionProjection().messages,
@@ -1054,7 +1054,9 @@ export class AgentSession {
 			this.model?.contextWindow,
 		);
 		if (!restored) return undefined;
-		return manager.appendCustomMessageEntry(RESTORED_SKILLS_MESSAGE_TYPE, restored.content, true, restored.details);
+		return manager.getEntry(
+			manager.appendCustomMessageEntry(RESTORED_SKILLS_MESSAGE_TYPE, restored.content, true, restored.details),
+		);
 	}
 
 	private _createBoundaryPreviewManager(drafts: SessionBoundaryDraft[]): SessionManager {
@@ -2983,7 +2985,7 @@ export class AgentSession {
 			}
 
 			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
-			this._appendRestoredSkills(this.sessionManager);
+			const restoredSkills = this._appendRestoredSkills(this.sessionManager);
 			const newEntries = this.sessionManager.getEntries();
 			this._refreshFinalizedContext();
 			const estimatedTokensAfter = estimateMessagesTokens(this.sessionManager.buildSessionProjection().messages);
@@ -3020,6 +3022,8 @@ export class AgentSession {
 				aborted: false,
 				willRetry: false,
 			});
+			// After compaction_end, which draws the compaction marker, so the transcript shows the restored skills below it.
+			if (restoredSkills) this._emit({ type: "entry_appended", entry: restoredSkills });
 			return compactionResult;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -3282,7 +3286,7 @@ export class AgentSession {
 				extensionCompaction ?? compactionWithoutExtension(preparation, reason);
 
 			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
-			this._appendRestoredSkills(this.sessionManager);
+			const restoredSkills = this._appendRestoredSkills(this.sessionManager);
 			const newEntries = this.sessionManager.getEntries();
 			this._refreshFinalizedContext();
 			const estimatedTokensAfter = estimateMessagesTokens(this.sessionManager.buildSessionProjection().messages);
@@ -3311,6 +3315,7 @@ export class AgentSession {
 				details,
 			};
 			this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
+			if (restoredSkills) this._emit({ type: "entry_appended", entry: restoredSkills });
 
 			if (willRetry) return true;
 
