@@ -92,6 +92,14 @@ If rebase conflicts occur:
 
 This checkout is the `jakvbs/pi` fork; its `main` on `origin` is the source of truth. Do not open issues or PRs against `earendil-works/pi` and do not propose upstreaming. Upstream changes arrive through an occasional rebase of `main` onto `upstream/main`, so keep fork commits small and self-contained to keep that rebase cheap.
 
+## Delivery
+
+- `~/.local/bin/pi` runs this checkout's `main` from source for every pi session and background run on this machine, so a commit on `main` is a deployment. Land a change only after `npm run check` and the tests it touches have passed.
+- Prepare a fresh worktree with `npm ci`.
+- Right after a change lands on `main`, run `pi --version` in a new process. If it fails, revert the landed commits yourself: a delegated agent would run on the broken pi.
+- Then tell the owner to restart running pi sessions; they keep the old code until they restart.
+- Push only when the owner asks.
+
 ## Issues and PRs
 
 See `CONTRIBUTING.md` for the contributor gate (auto-close workflows, `lgtm`/`lgtmi`, quality bar).
