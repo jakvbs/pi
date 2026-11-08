@@ -159,34 +159,37 @@ async function resume(root: string, pi: ExtensionAPI, record: RunRecord, message
 	record = settleRun(root, record);
 	const attempt = lastAttempt(record);
 	const status = readStatus(attempt.asyncDir);
+	const sessionFile = status?.steps?.[0]?.sessionFile;
+	const dir = runDir(root, record.id);
+	// Without a status file nothing confirms the session is missing, so pi-subagents' plain resume decides (F016).
+	const resumable = !status || runState(record) === "running" || (sessionFile && existsSync(sessionFile));
 	if (
-		!(status && runnerAlive(status)) &&
+		resumable &&
+		status &&
+		!runnerAlive(status) &&
 		!execFileSync("git", ["-C", record.worktree, "status", "--porcelain", "--untracked-files=all"], { encoding: "utf8" }).trim()
 	) {
 		throw new Error(
 			`Cannot resume run ${record.id}: its worktree is clean and no runner is alive. Start a fresh run on branch '${record.branch}'.`,
 		);
 	}
-	const sessionFile = status?.steps?.[0]?.sessionFile;
-	const dir = runDir(root, record.id);
-	const launch =
-		!status || runState(record) === "running" || (sessionFile && existsSync(sessionFile))
-			? await launchAgent(pi, "resume", { id: attempt.subagentRunId, message }, record)
-			: await launchAgent(
-					pi,
-					"spawn",
-					{
-						agent: record.agent,
-						task: `${readFileSync(join(dir, "task.md"), "utf8").trimEnd()}\n\n${message}`,
-						cwd: record.worktree,
-						sessionDir: join(dir, "sessions"),
-						context: "fresh",
-						async: true,
-						...(record.model ? { model: record.model } : {}),
-						...(record.skills.length ? { skill: record.skills } : {}),
-					},
-					record,
-				);
+	const launch = resumable
+		? await launchAgent(pi, "resume", { id: attempt.subagentRunId, message }, record)
+		: await launchAgent(
+				pi,
+				"spawn",
+				{
+					agent: record.agent,
+					task: `${readFileSync(join(dir, "task.md"), "utf8").trimEnd()}\n\n${message}`,
+					cwd: record.worktree,
+					sessionDir: join(dir, "sessions"),
+					context: "fresh",
+					async: true,
+					...(record.model ? { model: record.model } : {}),
+					...(record.skills.length ? { skill: record.skills } : {}),
+				},
+				record,
+			);
 	writeRun(root, {
 		...record,
 		attempts: [...record.attempts, { subagentRunId: launch.asyncId, asyncDir: launch.asyncDir, startedAt: new Date().toISOString() }],

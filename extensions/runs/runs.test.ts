@@ -148,10 +148,10 @@ test("the pi-subagents client resolves a reply's data and rejects its error", as
 for (const [session, behavior] of [
 	["absent", "spawns when no session was recorded"],
 	["missing", "spawns when the recorded session file does not exist"],
-	["existing", "resumes the existing session"],
+	["existing", "resumes an existing session with uncommitted work"],
 	["stale", "spawns instead of resuming an older attempt's session"],
 	["running", "preserves the refusal to resume a running attempt"],
-	["status-gone", "uses resume when the last attempt's status is gone"],
+	["status-gone", "uses resume when the last attempt's status is gone, even in a clean worktree"],
 	["clean", "refuses a clean dead attempt even with an existing session"],
 	["live", "allows a clean attempt with a live process"],
 ] as const) {
@@ -212,7 +212,7 @@ for (const [session, behavior] of [
 		writeRun(root, record);
 		mkdirSync(record.worktree);
 		git(record.worktree, "init", "-q", "-b", "main");
-		if (session !== "clean" && session !== "live") writeFileSync(join(record.worktree, "dirty.txt"), "Uncommitted work.\n");
+		if (session === "existing") writeFileSync(join(record.worktree, "dirty.txt"), "Uncommitted work.\n");
 		writeFileSync(join(dir, "task.md"), "Original task.\n\nTicket: /ticket.md\n");
 		const previousRoot = process.env.PI_RUNS_DIR;
 		const previousChild = process.env.PI_SUBAGENT_CHILD;

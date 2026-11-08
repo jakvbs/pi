@@ -4,7 +4,7 @@ Adds the `run` tool. A run is one `scout-agent` working in the background on its
 
 - `start` takes a `label` and `task`, returns as soon as the agent starts, and wakes the launching session when the agent ends. An optional `prepare` command (for example `npm ci`) runs in a new worktree first and blocks `start` for up to 15 minutes.
 - `list` shows runs and their states. `show` shows one run's details, commits, and latest report.
-- `steer` sends a `message` to the agent. `stop` requests a stop. `resume` continues the agent with a `message` and records another attempt. It refuses when the worktree is clean and no runner is alive; start a fresh run on the same `branch` instead. If a resumable attempt ended without a session file, it starts a fresh agent in the same worktree with `task.md` followed by the message.
+- `steer` sends a `message` to the agent. `stop` requests a stop. `resume` continues the agent with a `message` and records another attempt. If the attempt's status file shows it ended without a session file, it starts a fresh agent in the same worktree with `task.md` followed by the message. When the attempt has a session, the worktree is clean and no runner is alive, it refuses; start a fresh run on the same `branch` instead. Without a status file it always passes the resume to pi-subagents.
 
 Actions that target a run take its `id` or a unique suffix. By default, `start` uses the session's checkout and creates `run/<id>` from its HEAD, so a session in a linked worktree branches from its own work. An explicit `branch` is created the same way when it does not exist; otherwise the run works on it and reuses its worktree.
 
