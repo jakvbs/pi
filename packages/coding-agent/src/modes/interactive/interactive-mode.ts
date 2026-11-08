@@ -4972,7 +4972,11 @@ export class InteractiveMode {
 		if (isExpandable(activeHeader)) {
 			activeHeader.setExpanded(expanded);
 		}
-		for (const rows of [this.loadedResourcesContainer.children, transcriptRows(this.chatContainer), this.pendingMessagesContainer.children]) {
+		for (const rows of [
+			this.loadedResourcesContainer.children,
+			transcriptRows(this.chatContainer),
+			this.pendingMessagesContainer.children,
+		]) {
 			for (const child of rows) {
 				if (child instanceof ToolExecutionComponent) {
 					child.setDisplayMode(mode);
