@@ -147,6 +147,7 @@ for (const [session, behavior] of [
 	["existing", "resumes the existing session"],
 	["stale", "spawns instead of resuming an older attempt's session"],
 	["running", "preserves the refusal to resume a running attempt"],
+	["status-gone", "uses resume when the last attempt's status is gone"],
 ] as const) {
 	test(`resume keeps the run and ${behavior}`, async (t) => {
 		const root = mkdtempSync(join(tmpdir(), "runs-resume-"));
@@ -164,6 +165,7 @@ for (const [session, behavior] of [
 				steps: [session === "absent" || session === "stale" ? {} : { sessionFile }],
 			}),
 		);
+		if (session === "status-gone") rmSync(join(asyncDir, "status.json"));
 		const record: RunRecord = {
 			version: 1,
 			id,
@@ -196,6 +198,10 @@ for (const [session, behavior] of [
 			});
 		}
 		if (session === "running") delete record.attempts[0].outcome;
+		if (session === "status-gone") {
+			record.sessionFile = sessionFile;
+			writeFileSync(sessionFile, '{"type":"session","id":"s"}\n');
+		}
 		writeRun(root, record);
 		writeFileSync(join(dir, "task.md"), "Original task.\n\nTicket: /ticket.md\n");
 		const previousRoot = process.env.PI_RUNS_DIR;
@@ -241,7 +247,7 @@ for (const [session, behavior] of [
 		}
 		const result = await execution;
 		assert.deepEqual(requests, [
-			session === "existing"
+			session === "existing" || session === "status-gone"
 				? { method: "resume", params: { id: "sub-1", message: "Try again." } }
 				: {
 					method: "spawn",

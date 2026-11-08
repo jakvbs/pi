@@ -143,10 +143,11 @@ async function start(
 async function resume(root: string, pi: ExtensionAPI, record: RunRecord, message: string): Promise<string> {
 	record = settleRun(root, record);
 	const attempt = lastAttempt(record);
-	const sessionFile = readStatus(attempt.asyncDir)?.steps?.[0]?.sessionFile;
+	const status = readStatus(attempt.asyncDir);
+	const sessionFile = status?.steps?.[0]?.sessionFile;
 	const dir = runDir(root, record.id);
 	const launch = launchDetails(
-		runState(record) === "running" || (sessionFile && existsSync(sessionFile))
+		!status || runState(record) === "running" || (sessionFile && existsSync(sessionFile))
 			? await callSubagents(pi.events, "resume", { id: attempt.subagentRunId, message })
 			: await callSubagents(pi.events, "spawn", {
 					agent: record.agent,

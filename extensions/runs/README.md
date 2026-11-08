@@ -24,6 +24,8 @@ Settlement copies an ended attempt's outcome, report when available, session pat
 
 The check reads pi-subagents' `status.json` and checks the runner process, not the file's age. A live queued or running attempt stays `running`. A completed attempt becomes `done`, and a paused or stopped attempt becomes `stopped`. A queued or running attempt whose runner died becomes `failed`. Missing status becomes `lost`; other terminal states become `failed`.
 
+`resume` starts a fresh attempt only when the last attempt's status confirms there is no session file. If status is missing, it leaves recovery to pi-subagents' normal resume path.
+
 ## Dependency and limits
 
 The [subagents extension](../subagents/docs/extension-api.md#in-process-event-bus-rpc) must be loaded in the launching session, with `scout-agent` available. `runs` uses its in-process RPC for `spawn`, `steer`, `stop`, and `resume`, and its completion event for settlement.
