@@ -31,7 +31,7 @@ its fix), and `CONTRIBUTING.md` holds setup, tests and hard rules. Read `docs/in
 
 | path | role |
 |---|---|
-| `index.ts` | entry point: `pi.registerProvider("pi-sub-anthropic", …)` + 13-model catalog |
+| `index.ts` | entry point: `pi.registerProvider("pi-sub-anthropic", …)` + 4-model catalog |
 | `stream.ts` | Messages streaming over `fetch`: headers, 64k clamp, tool prefixing, SSE parsing, system-prompt relocation |
 | `fingerprint.ts` | pinned omp wire constants, beta profiles, billing header, pure-BigInt XXH64, `cch` patch |
 | `oauth.ts` | OAuth login/refresh (PKCE, callback port 54545) + bootstrap identity |

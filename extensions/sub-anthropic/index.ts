@@ -36,7 +36,7 @@
  *
  * DIVERGENCES FROM pi 0.83.0's BUILT-IN ANTHROPIC PROVIDER
  *   token URL      api.anthropic.com/v1/oauth/token   (pi: platform.claude.com)
- *   user-agent     claude-cli/2.1.280 (external, claude-desktop)  (pi: claude-cli/2.1.75)
+ *   user-agent     claude-cli/2.1.290 (external, claude-desktop)  (pi: claude-cli/2.1.75)
  *   identity       "You are a Claude agent...Agent SDK"  (pi: "You are Claude Code...")
  *   max_tokens     clamped to 64k on OAuth              (pi: sends model.maxTokens)
  *   tool names     prefixed `_`                         (pi: renamed to Read/Write/Bash)
@@ -71,22 +71,13 @@ type ModelSpec = {
  */
 const MODELS: ModelSpec[] = [
 	{
-		id: "claude-fable-5-1",
-		name: "Claude Fable 5.1 (pi-sub)",
+		id: "claude-fable-5-2",
+		name: "Claude Fable 5.2 (pi-sub)",
 		contextWindow: 1000000,
 		maxTokens: 128000,
-		cost: { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
+		cost: { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10 },
 		thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" },
 		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true, supportsMidConvoEffort: true },
-	},
-	{
-		id: "claude-fable-5",
-		name: "Claude Fable 5 (pi-sub)",
-		contextWindow: 1000000,
-		maxTokens: 128000,
-		cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
-		thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" },
-		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true },
 	},
 	{
 		id: "claude-opus-5-5",
@@ -98,50 +89,6 @@ const MODELS: ModelSpec[] = [
 		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true, supportsMidConvoEffort: true },
 	},
 	{
-		id: "claude-opus-5",
-		name: "Claude Opus 5 (pi-sub)",
-		contextWindow: 1000000,
-		maxTokens: 128000,
-		cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
-		thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" },
-		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true, supportsMidConvoEffort: true },
-	},
-	{
-		id: "claude-opus-4-8",
-		name: "Claude Opus 4.8 (pi-sub)",
-		contextWindow: 1000000,
-		maxTokens: 128000,
-		cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
-		thinkingLevelMap: { xhigh: "xhigh", max: "max" },
-		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true },
-	},
-	{
-		id: "claude-opus-4-7",
-		name: "Claude Opus 4.7 (pi-sub)",
-		contextWindow: 1000000,
-		maxTokens: 128000,
-		cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
-		thinkingLevelMap: { xhigh: "xhigh", max: "max" },
-		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true },
-	},
-	{
-		id: "claude-opus-4-6",
-		name: "Claude Opus 4.6 (pi-sub)",
-		contextWindow: 1000000,
-		maxTokens: 128000,
-		cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
-		thinkingLevelMap: { max: "max" },
-		compat: { forceAdaptiveThinking: true, supportsStrictTools: true },
-	},
-	{
-		id: "claude-opus-4-5",
-		name: "Claude Opus 4.5 (pi-sub)",
-		contextWindow: 200000,
-		maxTokens: 64000,
-		cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
-		compat: { supportsStrictTools: true },
-	},
-	{
 		id: "claude-sonnet-5-5",
 		name: "Claude Sonnet 5.5 (pi-sub)",
 		contextWindow: 1000000,
@@ -151,32 +98,6 @@ const MODELS: ModelSpec[] = [
 		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true, supportsMidConvoEffort: true },
 	},
 	{
-		id: "claude-sonnet-5",
-		name: "Claude Sonnet 5 (pi-sub)",
-		contextWindow: 1000000,
-		maxTokens: 128000,
-		cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
-		thinkingLevelMap: { xhigh: "xhigh", max: "max" },
-		compat: { forceAdaptiveThinking: true, supportsStrictTools: true },
-	},
-	{
-		id: "claude-sonnet-4-6",
-		name: "Claude Sonnet 4.6 (pi-sub)",
-		contextWindow: 1000000,
-		maxTokens: 128000,
-		cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-		thinkingLevelMap: { max: "max" },
-		compat: { forceAdaptiveThinking: true, supportsStrictTools: true },
-	},
-	{
-		id: "claude-sonnet-4-5",
-		name: "Claude Sonnet 4.5 (pi-sub)",
-		contextWindow: 1000000,
-		maxTokens: 64000,
-		cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-		compat: { supportsStrictTools: true },
-	},
-	{
 		id: "claude-haiku-5-5",
 		name: "Claude Haiku 5.5 (pi-sub)",
 		contextWindow: 1000000,
@@ -184,14 +105,6 @@ const MODELS: ModelSpec[] = [
 		cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
 		thinkingLevelMap: { minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
 		compat: { forceAdaptiveThinking: true, supportsTemperature: false, supportsStrictTools: true, supportsMidConvoEffort: true },
-	},
-	{
-		id: "claude-haiku-4-5",
-		name: "Claude Haiku 4.5 (pi-sub)",
-		contextWindow: 200000,
-		maxTokens: 64000,
-		cost: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
-		compat: { supportsStrictTools: true },
 	},
 ];
 

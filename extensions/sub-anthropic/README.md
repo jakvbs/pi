@@ -63,13 +63,13 @@ Working on the code instead? See
 
 ```bash
 /login pi-sub-anthropic                 # OAuth against your Claude subscription
-/model pi-sub-anthropic/claude-opus-5
+/model pi-sub-anthropic/claude-opus-5-5
 ```
 
 Non-interactively:
 
 ```bash
-pi --provider pi-sub-anthropic --model claude-opus-5
+pi --provider pi-sub-anthropic --model claude-opus-5-5
 ```
 
 To make it the default, in `~/.pi/agent/settings.json`:
@@ -77,20 +77,18 @@ To make it the default, in `~/.pi/agent/settings.json`:
 ```json
 {
   "defaultProvider": "pi-sub-anthropic",
-  "defaultModel": "claude-opus-5"
+  "defaultModel": "claude-opus-5-5"
 }
 ```
 
-Fourteen models are registered, mirroring pi's own Anthropic catalog: Fable 5.1 /
-5, Opus 5.5 / 5 / 4.8 / 4.7 / 4.6 / 4.5, Sonnet 5.5 / 5 / 4.6 / 4.5, Haiku 5.5 / 4.5.
+Four models are registered: Fable 5.2, Opus 5.5, Sonnet 5.5 and Haiku 5.5.
 
 Every thinking level pi's own Anthropic provider offers for a model is offered
 here too, including `xhigh` and `max` where the model supports them
 (`--thinking max`, or `/model pi-sub-anthropic/claude-opus-5-5:max`). Levels a
 model can't do (e.g. `off` on Opus 5.5) are hidden, and pi clamps to the nearest
 supported one. Where `off` is offered, it sends `thinking: disabled`, so models
-such as Haiku 5.5 that think by default do not think. On Fable 5.1, Opus 5 / 5.5,
-Sonnet 5.5 and Haiku 5.5 changing the thinking level mid-session keeps the prompt
+such as Haiku 5.5 that think by default do not think. On all four models changing the thinking level mid-session keeps the prompt
 cache; the new level applies from your next message.
 
 ## Two credentials, two behaviours
@@ -120,8 +118,8 @@ looks like that is documented in
 
 ## Troubleshooting
 
-**Is it installed?** `pi --list-models pi-sub-anthropic` lists 14 models, and a
-real round-trip is `pi -p --provider pi-sub-anthropic --model claude-sonnet-5
+**Is it installed?** `pi --list-models pi-sub-anthropic` lists 4 models, and a
+real round-trip is `pi -p --provider pi-sub-anthropic --model claude-sonnet-5-5
 "hi"`.
 
 **`pi auth check --provider pi-sub-anthropic` says `provider_not_found`.**

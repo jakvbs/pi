@@ -15,19 +15,19 @@ const SUFFIX = "-auto";
 
 /** Physical models whose effort travels in per-message markers, so changing it keeps the prompt cache. */
 const PROVIDERS = ["pi-sub-anthropic", "anthropic"];
+/** Fable 5.2 is only in the pi-sub-anthropic catalog; pi's built-in anthropic catalog does not list it. */
 const MODELS = [
-	{ id: "claude-fable-5-1", name: "Claude Fable 5.1" },
-	{ id: "claude-opus-5-5", name: "Claude Opus 5.5" },
-	{ id: "claude-opus-5", name: "Claude Opus 5" },
-	{ id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5" },
-	{ id: "claude-haiku-5-5", name: "Claude Haiku 5.5" },
+	{ id: "claude-fable-5-2", name: "Claude Fable 5.2", providers: ["pi-sub-anthropic"] },
+	{ id: "claude-opus-5-5", name: "Claude Opus 5.5", providers: PROVIDERS },
+	{ id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", providers: PROVIDERS },
+	{ id: "claude-haiku-5-5", name: "Claude Haiku 5.5", providers: PROVIDERS },
 ];
 
 /** The physical model id behind a selected auto model, or undefined when another model is selected. */
 function autoTarget(selected: Model<Api> | undefined): string | undefined {
 	if (!selected?.id.endsWith(SUFFIX) || !PROVIDERS.includes(selected.provider)) return undefined;
 	const id = selected.id.slice(0, -SUFFIX.length);
-	return MODELS.some((model) => model.id === id) ? id : undefined;
+	return MODELS.some((model) => model.id === id && model.providers.includes(selected.provider)) ? id : undefined;
 }
 
 /** The physical model behind a selected auto model, or undefined when another model is selected. */
@@ -68,8 +68,8 @@ export default function (pi: ExtensionAPI) {
 		);
 	}
 
-	for (const provider of PROVIDERS) {
-		for (const { id, name } of MODELS) {
+	for (const { id, name, providers } of MODELS) {
+		for (const provider of providers) {
 			pi.registerVirtualModel({
 				provider,
 				id: `${id}${SUFFIX}`,

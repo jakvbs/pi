@@ -26,7 +26,7 @@ seconds); the `usage` extension shows it from there.
 Anthropic accepts a subscription token for inference only from a client that
 looks like Claude Code. This extension reproduces that appearance:
 
-- **User-agent** `claude-cli/2.1.280 (external, claude-desktop)`.
+- **User-agent** `claude-cli/2.1.290 (external, claude-desktop)`.
 - **System identity block** — "You are a Claude agent, built on Anthropic's
   Claude Agent SDK."
 - **`max_tokens` clamped to 64k on OAuth**, because Claude Code never requests
@@ -46,7 +46,10 @@ They look like magic numbers because they are. `X-Stainless-OS` and
 **Exception: the Claude Code version.** omp 17.4.2 pins `2.1.220`. Newer models
 reject that with a 400 `claude_code_version_too_old` (*"Claude Code 2.1.220 does
 not support this model; version 2.1.280 or newer is required"*), so
-`claudeCodeVersion` is bumped to `2.1.280`, the minimum the server named. The
+`claudeCodeVersion` was bumped to `2.1.280`, the minimum the server named. Claude
+Fable 5.2 (2026-11-09) rejects `2.1.280` the same way and names `2.1.290`, so the
+constant is now `2.1.290`; a raw OAuth request with that user-agent returned 200 on
+`claude-fable-5-2`. The
 user-agent, the billing header's `cc_version` (and its derived suffix) and the
 bootstrap user-agent all derive from that single constant. If a future model
 names a higher minimum, bump the constant again.
@@ -181,7 +184,7 @@ user message before the marker makes it apply at once. Through the provider
 stream itself (`diagnostics/effort-marker-probe.ts`, `claude-opus-5-5`), six
 turns alternating `low` and `max` each read the previous request's whole
 prefix (18.3k-19.8k tokens) and wrote only the new turn (187-605 tokens);
-`max` replies used 378-562 output tokens, `low` replies 144-262.
+`max` replies used 378-562 output tokens, `low` replies 144-262. The same probe on `claude-fable-5-2` (2026-11-09) returned 200 on all six turns, each reading the previous request's whole prefix (18.3k-21.6k tokens); `max` replies used 817-1902 output tokens, `low` replies 173-241.
 
 Each model's `thinkingLevelMap` is copied from pi 0.99.2's anthropic catalog;
 `null` entries hide a level and pi clamps to the nearest one. Measured live on

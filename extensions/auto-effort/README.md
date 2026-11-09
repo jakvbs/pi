@@ -11,7 +11,7 @@ Select an auto model, for example `/model pi-sub-anthropic/claude-opus-5-5-auto`
 
 Each change shows up in the transcript as an `[auto effort]` message, and the footer shows the level the request used next to the selected one.
 
-Auto models exist for `claude-fable-5-1`, `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5` and `claude-haiku-5-5` under the `pi-sub-anthropic` and `anthropic` providers.
+Auto models exist for `claude-opus-5-5`, `claude-sonnet-5-5` and `claude-haiku-5-5` under the `pi-sub-anthropic` and `anthropic` providers, and for `claude-fable-5-2` under `pi-sub-anthropic` only.
 
 ## Why changing the level keeps the prompt cache
 
