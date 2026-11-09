@@ -82,7 +82,7 @@ Never run (destroys other agents' work or bypasses checks):
 
 - `git reset --hard`, `git checkout .`, `git clean -fd`, `git stash`, `git add -A`, `git add .`, `git commit --no-verify`.
 
-If rebase conflicts occur:
+If conflicts occur while rebasing your own branch (an upstream merge follows section Fork):
 
 - Resolve conflicts only in files you modified.
 - If a conflict is in a file you did not modify, abort and ask the user.
@@ -90,12 +90,12 @@ If rebase conflicts occur:
 
 ## Fork
 
-This checkout is the `jakvbs/pi` fork; its `main` on `origin` is the source of truth. Do not open issues or PRs against `earendil-works/pi` and do not propose upstreaming. Upstream changes arrive through an occasional rebase of `main` onto `upstream/main`, so keep fork commits small and self-contained to keep that rebase cheap.
+This checkout is the `jakvbs/pi` fork; its `main` on `origin` is the source of truth. Do not open issues or PRs against `earendil-works/pi` and do not propose upstreaming. Upstream changes arrive through an occasional merge: merge `upstream/main` into a run branch based on `main`, resolve the conflicts there, and land the merge commit with `bun run land` (section Delivery). Never rebase `main` onto `upstream/main`: the ruleset refuses the force-push it needs. Keep fork commits small and self-contained so the merge stays cheap.
 
 ## Delivery
 
 - `~/.local/bin/pi` runs this checkout's `main` from source for every pi session and background run on this machine, so a commit on `main` is a deployment. Land a change only after `npm run check` and the tests it touches have passed.
-- Prepare a fresh worktree with `npm ci`.
+- Prepare a fresh worktree with `npm ci`, then `npm --prefix packages/ai run hydrate-model-data`: without the gitignored model data `npm run check` fails with type errors.
 - Land on `main` only through legible's lever: `cd ~/.repos/legible && bun run land ~/.repos/pi main <ref>`. It pushes `<ref>` to `land/<sha>`, waits for the CI jobs that `main`'s ruleset requires, fast-forwards `main` and prints the run link. The ruleset refuses every other push to `main`, force-push and deletion.
 - Then fast-forward the checkout `~/.repos/pi` to `origin/main` (`git merge --ff-only origin/main`): `~/.local/bin/pi` runs that checkout, not `origin`.
 - Right after a change lands on `main`, run `pi --version` in a new process. If it fails, land a revert of the landed commits yourself: a delegated agent would run on the broken pi.

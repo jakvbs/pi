@@ -1,6 +1,6 @@
 // Fails when a GitHub workflow job can run in the jakvbs/pi fork although it needs what only earendil-works/pi has:
 // its secrets, environments, release tags or package registry. Such jobs fail after every push in the fork, and
-// upstream workflows arrive in the fork unreviewed with each rebase onto upstream/main.
+// upstream workflows arrive in the fork unreviewed with each merge of upstream/main.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
