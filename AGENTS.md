@@ -86,7 +86,7 @@ If rebase conflicts occur:
 
 - Resolve conflicts only in files you modified.
 - If a conflict is in a file you did not modify, abort and ask the user.
-- Never force push.
+- Never force-push, reset or delete `main`. Run branches may be pushed, rewritten and force-pushed; Git authorization is in the global contract (`~/.pi/agent/AGENTS.md`).
 
 ## Fork
 
@@ -96,9 +96,10 @@ This checkout is the `jakvbs/pi` fork; its `main` on `origin` is the source of t
 
 - `~/.local/bin/pi` runs this checkout's `main` from source for every pi session and background run on this machine, so a commit on `main` is a deployment. Land a change only after `npm run check` and the tests it touches have passed.
 - Prepare a fresh worktree with `npm ci`.
-- Right after a change lands on `main`, run `pi --version` in a new process. If it fails, revert the landed commits yourself: a delegated agent would run on the broken pi.
+- Land on `main` only through legible's lever: `cd ~/.repos/legible && bun run land ~/.repos/pi main <ref>`. It pushes `<ref>` to `land/<sha>`, waits for the CI jobs that `main`'s ruleset requires, fast-forwards `main` and prints the run link. The ruleset refuses every other push to `main`, force-push and deletion.
+- Then fast-forward the checkout `~/.repos/pi` to `origin/main` (`git merge --ff-only origin/main`): `~/.local/bin/pi` runs that checkout, not `origin`.
+- Right after a change lands on `main`, run `pi --version` in a new process. If it fails, land a revert of the landed commits yourself: a delegated agent would run on the broken pi.
 - Then tell the owner to restart running pi sessions; they keep the old code until they restart.
-- Push only when the owner asks.
 
 ## Issues and PRs
 

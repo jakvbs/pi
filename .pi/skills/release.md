@@ -45,6 +45,13 @@ Run repository commands from the repo root (two directories above this skill), u
 
    The release script pins the newest published model catalog for Nix (`nix/model-catalog.json`) and builds the checkout with it as the Nix build does (it fails if that catalog predates main's model changes; publish one first), bumps all package versions, updates changelogs, regenerates release artifacts, runs `npm run check`, commits `Release vX.Y.Z`, tags `vX.Y.Z`, adds fresh `## [Unreleased]` changelog sections, commits `Add [Unreleased] section for next cycle`, then pushes `main` and the tag. Do not rerun the release script after a tag was pushed.
 
+   In the `jakvbs/pi` fork, `main`'s ruleset refuses that push of `main`, because CI has not checked the two commits yet. The script stops there, with both commits and the tag only local; do not rerun it. Land them through legible's lever, then push the tag:
+   ```bash
+   (cd ~/.repos/legible && bun run land ~/.repos/pi main HEAD)
+   git push origin vX.Y.Z
+   ```
+   The lever pushes the commits to `land/<sha>`, waits for the required CI jobs, fast-forwards `main` and prints the run link. Push the tag only after the lever printed it: the tag run publishes, and it must tag a commit on `main`.
+
 4. **CI verifies and announces the npm release**: pushing the `vX.Y.Z` tag triggers `.github/workflows/build-binaries.yml`. The `publish-npm` job uses npm trusted publishing through GitHub Actions OIDC with environment `npm-publish`; no local `npm publish`, `npm whoami`, OTP, or WebAuthn flow is required. After publishing, `announce-pi-dev-release` verifies every public workspace package resolves at the exact release version and that its npm tarball is available, then writes the verified release marker to R2. `pi.dev/api/latest-version` reads that marker; it must never announce a release from npm before this job succeeds.
 
 5. **CI builds the Nix release**: the tag push also triggers `.github/workflows/nix.yml`, which builds the tagged flake on Linux and macOS and then fast-forwards the `stable` branch to the release commit. `nix run github:earendil-works/pi/stable` runs the latest release. If the Nix build fails, `stable` stays on the previous release; the tag cannot be fixed, so fix `main` and ship the fix in the next release.
