@@ -1241,12 +1241,84 @@ function observationPoolMetrics(observations, targetTokens) {
   };
 }
 
-// src/commands/status.ts
-function pct(current, total) {
-  return total > 0 ? Math.round(current / total * 100) : 0;
+// src/memory-status.ts
+var MEMORY_STATUS_EVENT = "observational-memory:status";
+function memoryStatus(runtime, ctx) {
+  const entries = ctx.sessionManager.getBranch();
+  const view = ledgerView(entries);
+  const { config } = runtime;
+  const activeObservationPool = observationPoolMetrics(view.folded.activeObservations, config.observationsPoolTargetTokens);
+  const obsProgress = rawTokensSinceObservationCoverage(entries);
+  const reflectionProgress = rawObservedTokensSinceReflectorPass(entries);
+  const unobservedSinceCompaction = Math.max(
+    0,
+    measuredTokensSinceLastCompaction(entries) - measuredObservedTokensSinceLastCompaction(entries)
+  );
+  const contextWindow = typeof ctx.model?.contextWindow === "number" ? ctx.model.contextWindow : void 0;
+  const activationThreshold = resolveCompactAfterTokens(config, contextWindow);
+  const contextTokens = ctx.getContextUsage()?.tokens;
+  const inFlight = [];
+  if (runtime.consolidationInFlight) {
+    inFlight.push(`Consolidation: running${runtime.consolidationPhase ? ` (${runtime.consolidationPhase})` : ""}`);
+  }
+  if (runtime.compactHookInFlight) inFlight.push("Compaction hook: running");
+  return {
+    passive: config.passive === true,
+    memory: countLines(view),
+    activity: [
+      `Next observation: ~${obsProgress.toLocaleString()} / ${config.observeAfterTokens.toLocaleString()} tokens (${pct(obsProgress, config.observeAfterTokens)}%)`,
+      `Next reflection:  ~${reflectionProgress.toLocaleString()} / ${config.reflectAfterTokens.toLocaleString()} observed source tokens (${pct(reflectionProgress, config.reflectAfterTokens)}%)`,
+      contextTokens == null ? `Next activation:  context size unknown until the next response / ${activationThreshold.toLocaleString()} context tokens` : `Next activation:  ~${contextTokens.toLocaleString()} / ${activationThreshold.toLocaleString()} context tokens (${pct(contextTokens, activationThreshold)}%)`,
+      `Observer backlog: ~${unobservedSinceCompaction.toLocaleString()} unobserved source tokens since the compaction boundary`,
+      `Active observation pool: ~${activeObservationPool.observationTokens.toLocaleString()} tokens (reflection at ${config.observationsPoolMaxTokens.toLocaleString()}, drops above ${config.observationsPoolTargetTokens.toLocaleString()})`,
+      `Visible observation pool: ~${tokenSum(view.visible.observations).toLocaleString()} tokens`,
+      `Visible reflection pool:  ~${tokenSum(view.visible.reflections).toLocaleString()} tokens`
+    ],
+    inFlight,
+    errors: {
+      ...runtime.lastObserverError ? { observer: runtime.lastObserverError } : {},
+      ...runtime.lastReflectorError ? { reflector: runtime.lastReflectorError } : {}
+    }
+  };
 }
-function tokenSum(items) {
-  return items.reduce((sum, item) => sum + item.tokenCount, 0);
+function renderMemoryStatus(status) {
+  const lines = [
+    ...status.passive ? [
+      "\u2500\u2500 Mode \u2500\u2500",
+      "Passive: automatic memory workers and activation disabled; manual/Pi compaction, commands, and recall remain active",
+      ""
+    ] : [],
+    "\u2500\u2500 Memory \u2500\u2500",
+    ...status.memory,
+    "",
+    "\u2500\u2500 Activity \u2500\u2500",
+    ...status.activity
+  ];
+  if (status.inFlight.length > 0) lines.push("", "\u2500\u2500 In flight \u2500\u2500", ...status.inFlight);
+  if (status.errors.observer || status.errors.reflector) {
+    lines.push("", "\u2500\u2500 Last error \u2500\u2500");
+    if (status.errors.observer) lines.push(`Observer: ${status.errors.observer}`);
+    if (status.errors.reflector) lines.push(`Reflector: ${status.errors.reflector}`);
+  }
+  return lines.join("\n");
+}
+function ledgerView(entries) {
+  const folded = foldLedger(entries);
+  const visible = visibleProjection(entries);
+  const drift = diffProjection(visible, fullProjection(entries));
+  return { folded, visible, drift };
+}
+function countLines({ folded, visible, drift }) {
+  return [
+    appendSuffixes(
+      `Observations: ${folded.observations.length} recorded / ${folded.droppedObservationIds.size} dropped / ${folded.activeObservations.length} active / ${visible.observations.length} visible`,
+      [addedSuffix(drift.observationsOnlyInFull.length), removedSuffix(drift.droppedOnlyInFull.length)]
+    ),
+    appendSuffixes(
+      `Reflections:  ${folded.reflections.length} recorded / ${visible.reflections.length} visible`,
+      [addedSuffix(drift.reflectionsOnlyInFull.length)]
+    )
+  ];
 }
 function addedSuffix(count) {
   return count > 0 ? `+${count.toLocaleString()}` : void 0;
@@ -1258,74 +1330,47 @@ function appendSuffixes(line, suffixes) {
   const rendered = suffixes.filter((suffix) => suffix !== void 0);
   return rendered.length > 0 ? `${line} ${rendered.join(" ")}` : line;
 }
+function pct(current, total) {
+  return total > 0 ? Math.round(current / total * 100) : 0;
+}
+function tokenSum(items) {
+  return items.reduce((sum, item) => sum + item.tokenCount, 0);
+}
+function registerMemoryStatusEvents(pi, runtime) {
+  let watchedPass = null;
+  const publish = (ctx) => {
+    runtime.ensureConfig(ctx.cwd);
+    pi.events.emit(MEMORY_STATUS_EVENT, memoryStatus(runtime, ctx));
+    const pass = runtime.consolidationPromise;
+    if (!pass || pass === watchedPass) return;
+    watchedPass = pass;
+    void pass.then(() => {
+      try {
+        pi.events.emit(MEMORY_STATUS_EVENT, memoryStatus(runtime, ctx));
+      } catch (error) {
+        debugLog("status.publish_skipped", { errorMessage: error instanceof Error ? error.message : String(error) });
+      }
+    });
+  };
+  pi.on("session_start", (_event, ctx) => publish(ctx));
+  pi.on("model_select", (_event, ctx) => publish(ctx));
+  pi.on("session_tree", (_event, ctx) => publish(ctx));
+  pi.on("session_compact", (_event, ctx) => publish(ctx));
+  pi.on("agent_start", (_event, ctx) => publish(ctx));
+  pi.on("agent_settled", (_event, ctx) => publish(ctx));
+  pi.on("turn_end", (_event, ctx) => {
+    publish(ctx);
+    return void 0;
+  });
+}
+
+// src/commands/status.ts
 function registerStatusCommand(pi, runtime) {
   pi.registerCommand("om:status", {
     description: "Show observational memory status",
     handler: async (_args, ctx) => {
       runtime.ensureConfig(ctx.cwd);
-      const entries = ctx.sessionManager.getBranch();
-      const folded = foldLedger(entries);
-      const visible = visibleProjection(entries);
-      const full = fullProjection(entries);
-      const drift = diffProjection(visible, full);
-      const visibleObservationTokens = tokenSum(visible.observations);
-      const visibleReflectionTokens = tokenSum(visible.reflections);
-      const activeObservationPool = observationPoolMetrics(folded.activeObservations, runtime.config.observationsPoolTargetTokens);
-      const observationLine2 = appendSuffixes(
-        `Observations: ${folded.observations.length} recorded / ${folded.droppedObservationIds.size} dropped / ${folded.activeObservations.length} active / ${visible.observations.length} visible`,
-        [
-          addedSuffix(drift.observationsOnlyInFull.length),
-          removedSuffix(drift.droppedOnlyInFull.length)
-        ]
-      );
-      const reflectionLine2 = appendSuffixes(
-        `Reflections:  ${folded.reflections.length} recorded / ${visible.reflections.length} visible`,
-        [addedSuffix(drift.reflectionsOnlyInFull.length)]
-      );
-      const obsProgress = rawTokensSinceObservationCoverage(entries);
-      const reflectionProgress = rawObservedTokensSinceReflectorPass(entries);
-      const unobservedSinceCompaction = Math.max(
-        0,
-        measuredTokensSinceLastCompaction(entries) - measuredObservedTokensSinceLastCompaction(entries)
-      );
-      const contextWindow = typeof ctx.model?.contextWindow === "number" ? ctx.model.contextWindow : void 0;
-      const activationThreshold = resolveCompactAfterTokens(runtime.config, contextWindow);
-      const contextTokens = ctx.getContextUsage()?.tokens;
-      const activationLine = contextTokens == null ? `Next activation:  context size unknown until the next response / ${activationThreshold.toLocaleString()} context tokens` : `Next activation:  ~${contextTokens.toLocaleString()} / ${activationThreshold.toLocaleString()} context tokens (${pct(contextTokens, activationThreshold)}%)`;
-      const passiveLines = runtime.config.passive === true ? [
-        "\u2500\u2500 Mode \u2500\u2500",
-        "Passive: automatic memory workers and activation disabled; manual/Pi compaction, commands, and recall remain active",
-        ""
-      ] : [];
-      const lines = [
-        ...passiveLines,
-        "\u2500\u2500 Memory \u2500\u2500",
-        observationLine2,
-        reflectionLine2,
-        "",
-        "\u2500\u2500 Activity \u2500\u2500",
-        `Next observation: ~${obsProgress.toLocaleString()} / ${runtime.config.observeAfterTokens.toLocaleString()} tokens (${pct(obsProgress, runtime.config.observeAfterTokens)}%)`,
-        `Next reflection:  ~${reflectionProgress.toLocaleString()} / ${runtime.config.reflectAfterTokens.toLocaleString()} observed source tokens (${pct(reflectionProgress, runtime.config.reflectAfterTokens)}%)`,
-        activationLine,
-        `Observer backlog: ~${unobservedSinceCompaction.toLocaleString()} unobserved source tokens since the compaction boundary`,
-        `Active observation pool: ~${activeObservationPool.observationTokens.toLocaleString()} tokens (reflection at ${runtime.config.observationsPoolMaxTokens.toLocaleString()}, drops above ${runtime.config.observationsPoolTargetTokens.toLocaleString()})`,
-        `Visible observation pool: ~${visibleObservationTokens.toLocaleString()} tokens`,
-        `Visible reflection pool:  ~${visibleReflectionTokens.toLocaleString()} tokens`
-      ];
-      if (runtime.consolidationInFlight || runtime.compactHookInFlight) {
-        lines.push("", "\u2500\u2500 In flight \u2500\u2500");
-        if (runtime.consolidationInFlight) {
-          const phase = runtime.consolidationPhase ? ` (${runtime.consolidationPhase})` : "";
-          lines.push(`Consolidation: running${phase}`);
-        }
-        if (runtime.compactHookInFlight) lines.push("Compaction hook: running");
-      }
-      if (runtime.lastObserverError || runtime.lastReflectorError) {
-        lines.push("", "\u2500\u2500 Last error \u2500\u2500");
-        if (runtime.lastObserverError) lines.push(`Observer: ${runtime.lastObserverError}`);
-        if (runtime.lastReflectorError) lines.push(`Reflector: ${runtime.lastReflectorError}`);
-      }
-      ctx.ui.notify(lines.join("\n"), "info");
+      ctx.ui.notify(renderMemoryStatus(memoryStatus(runtime, ctx)), "info");
     }
   });
 }
@@ -3793,6 +3838,7 @@ function observationalMemory(pi) {
   registerConsolidationTrigger(pi, runtime);
   registerCompactionHook(pi, runtime);
   registerMemoryFile(pi, runtime);
+  registerMemoryStatusEvents(pi, runtime);
   registerStatusCommand(pi, runtime);
   registerViewCommand(pi, runtime);
   registerLogCommand(pi, runtime);

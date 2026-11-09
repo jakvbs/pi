@@ -1,118 +1,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { observationPoolMetrics } from "../agents/reflector/pool.ts";
-import { resolveCompactAfterTokens } from "../config.ts";
+import { memoryStatus, renderMemoryStatus } from "../memory-status.ts";
 import type { Runtime } from "../runtime.ts";
-import {
-	diffProjection,
-	foldLedger,
-	fullProjection,
-	measuredObservedTokensSinceLastCompaction,
-	measuredTokensSinceLastCompaction,
-	rawObservedTokensSinceReflectorPass,
-	rawTokensSinceObservationCoverage,
-	visibleProjection,
-	type Entry,
-} from "../session-ledger/index.ts";
-
-function pct(current: number, total: number): number {
-	return total > 0 ? Math.round((current / total) * 100) : 0;
-}
-
-function tokenSum(items: { tokenCount: number }[]): number {
-	return items.reduce((sum, item) => sum + item.tokenCount, 0);
-}
-
-function addedSuffix(count: number): string | undefined {
-	return count > 0 ? `+${count.toLocaleString()}` : undefined;
-}
-
-function removedSuffix(count: number): string | undefined {
-	return count > 0 ? `-${count.toLocaleString()}` : undefined;
-}
-
-function appendSuffixes(line: string, suffixes: (string | undefined)[]): string {
-	const rendered = suffixes.filter((suffix): suffix is string => suffix !== undefined);
-	return rendered.length > 0 ? `${line} ${rendered.join(" ")}` : line;
-}
 
 export function registerStatusCommand(pi: ExtensionAPI, runtime: Runtime): void {
 	pi.registerCommand("om:status", {
 		description: "Show observational memory status",
 		handler: async (_args, ctx) => {
 			runtime.ensureConfig(ctx.cwd);
-			const entries = ctx.sessionManager.getBranch() as Entry[];
-			const folded = foldLedger(entries);
-			const visible = visibleProjection(entries);
-			const full = fullProjection(entries);
-			const drift = diffProjection(visible, full);
-
-			const visibleObservationTokens = tokenSum(visible.observations);
-			const visibleReflectionTokens = tokenSum(visible.reflections);
-			const activeObservationPool = observationPoolMetrics(folded.activeObservations, runtime.config.observationsPoolTargetTokens);
-			const observationLine = appendSuffixes(
-				`Observations: ${folded.observations.length} recorded / ${folded.droppedObservationIds.size} dropped / ${folded.activeObservations.length} active / ${visible.observations.length} visible`,
-				[
-					addedSuffix(drift.observationsOnlyInFull.length),
-					removedSuffix(drift.droppedOnlyInFull.length),
-				],
-			);
-			const reflectionLine = appendSuffixes(
-				`Reflections:  ${folded.reflections.length} recorded / ${visible.reflections.length} visible`,
-				[addedSuffix(drift.reflectionsOnlyInFull.length)],
-			);
-			const obsProgress = rawTokensSinceObservationCoverage(entries);
-			const reflectionProgress = rawObservedTokensSinceReflectorPass(entries);
-			const unobservedSinceCompaction = Math.max(
-				0,
-				measuredTokensSinceLastCompaction(entries) - measuredObservedTokensSinceLastCompaction(entries),
-			);
-			const contextWindow = typeof ctx.model?.contextWindow === "number" ? ctx.model.contextWindow : undefined;
-			const activationThreshold = resolveCompactAfterTokens(runtime.config, contextWindow);
-			const contextTokens = ctx.getContextUsage()?.tokens;
-			const activationLine = contextTokens == null
-				? `Next activation:  context size unknown until the next response / ${activationThreshold.toLocaleString()} context tokens`
-				: `Next activation:  ~${contextTokens.toLocaleString()} / ${activationThreshold.toLocaleString()} context tokens (${pct(contextTokens, activationThreshold)}%)`;
-
-			const passiveLines = runtime.config.passive === true
-				? [
-					"── Mode ──",
-					"Passive: automatic memory workers and activation disabled; manual/Pi compaction, commands, and recall remain active",
-					"",
-				]
-				: [];
-
-			const lines = [
-				...passiveLines,
-				"── Memory ──",
-				observationLine,
-				reflectionLine,
-				"",
-				"── Activity ──",
-				`Next observation: ~${obsProgress.toLocaleString()} / ${runtime.config.observeAfterTokens.toLocaleString()} tokens (${pct(obsProgress, runtime.config.observeAfterTokens)}%)`,
-				`Next reflection:  ~${reflectionProgress.toLocaleString()} / ${runtime.config.reflectAfterTokens.toLocaleString()} observed source tokens (${pct(reflectionProgress, runtime.config.reflectAfterTokens)}%)`,
-				activationLine,
-				`Observer backlog: ~${unobservedSinceCompaction.toLocaleString()} unobserved source tokens since the compaction boundary`,
-				`Active observation pool: ~${activeObservationPool.observationTokens.toLocaleString()} tokens (reflection at ${runtime.config.observationsPoolMaxTokens.toLocaleString()}, drops above ${runtime.config.observationsPoolTargetTokens.toLocaleString()})`,
-				`Visible observation pool: ~${visibleObservationTokens.toLocaleString()} tokens`,
-				`Visible reflection pool:  ~${visibleReflectionTokens.toLocaleString()} tokens`,
-			];
-
-			if (runtime.consolidationInFlight || runtime.compactHookInFlight) {
-				lines.push("", "── In flight ──");
-				if (runtime.consolidationInFlight) {
-					const phase = runtime.consolidationPhase ? ` (${runtime.consolidationPhase})` : "";
-					lines.push(`Consolidation: running${phase}`);
-				}
-				if (runtime.compactHookInFlight) lines.push("Compaction hook: running");
-			}
-
-			if (runtime.lastObserverError || runtime.lastReflectorError) {
-				lines.push("", "── Last error ──");
-				if (runtime.lastObserverError) lines.push(`Observer: ${runtime.lastObserverError}`);
-				if (runtime.lastReflectorError) lines.push(`Reflector: ${runtime.lastReflectorError}`);
-			}
-
-			ctx.ui.notify(lines.join("\n"), "info");
+			ctx.ui.notify(renderMemoryStatus(memoryStatus(runtime, ctx)), "info");
 		},
 	});
 }

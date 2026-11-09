@@ -7,6 +7,7 @@ import { registerActivation } from "./hooks/activation.ts";
 import { registerCompactionHook } from "./hooks/compaction-hook.ts";
 import { registerConsolidationTrigger } from "./hooks/consolidation-trigger.ts";
 import { registerMemoryFile } from "./memory-file.ts";
+import { registerMemoryStatusEvents } from "./memory-status.ts";
 import { Runtime } from "./runtime.ts";
 import { registerRecallTool } from "./tools/recall-observation.ts";
 
@@ -22,6 +23,8 @@ export default function observationalMemory(pi: ExtensionAPI) {
 	registerConsolidationTrigger(pi, runtime);
 	registerCompactionHook(pi, runtime);
 	registerMemoryFile(pi, runtime);
+	// After the consolidation trigger, so it sees a pass launched at the same event.
+	registerMemoryStatusEvents(pi, runtime);
 
 	registerStatusCommand(pi, runtime);
 	registerViewCommand(pi, runtime);

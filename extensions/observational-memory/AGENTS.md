@@ -69,6 +69,7 @@ After a correction, fix the cause and update this table. A rule without enforcem
 | Code reads `om.*` entries only through `branchLedger` (`src/session-ledger/ledger.ts`): valid V3 data with a coverage marker on the branch. | The entry guards are private to `ledger.ts`; `tests/session-ledger-ledger.test.ts` checks that folds, projection, changelog, recall and coverage all ignore a sibling-branch entry. |
 | A token clock's name starts with its unit: `raw*` (local estimate), `measured*`/`real*` (provider tokens). | None: naming judgment, stated in `src/session-ledger/progress.ts`. |
 | A warning about a condition that can outlast a memory pass (a failing stage or primary model, a missing model) goes through `runtime.warnings` (`src/warnings.ts`): shown once while the condition holds, again after it cleared. Passes restart on every turn while a stage is due. | `tests/worker-requests-end-to-end.test.ts`: a stage that keeps failing and a primary that keeps failing behind a working fallback each warn once in a real Pi session. |
+| `/om:status` and every other view (pi-web's memory panel) read memory status from one function, `memoryStatus` in `src/memory-status.ts`: the command renders it, `MEMORY_STATUS_EVENT` on `pi.events` publishes it, `memoryCountLines` serves a view without a running extension. | `tests/memory-status.test.ts`: the published status renders to the exact `/om:status` text, also with a stage error. |
 | Committed `dist/` matches `src/`. | `npm run check` (`git diff --exit-code -- dist`); no CI or hook runs it. |
 
 ## Maintaining this file
