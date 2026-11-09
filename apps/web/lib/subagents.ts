@@ -67,6 +67,8 @@ export interface SubagentMetadata {
   createdAt: string;
   /** Factory ticket the run works on (`Agent`'s `ticket`, e.g. F046). */
   ticket?: string;
+  /** Checkout root the child works in, or cuts its worktree from (`Agent`'s `repo`); absent means the parent's cwd. */
+  repo?: string;
   resourceSnapshot: SubagentResourceSnapshot;
   worktreePath?: string;
   worktreeBranch?: string;
@@ -128,6 +130,8 @@ export interface SubagentRunInfo {
   status: SubagentStatus;
   createdAt: string;
   ticket?: string;
+  /** As `SubagentMetadata.repo`. */
+  repo?: string;
   completedAt?: string;
   result?: string;
   error?: string;
@@ -1003,6 +1007,7 @@ export function readSubagentRun(entries: readonly SessionEntry[], sessionId: str
     status: persistedStatus,
     createdAt: typeof data.createdAt === "string" ? data.createdAt : "",
     ...(typeof data.ticket === "string" ? { ticket: data.ticket } : {}),
+    ...(typeof data.repo === "string" ? { repo: data.repo } : {}),
     ...(result && typeof result.completedAt === "string" ? { completedAt: result.completedAt } : {}),
     ...(result && typeof result.result === "string" ? { result: result.result } : {}),
     ...(result && typeof result.error === "string" ? { error: result.error } : {}),

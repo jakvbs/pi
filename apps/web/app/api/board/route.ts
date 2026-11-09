@@ -57,6 +57,7 @@ export async function GET() {
     return [{
       sessionId: session.id,
       ...(relation.ticket ? { ticket: relation.ticket } : {}),
+      ...(relation.repo ? { repo: relation.repo } : {}),
       status: relation.status,
       profile: relation.profile,
       description: relation.description,

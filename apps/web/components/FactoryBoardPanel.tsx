@@ -69,6 +69,7 @@ export function FactoryBoardPanel({ sessions, onSelectSession }: Props) {
       <span style={{ color: "var(--text-muted)" }}>{subagent.profile}</span>
       <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>{subagent.model ?? "model unknown"}</span>
       <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{subagent.description}</span>
+      {subagent.repo && <span data-board-repo={subagent.repo} title={subagent.repo} style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>{subagent.repo.split(/[\\/]/).pop()}</span>}
       {subagent.ticket && !shownIds.has(subagent.ticket) && <span style={{ color: "var(--text-dim)" }}>{subagent.ticket}</span>}
       <a href={sessionDeepLink(subagent.sessionId)} onClick={(event) => openChat(event, subagent.sessionId)} style={{ color: "var(--accent)", whiteSpace: "nowrap" }}>
         Open chat

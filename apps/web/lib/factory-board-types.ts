@@ -20,6 +20,8 @@ export interface BoardTicket {
 export interface BoardSubagent {
   sessionId: string;
   ticket?: string;
+  /** Repository the child works in when it is not its parent's (`Agent`'s `repo`). */
+  repo?: string;
   status: SubagentSessionStatus;
   profile: string;
   description: string;

@@ -44,9 +44,10 @@ import { createSubagentMcpPolicyExtension } from "./mcp-read-only-policy";
 import { resolveShellTools } from "./powershell-settings";
 import { isBuiltInSubagentsEnabled, readSubagentSettings } from "./subagent-settings";
 import { SubagentQueue } from "./subagent-queue";
-import { addWorktree, removeWorktree } from "./worktree";
+import { addWorktree, getCheckoutRoot, removeWorktree } from "./worktree";
 import { randomUUID } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
 
 interface HostSession {
   readonly inner: AgentSessionLike;
@@ -387,13 +388,26 @@ function persistChildSession(sessionManager: SessionManager): void {
   sessionManager.setSessionFile(sessionFile);
 }
 
+/**
+ * `Agent`'s `repo` as the top-level directory of its checkout, refused before anything is created
+ * when it is not an absolute path inside a Git checkout.
+ */
+async function subagentRepo(path: string): Promise<string> {
+  if (!isAbsolute(path)) throw new Error(`repo must be an absolute path to a Git repository, not ${JSON.stringify(path)}`);
+  try {
+    return await getCheckoutRoot(path);
+  } catch {
+    throw new Error(`repo is not a Git repository: ${path}`);
+  }
+}
+
 async function cleanupWorktree(
-  parentCwd: string,
+  repoCwd: string,
   worktree: { path: string; branch: string } | undefined,
 ): Promise<string | undefined> {
   if (!worktree) return undefined;
   try {
-    await removeWorktree(parentCwd, worktree.path);
+    await removeWorktree(repoCwd, worktree.path);
     return undefined;
   } catch (error) {
     return `Worktree retained at ${worktree.path}: ${error instanceof Error ? error.message : String(error)}`;
@@ -433,6 +447,9 @@ export function createSubagentController(
     if (!parent.sessionFile) throw new Error("Parent session must be persisted before starting a subagent");
 
     let isolatedWorktree: { path: string; branch: string } | undefined;
+    const repo = request.repo === undefined ? undefined : await subagentRepo(request.repo);
+    // The child works in `repo`, or cuts its worktree from it; the parent's cwd otherwise.
+    const baseCwd = repo ?? parent.cwd;
     try {
       const profile = resolveSubagentProfile(parent.cwd, request.profile);
       if (!profile) throw new Error(`Unknown or disabled subagent profile: ${request.profile}`);
@@ -446,9 +463,9 @@ export function createSubagentController(
         expectedSubagentModel(parentModelRuntime, request.model, profile.model, parent.inner.model),
       ));
       if (isolation === "worktree") {
-        isolatedWorktree = await addWorktree(parent.cwd, `pi-web-agent-${randomUUID()}`);
+        isolatedWorktree = await addWorktree(baseCwd, `pi-web-agent-${randomUUID()}`);
       }
-      const childCwd = isolatedWorktree?.path ?? parent.cwd;
+      const childCwd = isolatedWorktree?.path ?? baseCwd;
       const inheritContext = profile.inheritContext;
       // `parseProfileFile` already floors a positive profile `max_turns`, so it is an integer or absent.
       const turnLimit = profile.maxTurns;
@@ -558,9 +575,7 @@ export function createSubagentController(
       mcpScope.tools = activeTools;
       mcpScope.allExtensionTools = allExtensionTools;
 
-      const sessionManager = isolatedWorktree
-        ? SessionManager.create(childCwd, undefined, { parentSession: parent.sessionFile })
-        : SessionManager.create(parent.cwd, undefined, { parentSession: parent.sessionFile });
+      const sessionManager = SessionManager.create(childCwd, undefined, { parentSession: parent.sessionFile });
       const createdAt = new Date().toISOString();
       const metadata: SubagentMetadata = {
         version: 1,
@@ -573,6 +588,7 @@ export function createSubagentController(
         runInBackground,
         createdAt,
         ...(request.ticket ? { ticket: request.ticket } : {}),
+        ...(repo ? { repo } : {}),
         resourceSnapshot: {
           version: 1,
           appendSystemPrompt: [...appendSystemPrompt],
@@ -633,6 +649,7 @@ export function createSubagentController(
         status: "queued",
         createdAt,
         ...(request.ticket ? { ticket: request.ticket } : {}),
+        ...(repo ? { repo } : {}),
         ...(isolatedWorktree ? { worktreePath: isolatedWorktree.path, worktreeBranch: isolatedWorktree.branch } : {}),
       };
 
@@ -663,7 +680,7 @@ export function createSubagentController(
         // Reached only when the abort fires while the run is being queued, before `cancelQueued`
         // is set; a run aborted later in the queue ends in `finishQueuedAbort`.
         if (stored.abortRequested) {
-          const cleanupError = await cleanupWorktree(parent.cwd, isolatedWorktree);
+          const cleanupError = await cleanupWorktree(baseCwd, isolatedWorktree);
           const result = recordResult(sessionManager, {
             ...initialRun,
             status: "aborted",
@@ -757,7 +774,7 @@ export function createSubagentController(
           request.signal?.removeEventListener("abort", handleParentAbort);
         }
 
-        const cleanupError = await cleanupWorktree(parent.cwd, isolatedWorktree);
+        const cleanupError = await cleanupWorktree(baseCwd, isolatedWorktree);
         if (cleanupError) result = { ...result, worktreeCleanupError: cleanupError };
         result = recordResult(sessionManager, result);
         stored.run = result;
@@ -778,7 +795,7 @@ export function createSubagentController(
         if (stored.run.status !== "queued") return;
         try {
           const result: SubagentRunInfo = { ...initialRun, status: "aborted", completedAt: new Date().toISOString() };
-          const cleanupError = await cleanupWorktree(parent.cwd, isolatedWorktree);
+          const cleanupError = await cleanupWorktree(baseCwd, isolatedWorktree);
           const finalResult = recordResult(sessionManager, cleanupError ? { ...result, worktreeCleanupError: cleanupError } : result);
           stored.run = finalResult;
           request.onUpdate?.(finalResult);
@@ -820,7 +837,7 @@ export function createSubagentController(
       return { run: stored.run, completion: stored.completion };
     } catch (error) {
       if (isolatedWorktree) {
-        try { await removeWorktree(parent.cwd, isolatedWorktree.path); } catch { /* preserve setup failure and avoid force deletion */ }
+        try { await removeWorktree(baseCwd, isolatedWorktree.path); } catch { /* preserve setup failure and avoid force deletion */ }
       }
       throw error;
     }
@@ -995,6 +1012,17 @@ export function createSubagentController(
     await wrapper.inner.steer(message.trim());
   }
 
+  async function stop(parentSessionId: string, sessionId: string): Promise<SubagentRunInfo> {
+    const run = await get(sessionId);
+    if (!run) throw new Error(`Subagent not found: ${sessionId}`);
+    if (run.parentSessionId !== parentSessionId) throw new Error("Subagent does not belong to this parent session");
+    if (run.status !== "running" && run.status !== "queued") throw new Error(`Subagent ${sessionId} is not running (${run.status})`);
+    const stored = getSubagentRuns().get(sessionId);
+    await abort(sessionId);
+    // A turn typed into the chat of a child a restart cut off has no completion; its file holds the result.
+    return stored ? await stored.completion : (await get(sessionId)) ?? run;
+  }
+
   async function notifyParent(run: SubagentRunInfo): Promise<void> {
     const pending = { sessionId: run.sessionId, parentSessionId: run.parentSessionId, completedAt: run.completedAt, since: Date.now() };
     const notifications = getParentNotifications();
@@ -1077,7 +1105,7 @@ export function createSubagentController(
   }
 
   return {
-    extensionRuntime: { start, resume, get, steer, notifyParent, markResultConsumed },
+    extensionRuntime: { start, resume, get, steer, stop, notifyParent, markResultConsumed },
     get,
     steer,
     abort,

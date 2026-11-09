@@ -20,6 +20,8 @@ const SUBAGENT_TOOL_NAMES = new Set<string>(SUBAGENT_CONTROL_TOOL_NAMES);
 const LEGACY_SUBAGENT_PACKAGE_NAME = "pi-subagents";
 const TERMINAL_SUBAGENT_STATUSES = new Set<SubagentRunInfo["status"]>(["completed", "failed", "aborted", "interrupted"]);
 export const SUBAGENT_WAIT_TIMEOUT_MS = 30 * 60_000;
+// A stop settles as soon as the child's current request is aborted; the bound only keeps a stuck one from holding the parent.
+const SUBAGENT_STOP_TIMEOUT_MS = 30_000;
 // Node timers overflow above a signed 32-bit millisecond delay.
 const MAX_SUBAGENT_WAIT_SECONDS = Math.floor(2_147_483_647 / 1000);
 const waitTimeoutParameter = () => Type.Optional(Type.Integer({
@@ -135,6 +137,7 @@ export interface SubagentToolDetails {
   runInBackground: boolean;
   createdAt: string;
   ticket?: string;
+  repo?: string;
   completedAt?: string;
   error?: string;
   worktreePath?: string;
@@ -153,6 +156,8 @@ export interface StartSubagentRequest {
   model?: string;
   isolation?: "worktree";
   ticket?: string;
+  /** Absolute path of the Git repository the child works in; the parent's cwd when absent. */
+  repo?: string;
   signal?: AbortSignal;
   onUpdate?: (run: SubagentRunInfo) => void;
 }
@@ -178,6 +183,8 @@ export interface SubagentExtensionRuntime {
   resume(request: ResumeSubagentRequest): Promise<SubagentExecution>;
   get(sessionId: string): Promise<SubagentRunInfo | null>;
   steer(sessionId: string, message: string): Promise<void>;
+  /** Stops a running or queued child of `parentSessionId` and resolves with its settled run. */
+  stop(parentSessionId: string, sessionId: string): Promise<SubagentRunInfo>;
   notifyParent(run: SubagentRunInfo): Promise<void>;
   markResultConsumed(run: Pick<SubagentRunInfo, "sessionId" | "completedAt">): void;
 }
@@ -206,6 +213,7 @@ export function subagentToolDetails(run: SubagentRunInfo): SubagentToolDetails {
     runInBackground: run.runInBackground,
     createdAt: run.createdAt,
     ...(run.ticket ? { ticket: run.ticket } : {}),
+    ...(run.repo ? { repo: run.repo } : {}),
     ...(run.completedAt ? { completedAt: run.completedAt } : {}),
     ...(run.error ? { error: run.error } : {}),
     ...(run.worktreePath ? { worktreePath: run.worktreePath } : {}),
@@ -234,18 +242,23 @@ export function subagentFinalText(run: SubagentRunInfo): string {
     return `Subagent ${run.sessionId} is ${run.status}.`;
   }
   // Keep the session ID in the text: the model only sees `content`, never `details`, and needs it for `resume` / `get_subagent_result`.
-  // The worktree line follows the status, before the subagent's own words.
-  const worktree = worktreeOutcomeText(run);
-  const withWorktree = (status: string) => worktree ? `${status}\n\n${worktree}` : status;
+  // Where it worked (another repository, a worktree) follows the status, before the subagent's own words.
+  const location = [run.repo ? `It worked in repository ${run.repo}.` : undefined, worktreeOutcomeText(run)]
+    .filter(Boolean).join(" ");
+  const withLocation = (status: string) => location ? `${status}\n\n${location}` : status;
   if (run.status === "completed") {
     const result = run.result?.trim();
     return result
-      ? `${withWorktree(`Subagent ${run.sessionId} completed.`)}\n\n${result}`
-      : withWorktree(`Subagent ${run.sessionId} completed without text output.`);
+      ? `${withLocation(`Subagent ${run.sessionId} completed.`)}\n\n${result}`
+      : withLocation(`Subagent ${run.sessionId} completed without text output.`);
   }
-  if (run.status === "aborted") return withWorktree(`Subagent ${run.sessionId} was stopped.`);
+  if (run.status === "aborted") {
+    const stopped = withLocation(`Subagent ${run.sessionId} was stopped.`);
+    const partial = run.result?.trim();
+    return partial ? `${stopped}\n\nPartial output:\n\n${partial}` : stopped;
+  }
   if (run.status === "interrupted") return `Subagent ${run.sessionId} was interrupted before completion.`;
-  const failure = withWorktree(`Subagent ${run.sessionId} failed: ${run.error ?? "Unknown error"}`);
+  const failure = withLocation(`Subagent ${run.sessionId} failed: ${run.error ?? "Unknown error"}`);
   const partial = run.result?.trim();
   return partial ? `${failure}\n\nPartial output:\n\n${partial}` : failure;
 }
@@ -307,6 +320,7 @@ export function createSubagentExtension(
           model: Type.Optional(Type.String({ description: 'Optional provider/modelId override. Append ":<level>" (off, minimal, low, medium, high, xhigh, max) to also set the thinking level for this run, e.g. "provider/model:high".' })),
           isolation: Type.Optional(Type.String({ description: 'Set to "worktree" to run the subagent in an isolated git worktree.' })),
           ticket: Type.Optional(Type.String({ description: "Factory ticket this work belongs to, as its feature id (e.g. F046). Kept with the subagent session and shown on the board." })),
+          repo: Type.Optional(Type.String({ description: 'Absolute path of another Git repository to work in. With isolation "worktree" the worktree and its branch are cut from that repository. Default: this session\'s cwd.' })),
         }),
         async execute(toolCallId, params, signal, onUpdate, ctx) {
           // Runtime cancellation follows this signal only while the Agent call is attached.
@@ -344,6 +358,7 @@ export function createSubagentExtension(
                 params.input_files?.length && "input_files",
                 params.isolation?.trim() && "isolation",
                 params.ticket?.trim() && "ticket",
+                params.repo?.trim() && "repo",
               ].filter(Boolean);
               if (creationOptions.length > 0) {
                 throw new Error(`${creationOptions.join(", ")} only apply to new subagents. Omit them to resume the existing session, or start a new subagent.`);
@@ -371,6 +386,7 @@ export function createSubagentExtension(
               ...(params.model ? { model: params.model } : {}),
               ...(params.isolation === "worktree" ? { isolation: "worktree" as const } : {}),
               ...(ticket ? { ticket } : {}),
+              ...(params.repo?.trim() ? { repo: params.repo.trim() } : {}),
               signal: childAbort.signal,
               onUpdate: update,
                 });
@@ -455,18 +471,27 @@ export function createSubagentExtension(
       pi.registerTool(defineTool({
         name: "steer_subagent",
         label: "Steer agent",
-        description: "Send a steering message to a currently running subagent session.",
+        description: "Send a steering message to a running subagent this session started, or stop it with stop: true.",
         exposure: SUBAGENT_TOOL_EXPOSURE,
         parameters: Type.Object({
           agent_id: Type.String({ description: "Subagent session ID." }),
-          message: Type.String({ description: "Instruction to inject after the current tool execution." }),
+          message: Type.Optional(Type.String({ description: "Instruction to inject after the current tool execution. Ignored with stop: true." })),
+          stop: Type.Optional(Type.Boolean({ description: "Stop the running or queued subagent instead of steering it. Returns its result with any partial output; it can be resumed later." })),
         }),
-        async execute(_toolCallId, params) {
+        async execute(_toolCallId, params, signal, _onUpdate, ctx) {
           try {
-            await runtime.steer(params.agent_id, params.message);
+            if (params.stop) {
+              const parentSessionId = ctx.sessionManager.getSessionId();
+              const run = await waitForSubagent(() => runtime.stop(parentSessionId, params.agent_id), SUBAGENT_STOP_TIMEOUT_MS, signal);
+              if (!run) return { content: [{ type: "text", text: `Stop requested for subagent ${params.agent_id}; it has not settled yet. Its report arrives on its own.` }], details: undefined };
+              // The returned text is the report, so the completion notification is not sent as well.
+              runtime.markResultConsumed(run);
+              return { content: [{ type: "text", text: subagentFinalText(run) }], details: subagentToolDetails(run) };
+            }
+            await runtime.steer(params.agent_id, params.message ?? "");
             return { content: [{ type: "text", text: `Steering message sent to ${params.agent_id}.` }], details: undefined };
           } catch (error) {
-            return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], details: undefined, isError: true };
+            return { content: [{ type: "text", text: withSubagentCandidates(error instanceof Error ? error.message : String(error), ctx?.sessionManager) }], details: undefined, isError: true };
           }
         },
       }));

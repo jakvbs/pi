@@ -920,3 +920,146 @@ test("an isolated run's result says where its worktree went, live and read back 
     }, undefined, { repo: true });
   });
 });
+
+/** A Git repository with one commit, apart from the parent's cwd. */
+async function otherRepository(t) {
+  const repo = await realpath(await mkdtemp(join(tmpdir(), "pi-web-subagent-other-repo-")));
+  t.after(async () => {
+    await rm(repo, { recursive: true, force: true });
+    await rm(`${repo}-worktrees`, { recursive: true, force: true });
+  });
+  await mkdir(join(repo, "src"));
+  await writeFile(join(repo, "src", "other.txt"), "other\n");
+  for (const args of [["init", "-q"], ["config", "user.email", "test@example.com"], ["config", "user.name", "Pi Web Test"],
+    ["add", "."], ["commit", "-qm", "initial"]]) await exec("git", ["-C", repo, ...args]);
+  return repo;
+}
+
+test("Agent's repo puts the child in another repository, its own worktree with isolation (F057)", { timeout: 60_000 }, async (t) => {
+  const readBack = (run) => readSubagentRun(SessionManager.open(run.sessionPath).getEntries(), run.sessionId, run.sessionPath);
+  const childCwd = (run) => SessionManager.open(run.sessionPath).getHeader().cwd;
+
+  await t.test("with isolation the worktree and its branch are cut from that repository, not the parent's cwd", { timeout: 20_000 }, async (t) => {
+    const repo = await otherRepository(t);
+    await withRuntime(async ({ runtime, request, faux }) => {
+      let worktreePath, seenInRun;
+      faux.setResponses([async () => {
+        const git = (...args) => execFileSync("git", ["-C", worktreePath, ...args], { encoding: "utf8" }).trim();
+        seenInRun = { commonDir: git("rev-parse", "--path-format=absolute", "--git-common-dir"), branch: git("branch", "--show-current") };
+        return answer("ISOLATED_ELSEWHERE");
+      }]);
+      const result = await (await runtime.start({
+        ...request, repo, isolation: "worktree", onUpdate: (run) => { worktreePath ??= run.worktreePath; },
+      })).completion;
+      assert.equal(result.status, "completed");
+      assert.equal(result.repo, repo);
+      assert.equal(dirname(result.worktreePath), `${repo}-worktrees`);
+      assert.deepEqual(seenInRun, { commonDir: join(repo, ".git"), branch: result.worktreeBranch });
+      assert.equal(childCwd(result), result.worktreePath);
+      // Removed after the run, from that repository; the branch stays there.
+      assert.equal(existsSync(result.worktreePath), false);
+      execFileSync("git", ["-C", repo, "rev-parse", "--verify", `refs/heads/${result.worktreeBranch}`]);
+      const text = subagentFinalText(result);
+      assert.equal(text, `Subagent ${result.sessionId} completed.\n\nIt worked in repository ${repo}. Its worktree was removed; branch ${result.worktreeBranch} keeps any commits it made.\n\nISOLATED_ELSEWHERE`);
+      assert.equal(readBack(result).repo, repo);
+      assert.equal(subagentFinalText(readBack(result)), text);
+    });
+  });
+
+  await t.test("without isolation the child works in the repository's checkout, and resume keeps it", { timeout: 20_000 }, async (t) => {
+    const repo = await otherRepository(t);
+    await withRuntime(async ({ runtime, request, faux }) => {
+      faux.setResponses([answer("IN_PLACE"), answer("RESUMED")]);
+      // A folder inside the checkout names its repository.
+      const result = await (await runtime.start({ ...request, repo: join(repo, "src") })).completion;
+      assert.equal(result.repo, repo);
+      assert.equal(result.worktreePath, undefined);
+      assert.equal(childCwd(result), repo);
+      const again = await (await runtime.resume({ ...request, sessionId: result.sessionId })).completion;
+      assert.equal(again.status, "completed");
+      assert.equal(again.repo, repo);
+      assert.equal(subagentFinalText(again), `Subagent ${result.sessionId} completed.\n\nIt worked in repository ${repo}.\n\nRESUMED`);
+    });
+  });
+
+  await t.test("a repo that is no Git repository, or no absolute path, is refused before dispatch", { timeout: 20_000 }, async (t) => {
+    const plain = await mkdtemp(join(tmpdir(), "pi-web-subagent-plain-"));
+    t.after(() => rm(plain, { recursive: true, force: true }));
+    await withRuntime(async ({ runtime, request, faux, sessions }) => {
+      const before = sessions.size;
+      await assert.rejects(runtime.start({ ...request, repo: plain, isolation: "worktree" }), { message: `repo is not a Git repository: ${plain}` });
+      await assert.rejects(runtime.start({ ...request, repo: "relative/repo" }), { message: 'repo must be an absolute path to a Git repository, not "relative/repo"' });
+      assert.equal(sessions.size, before, "No child session may exist");
+      assert.equal(faux.state.callCount, 0);
+    });
+  });
+});
+
+test("steer_subagent with stop ends the parent's own child, and get_subagent_result reports it stopped with its partial output (F057)", { timeout: 30_000 }, async (t) => {
+  async function controlTools(runtime) {
+    const tools = new Map();
+    await createSubagentExtension(runtime, () => []).factory({ registerTool(tool) { tools.set(tool.name, tool); } });
+    return tools;
+  }
+
+  await t.test("a running child", { timeout: 20_000 }, async () => {
+    await withRuntime(async ({ runtime, request, faux, fact, sessions }) => {
+      let entered;
+      const blocked = new Promise((resolve) => { entered = resolve; });
+      faux.setResponses([readFact(fact, "PARTIAL_WORK"), async () => {
+        entered();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return answer("MUST_NOT_COMPLETE");
+      }]);
+      const tools = await controlTools(runtime);
+      const parent = sessions.get(request.parentContext.sessionManager.getSessionId());
+      const reports = [];
+      parent.inner.sendCustomMessage = async (message) => { reports.push(message); };
+      // The parent is running while it calls the tool, so a report waits for its turn to end.
+      let parentBusy = true;
+      parent.isRunning = () => parentBusy;
+      const execution = await runtime.start({ ...request, profile: "fixture-unlimited", runInBackground: true });
+      const notified = execution.completion.then((run) => runtime.notifyParent(run));
+      await blocked;
+      const stopped = await tools.get("steer_subagent").execute("stop-call", { agent_id: execution.run.sessionId, stop: true }, undefined, undefined, request.parentContext);
+      assert.equal(stopped.isError, undefined);
+      assert.equal(stopped.details.status, "aborted");
+      assert.equal(stopped.content[0].text, `Subagent ${execution.run.sessionId} was stopped.\n\nPartial output:\n\nPARTIAL_WORK`);
+      const collected = await tools.get("get_subagent_result").execute("result-call", { agent_id: execution.run.sessionId }, undefined, undefined, request.parentContext);
+      assert.equal(collected.details.status, "aborted");
+      assert.equal(collected.content[0].text, stopped.content[0].text);
+      parentBusy = false;
+      await notified;
+      assert.deepEqual(reports, [], "The stop's answer is the report; no notification repeats it");
+    });
+  });
+
+  await t.test("a queued child", { timeout: 20_000 }, async () => {
+    await withRuntime(async ({ runtime, request, faux, fact }) => {
+      await writeFile(join(dirname(fact), "agents", "settings.json"), JSON.stringify({ builtInEnabled: true, maxConcurrent: 1 }));
+      let release;
+      const held = new Promise((resolve) => { release = resolve; });
+      faux.setResponses([async () => { await held; return answer("FIRST"); }]);
+      const tools = await controlTools(runtime);
+      const first = await runtime.start({ ...request, runInBackground: true });
+      const queued = await runtime.start({ ...request, runInBackground: true });
+      assert.equal(queued.run.status, "queued");
+      const stopped = await tools.get("steer_subagent").execute("stop-call", { agent_id: queued.run.sessionId, stop: true }, undefined, undefined, request.parentContext);
+      assert.equal(stopped.content[0].text, `Subagent ${queued.run.sessionId} was stopped.`);
+      release();
+      assert.equal((await first.completion).status, "completed");
+    });
+  });
+
+  await t.test("another session's child, or one no longer running, is refused", { timeout: 20_000 }, async () => {
+    await withRuntime(async ({ runtime, request, faux }) => {
+      faux.setResponses([answer("DONE")]);
+      const tools = await controlTools(runtime);
+      const done = await (await runtime.start(request)).completion;
+      await assert.rejects(runtime.stop("another-parent", done.sessionId), /does not belong to this parent session/);
+      const refused = await tools.get("steer_subagent").execute("stop-call", { agent_id: done.sessionId, stop: true }, undefined, undefined, request.parentContext);
+      assert.equal(refused.isError, true);
+      assert.equal(refused.content[0].text, `Subagent ${done.sessionId} is not running (completed)`);
+    });
+  });
+});

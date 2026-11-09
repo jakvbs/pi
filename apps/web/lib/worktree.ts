@@ -244,6 +244,11 @@ async function resolveProjectUncached(cwd: string): Promise<ProjectInfo> {
 // common dir, so callers can pass session cwds directly.
 // ============================================================================
 
+/** Top-level directory of the checkout (main or linked) holding `path`, or throws for non-git dirs. */
+export async function getCheckoutRoot(path: string): Promise<string> {
+  return toNativePath(await git(path, ["rev-parse", "--path-format=absolute", "--show-toplevel"]));
+}
+
 /** Main repo root (parent of the shared .git dir, or a bare clone), or throws for non-git dirs */
 async function getRepoRoot(cwd: string): Promise<string> {
   const commonDir = await git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);

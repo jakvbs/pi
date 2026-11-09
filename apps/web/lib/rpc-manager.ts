@@ -2957,6 +2957,7 @@ export function getRpcSessionInfos(options: { includeTransient?: boolean } = {})
           description: subagent.description,
           status: session.isRunning() ? "running" as const : subagent.status,
           ...(subagent.ticket ? { ticket: subagent.ticket } : {}),
+          ...(subagent.repo ? { repo: subagent.repo } : {}),
         },
       } : side ? {
         parentSessionId: side.parentSessionId,
