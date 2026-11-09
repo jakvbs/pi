@@ -8,8 +8,8 @@ import { fileURLToPath } from "node:url";
 
 const script = fileURLToPath(new URL("./upstream.mjs", import.meta.url));
 
-/** Creates an upstream repository holding packages/ext and a fork whose extensions/ext was copied from its first commit. */
-async function setup(t, upstreamSection = "upstream") {
+/** Creates an upstream repository holding packages/ext and a fork whose `target` was copied from its first commit. */
+async function setup(t, upstreamSection = "upstream", target = "extensions/ext") {
 	const base = await mkdtemp(join(tmpdir(), "pi-extensions-upstream-"));
 	t.after(() => rm(base, { recursive: true, force: true }));
 	// The user's global config (hooks, signing) must not reach the throwaway repositories.
@@ -45,8 +45,8 @@ async function setup(t, upstreamSection = "upstream") {
 	const first = await upstream.commit("add ext", { "packages/ext/index.ts": "one\n", "README.md": "readme\n" });
 	const sectionHeader = upstreamSection === "upstream" ? "[upstream]" : `[reference "${upstreamSection}"]`;
 	await fork.commit("import ext", {
-		"extensions/ext/index.ts": "one\n",
-		"extensions/ext/UPSTREAM": `${sectionHeader}\n\turl = ${upstream.dir}\n\tbranch = main\n\tpath = packages/ext\n\tcommit = ${first}\n`,
+		[`${target}/index.ts`]: "one\n",
+		[`${target}/UPSTREAM`]: `${sectionHeader}\n\turl = ${upstream.dir}\n\tbranch = main\n\tpath = packages/ext\n\tcommit = ${first}\n`,
 	});
 	const run = (...args) => spawnSync(process.execPath, [script, ...args], { cwd: fork.dir, env, encoding: "utf8" });
 	return { upstream, fork, first, run };
@@ -145,4 +145,20 @@ test("records a reviewed reference commit without touching the extension", async
 	assert.equal(fork.git("config", "-f", "extensions/ext/UPSTREAM", "reference.other.commit"), head);
 	assert.equal(fork.git("log", "-1", "--format=%s%n%b"), `chore(extensions): review ext reference other ${head.slice(0, 9)}\nNo port candidate.`);
 	assert.equal(await fork.read("extensions/ext/index.ts"), "one\n");
+});
+
+test("imports into an app under apps/ named by its path", async (t) => {
+	const { upstream, fork, first, run } = await setup(t, "upstream", "apps/web");
+	await mkdir(join(fork.dir, "extensions"));
+	const head = await upstream.commit("change index", { "packages/ext/index.ts": "two\n" });
+
+	const status = run("status");
+	assert.equal(status.status, 0, status.stderr);
+	assert.match(status.stdout, new RegExp(`apps/web upstream: ${first.slice(0, 9)}\\.\\.${head.slice(0, 9)} in packages/ext`));
+
+	const imported = run("import", "apps/web");
+	assert.equal(imported.status, 0, imported.stderr);
+	assert.equal(await fork.read("apps/web/index.ts"), "two\n");
+	assert.equal(fork.git("config", "-f", "apps/web/UPSTREAM", "upstream.commit"), head);
+	assert.equal(fork.git("log", "-1", "--format=%s"), `chore(web): import apps/web upstream ${head.slice(0, 9)}`);
 });

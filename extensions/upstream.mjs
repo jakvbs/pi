@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Fetches, imports and records the upstream and reference repositories that extensions/*/UPSTREAM name.
+// Fetches, imports and records the upstream and reference repositories that extensions/*/UPSTREAM and apps/*/UPSTREAM name.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
@@ -10,6 +10,8 @@ const usage = `Usage:
   node extensions/upstream.mjs status
   node extensions/upstream.mjs import <name> [--skip <sha>]... [-m <body>]
   node extensions/upstream.mjs record <name> [<reference>] [-m <body>]
+
+<name> is an extension's directory name under extensions/ or an app's path, such as apps/web.
 
 status  fetches every [upstream] and [reference] section into refs/extensions/ and lists the new commits.
 import  applies the fetched [upstream] commits with git am, then records them like record.
@@ -40,9 +42,10 @@ if (values.help) {
 
 /** Fetches every section and prints its new commits, or why there is nothing to take. */
 function status() {
-	const names = readdirSync(join(root, "extensions")).filter((entry) =>
-		existsSync(join(root, "extensions", entry, "UPSTREAM")),
-	);
+	const names = [
+		...readdirSync(join(root, "extensions")),
+		...(existsSync(join(root, "apps")) ? readdirSync(join(root, "apps")).map((entry) => `apps/${entry}`) : []),
+	].filter((entry) => existsSync(join(root, directory(entry), "UPSTREAM")));
 	for (const entry of names.sort()) {
 		for (const current of sections(entry)) {
 			git(["fetch", "--quiet", "--no-tags", current.url, `+refs/heads/${current.branch}:${current.trackingRef}`]);
@@ -61,7 +64,7 @@ function status() {
 	}
 }
 
-/** Applies the fetched upstream commits except `skip` under extensions/<name>, then records the fetched commit. */
+/** Applies the fetched upstream commits except `skip` under the directory of `name`, then records the fetched commit. */
 function importUpstream(name, skip, body) {
 	const upstream = section(name, undefined);
 	const head = revParse(upstream.trackingRef);
@@ -84,7 +87,7 @@ function importUpstream(name, skip, body) {
 		const patches = included.map((sha) => git(["format-patch", "--stdout", "-1", sha, ...pathspec(upstream)])).join("");
 		// format-patch keeps the upstream path, so strip it and its a/ or b/ prefix before --directory adds ours.
 		const strip = upstream.path ? [`-p${1 + upstream.path.split("/").filter(Boolean).length}`] : [];
-		const am = spawnSync("git", ["am", "-3", ...strip, `--directory=extensions/${name}`], {
+		const am = spawnSync("git", ["am", "-3", ...strip, `--directory=${directory(name)}`], {
 			cwd: root,
 			input: patches,
 			stdio: ["pipe", "inherit", "inherit"],
@@ -108,11 +111,12 @@ function record(current, body) {
 		fail("git am is in progress; finish it with git am --continue, --skip or --abort first");
 	}
 	const head = revParse(current.trackingRef);
-	const file = join("extensions", current.name, "UPSTREAM");
+	const file = join(directory(current.name), "UPSTREAM");
 	git(["config", "-f", file, `${current.id}.commit`, head]);
+	const scope = current.name.startsWith("apps/") ? current.name.slice("apps/".length) : "extensions";
 	const subject = current.reference
-		? `chore(extensions): review ${current.name} reference ${current.reference} ${short(head)}`
-		: `chore(extensions): import ${current.name} upstream ${short(head)}`;
+		? `chore(${scope}): review ${current.name} reference ${current.reference} ${short(head)}`
+		: `chore(${scope}): import ${current.name} upstream ${short(head)}`;
 	const commit = spawnSync("git", ["commit", "-m", subject, ...(body ? ["-m", body] : []), "--", file], {
 		cwd: root,
 		stdio: "inherit",
@@ -121,17 +125,17 @@ function record(current, body) {
 	if (commit.status !== 0) fail(`git commit failed; fix the cause and run record again`);
 }
 
-/** The [upstream] section of extensions/<name>/UPSTREAM, or its [reference "<reference>"] section. */
+/** The [upstream] section of the UPSTREAM file of `name`, or its [reference "<reference>"] section. */
 function section(name, reference) {
 	const id = reference ? `reference.${reference}` : "upstream";
 	const found = sections(name).find((current) => current.id === id);
-	if (!found) fail(`extensions/${name}/UPSTREAM has no ${reference ? `[reference "${reference}"]` : "[upstream]"} section`);
+	if (!found) fail(`${directory(name)}/UPSTREAM has no ${reference ? `[reference "${reference}"]` : "[upstream]"} section`);
 	return found;
 }
 
-/** Every section of extensions/<name>/UPSTREAM with its keys and the local ref status fetches it into. */
+/** Every section of the UPSTREAM file of `name` with its keys and the local ref status fetches it into. */
 function sections(name) {
-	const file = join(root, "extensions", name, "UPSTREAM");
+	const file = join(root, directory(name), "UPSTREAM");
 	const byId = new Map();
 	for (const line of git(["config", "-f", file, "--list"]).split("\n").filter(Boolean)) {
 		const key = line.slice(0, line.indexOf("="));
@@ -151,6 +155,11 @@ function sections(name) {
 			trackingRef: `refs/extensions/${name}/${reference ? `reference/${reference}` : "upstream"}`,
 		};
 	});
+}
+
+/** The directory of an extension name or an apps/<name> path, relative to the repository root. */
+function directory(name) {
+	return name.startsWith("apps/") ? name : join("extensions", name);
 }
 
 function pathspec(current) {

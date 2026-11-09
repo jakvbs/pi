@@ -14,7 +14,7 @@ An extension whose `UPSTREAM` file has an `[upstream]` section is a copy of a se
 	commit = 91fd55fdfd7c5516ac8d08267f34b49f1b37d050
 ```
 
-`commit` is the last imported upstream commit. `path` is set only when the extension is a subdirectory of the upstream repository. Newer upstream commits are imported on top of `commit` with `extensions/upstream.mjs`: `status` fetches every section into `refs/extensions/` and lists its new commits, `import <name>` applies them with `git am`, and `record` writes the fetched commit to `UPSTREAM` and commits it (`--help` shows the arguments). The `sync` skill (`~/.pi/agent/skills/sync/SKILL.md`) decides which upstream commits fit the fork.
+`commit` is the last imported upstream commit. `path` is set only when the extension is a subdirectory of the upstream repository. Newer upstream commits are imported on top of `commit` with `extensions/upstream.mjs`: `status` fetches every section into `refs/extensions/` and lists its new commits, `import <name>` applies them with `git am`, and `record` writes the fetched commit to `UPSTREAM` and commits it (`--help` shows the arguments). The script also covers an app with an `UPSTREAM` file under `apps/`, named by its path: pi-web in `apps/web` is `node extensions/upstream.mjs import apps/web`. The `sync` skill (`~/.pi/agent/skills/sync/SKILL.md`) decides which upstream commits fit the fork.
 
 An extension written here can track the repositories it replaced in `[reference "<name>"]` sections with the same keys, for example `timing`, which reimplements `@narumitw/pi-stamp` and `@carlosgtrz/pi-run-timer` without their code. Their commits never apply to the extension: `commit` is the last reviewed commit, and newer commits are only candidates to port by hand.
 
