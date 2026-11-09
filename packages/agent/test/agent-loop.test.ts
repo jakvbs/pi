@@ -17,6 +17,7 @@ import type {
 	AgentMessage,
 	AgentTool,
 	AgentToolCall,
+	ToolFileWrites,
 } from "../src/types.ts";
 
 function createUsage() {
@@ -1104,6 +1105,65 @@ describe("agentLoop with AgentMessage", () => {
 		// With executionMode=parallel, second tool should start before first finishes
 		expect(parallelObserved).toBe(true);
 	});
+
+	// F049: a shell call and an edit of the same file ran in parallel and one write replaced the other.
+	it.each([
+		{ first: "any", second: "argument", overlapped: false },
+		{ first: "argument", second: "any", overlapped: false },
+		{ first: "argument", second: "argument", overlapped: true },
+		{ first: "any", second: "any", overlapped: true },
+		{ first: "any", second: undefined, overlapped: true },
+	] as const)(
+		"runs a batch with fileWrites $first and $second overlapped: $overlapped",
+		async ({ first, second, overlapped }) => {
+			const toolSchema = obj({});
+			let firstRunning = false;
+			let secondStartedDuringFirst = false;
+			const makeTool = (name: string, fileWrites: ToolFileWrites | undefined): AgentTool<typeof toolSchema> => ({
+				name,
+				label: name,
+				description: name,
+				parameters: toolSchema,
+				fileWrites,
+				async execute() {
+					if (name === "first") {
+						firstRunning = true;
+						await new Promise((resolve) => setTimeout(resolve, 20));
+						firstRunning = false;
+					} else {
+						secondStartedDuringFirst = firstRunning;
+					}
+					return { content: [{ type: "text", text: name }], details: {} };
+				},
+			});
+			const context: AgentContext = { messages: [], tools: [makeTool("first", first), makeTool("second", second)] };
+			const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
+
+			let callIndex = 0;
+			const stream = agentLoop([createUserMessage("go")], context, config, undefined, () => {
+				const mockStream = createAssistantMessageEventStream();
+				queueMicrotask(() => {
+					const message =
+						callIndex === 0
+							? createAssistantMessage(
+									[
+										{ type: "toolCall", id: "tool-1", name: "first", arguments: {} },
+										{ type: "toolCall", id: "tool-2", name: "second", arguments: {} },
+									],
+									"toolUse",
+								)
+							: createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: callIndex === 0 ? "toolUse" : "stop", message });
+					callIndex++;
+				});
+				return mockStream;
+			});
+			for await (const _event of stream) {
+			}
+
+			expect(secondStartedDuringFirst).toBe(overlapped);
+		},
+	);
 
 	it("runs finishTurn after tool-result messages and before turn_end", async () => {
 		const toolSchema = obj({ value: str() });

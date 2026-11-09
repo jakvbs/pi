@@ -292,6 +292,7 @@ export function createShellToolDefinition(
 		parameters: bashSchema,
 		outputSchema: bashOutputSchema,
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
+		fileWrites: "any",
 		async execute(
 			_toolCallId,
 			{ command, timeout }: { command: string; timeout?: number },

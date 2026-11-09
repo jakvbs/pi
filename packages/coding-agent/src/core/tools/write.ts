@@ -55,6 +55,7 @@ export function createWriteToolDefinition(
 		promptGuidelines: [...writeToolSystemPromptContribution.guidelines],
 		parameters: writeSchema,
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
+		fileWrites: "argument",
 		async execute(
 			_toolCallId,
 			{ path, content }: { path: string; content: string },

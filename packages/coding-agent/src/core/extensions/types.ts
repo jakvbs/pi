@@ -16,6 +16,7 @@ import type {
 	AgentToolUpdateCallback,
 	ThinkingLevel,
 	ToolExecutionMode,
+	ToolFileWrites,
 } from "@earendil-works/pi-agent-core";
 import type {
 	AnyModel,
@@ -105,7 +106,7 @@ import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../v
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { BuildSystemPromptOptions, NormalizedBuildSystemPromptOptions } from "../system-prompt.ts";
-export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode };
+export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode, ToolFileWrites };
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
 
 // ============================================================================
@@ -665,6 +666,12 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * If omitted, the default execution mode applies.
 	 */
 	executionMode?: ToolExecutionMode;
+
+	/**
+	 * Which files this tool may write: "argument" for files named in its arguments, "any" for a shell.
+	 * A batch that holds both kinds runs sequentially in the model's order.
+	 */
+	fileWrites?: ToolFileWrites;
 
 	/** Execute the tool. */
 	execute(

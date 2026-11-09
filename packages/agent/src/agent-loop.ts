@@ -523,10 +523,11 @@ async function executeToolCalls(
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallBatch> {
 	const toolCalls = assistantMessage.content.filter((c) => c.type === "toolCall");
-	const hasSequentialToolCall = toolCalls.some(
-		(tc) => currentContext.tools?.find((t) => t.name === tc.name)?.executionMode === "sequential",
-	);
-	if (config.toolExecution === "sequential" || hasSequentialToolCall) {
+	const tools = toolCalls.map((tc) => currentContext.tools?.find((t) => t.name === tc.name));
+	const hasSequentialToolCall = tools.some((tool) => tool?.executionMode === "sequential");
+	const writesMayOverlap =
+		tools.some((tool) => tool?.fileWrites === "any") && tools.some((tool) => tool?.fileWrites === "argument");
+	if (config.toolExecution === "sequential" || hasSequentialToolCall || writesMayOverlap) {
 		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit);
 	}
 	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);

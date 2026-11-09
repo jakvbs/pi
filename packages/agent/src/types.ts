@@ -508,7 +508,19 @@ export interface AgentTool<TParameters extends object = object, TDetails = any> 
 	 * If omitted, the default execution mode applies.
 	 */
 	executionMode?: ToolExecutionMode;
+	/**
+	 * Which files this tool may write, for scheduling a batch of tool calls.
+	 * - "argument": only files named in its arguments (edit, write).
+	 * - "any": any file (a shell).
+	 *
+	 * A batch that holds both kinds runs sequentially in the model's order: the loop cannot tell whether
+	 * they touch the same file, and run in parallel one tool's write can replace the other's.
+	 */
+	fileWrites?: ToolFileWrites;
 }
+
+/** Which files a tool may write; see `AgentTool.fileWrites`. */
+export type ToolFileWrites = "argument" | "any";
 
 /** Context snapshot passed into the low-level agent loop. */
 export interface AgentContext {
