@@ -162,6 +162,7 @@ export const zhCNLocale: LocalePlugin = {
     "agents.save": "保存",
     "agents.saving": "正在保存...",
     "agents.scope.builtin": "内置",
+    "agents.scope.package": "软件包",
     "agents.scope.global": "全局",
     "agents.scope.workspace": "工作区",
     "agents.scope.project": "项目",

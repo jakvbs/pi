@@ -162,6 +162,7 @@ export const zhTWLocale: LocalePlugin = {
     "agents.save": "儲存",
     "agents.saving": "正在儲存...",
     "agents.scope.builtin": "內建",
+    "agents.scope.package": "套件",
     "agents.scope.global": "全域",
     "agents.scope.workspace": "工作區",
     "agents.scope.project": "專案",

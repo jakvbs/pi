@@ -1,12 +1,13 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { getAgentDir, type LoadExtensionsResult } from "@earendil-works/pi-coding-agent";
+import { DefaultPackageManager, getAgentDir, SettingsManager, type LoadExtensionsResult } from "@earendil-works/pi-coding-agent";
 import { dump as stringifyYaml } from "js-yaml";
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from "fs";
 import { basename, dirname, join, resolve } from "path";
 import { parseFrontmatter } from "./frontmatter";
 import { parseNpmSource } from "./npm-source";
 import { writePrivateFileAtomicSync } from "./atomic-file";
 import { isExistingPathWithinRoots } from "./path-security";
+import { getProjectTrustStatus } from "./project-trust";
 import { disabledBuiltInSubagents } from "./subagent-settings";
 import { PRESET_READ_ONLY } from "./tool-presets";
 import type { SessionEntry, SubagentSessionStatus } from "./types";
@@ -19,7 +20,8 @@ export const SUBAGENT_CONTROL_TOOL_NAMES = ["Agent", "get_subagent_result", "ste
 export type SubagentStatus = SubagentSessionStatus;
 export type SubagentCodemode = "inherit" | "on" | "off";
 export type SubagentMcp = "on" | "off";
-export type SubagentScope = "builtin" | "global" | "workspace" | "project";
+/** `package`: a directory an installed pi package declares under `pi.subagents.agents`; read-only. */
+export type SubagentScope = "builtin" | "package" | "global" | "workspace" | "project";
 export type SubagentWritableScope = Extract<SubagentScope, "global" | "project">;
 
 export interface SubagentProfile {
@@ -455,19 +457,53 @@ function isProjectProfilePathAllowed(cwd: string, target: string): boolean {
 
 function readProfileDirectory(dir: string, scope: SubagentScope, cwd: string): SubagentProfile[] {
   if (!existsSync(dir)) return [];
-  if (scope !== "global" && !isProjectProfilePathAllowed(cwd, dir)) return [];
+  if ((scope === "workspace" || scope === "project") && !isProjectProfilePathAllowed(cwd, dir)) return [];
   return readdirSync(dir, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
     .map((entry) => parseProfileFile(join(dir, entry.name), scope))
     .filter((profile): profile is SubagentProfile => profile !== null);
 }
 
+/** Lowest precedence first: a later directory's profile replaces an earlier one of the same name. */
 function profileDirectories(cwd: string): Array<[string, Exclude<SubagentScope, "builtin">]> {
   return [
+    ...packageProfileDirectories(cwd).map((dir): [string, "package"] => [dir, "package"]),
     [join(getAgentDir(), "agents"), "global"],
     [join(resolve(cwd), ".agents", "agents"), "workspace"],
     [join(resolve(cwd), ".pi", "agents"), "project"],
   ];
+}
+
+/**
+ * The `pi.subagents.agents` directories of the packages in pi's settings (global, and project
+ * ones once the project is trusted), as pi-subagents reads them. pi's package manager resolves
+ * each package's directory, so npm, git and local sources behave as they do for its resources.
+ */
+function packageProfileDirectories(cwd: string): string[] {
+  const agentDir = getAgentDir();
+  const settingsManager = SettingsManager.create(cwd, agentDir, {
+    projectTrusted: getProjectTrustStatus(cwd, agentDir).trusted,
+  });
+  return new DefaultPackageManager({ cwd, agentDir, settingsManager })
+    .listConfiguredPackages()
+    .flatMap((pkg) => (pkg.installedPath ? declaredAgentDirectories(pkg.installedPath) : []));
+}
+
+/** Trust boundary: a package's `package.json` is foreign input, so a malformed one declares nothing. */
+function declaredAgentDirectories(packageDir: string): string[] {
+  try {
+    const manifest: unknown = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
+    const agents = isRecord(manifest) && isRecord(manifest.pi) && isRecord(manifest.pi.subagents)
+      ? manifest.pi.subagents.agents
+      : undefined;
+    if (!Array.isArray(agents)) return [];
+    return agents
+      .filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "")
+      .map((entry) => resolve(packageDir, entry))
+      .filter((dir) => statSync(dir, { throwIfNoEntry: false })?.isDirectory() === true);
+  } catch {
+    return [];
+  }
 }
 
 /**

@@ -78,9 +78,13 @@ test("override detection follows scope precedence case-insensitively", () => {
   const workspace = { name: "REVIEWER", scope: "workspace" };
   const project = { name: "Reviewer", scope: "project" };
   const unrelated = { name: "other", scope: "builtin" };
-  const profiles = [builtin, global, workspace, project, unrelated];
+  const pkg = { name: "reviewer", scope: "package" };
+  const profiles = [builtin, pkg, global, workspace, project, unrelated];
 
   assert.equal(isSubagentProfileOverridden(builtin, profiles), true);
+  assert.equal(isSubagentProfileOverridden(pkg, profiles), true);
+  assert.equal(isSubagentProfileOverridden(builtin, [builtin, pkg]), true);
+  assert.equal(isSubagentProfileOverridden(pkg, [builtin, pkg]), false);
   assert.equal(isSubagentProfileOverridden(global, profiles), true);
   assert.equal(isSubagentProfileOverridden(workspace, profiles), true);
   assert.equal(isSubagentProfileOverridden(project, profiles), false);
@@ -946,6 +950,57 @@ test("a built-in is switched off through settings.json, not a copied-out file", 
     deleteSubagentProfile(cwd, "global", "explore");
     await rm(cwd, { recursive: true, force: true });
   }
+});
+
+/** A local pi package listed in the global settings, shipping `scout-agent` under `pi.subagents.agents`. */
+async function withProfilePackage(run) {
+  const root = await mkdtemp(join(tmpdir(), "pi-web-subagents-package-"));
+  const packageDir = join(root, "factory");
+  const cwd = join(root, "cwd");
+  await mkdir(join(packageDir, "agents"), { recursive: true });
+  await mkdir(cwd);
+  await writeFile(join(packageDir, "package.json"), JSON.stringify({ name: "factory", pi: { subagents: { agents: ["./agents", "./missing", 7] } } }));
+  await writeFile(join(packageDir, "agents", "scout-agent.md"), "---\nname: scout-agent\ndescription: Package scout\nthinking: medium\n---\n\nPackage prompt.\n");
+  await writeFile(join(testAgentDir, "settings.json"), JSON.stringify({ packages: [packageDir] }));
+  try {
+    await run({ cwd, packageDir });
+  } finally {
+    await rm(join(testAgentDir, "settings.json"), { force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test("installed packages offer the profiles they ship, read-only, and alone once the built-ins are off", async () => {
+  await withProfilePackage(async ({ cwd, packageDir }) => {
+    for (const name of ["general-purpose", "explore", "plan"]) writeDisabledBuiltInSubagent(name, true);
+    try {
+      const offered = listSubagentProfiles(cwd).filter((item) => item.enabled);
+      assert.deepEqual(offered.map((item) => [item.name, item.scope]), [["scout-agent", "package"]]);
+      assert.equal(offered[0].description, "Package scout");
+      assert.equal(offered[0].filePath, join(packageDir, "agents", "scout-agent.md"));
+      assert.equal(resolveSubagentProfile(cwd, "scout-agent").systemPrompt, "Package prompt.");
+      assert.throws(() => saveSubagentProfile(cwd, "package", profile()), /global or project/);
+    } finally {
+      for (const name of ["general-purpose", "explore", "plan"]) writeDisabledBuiltInSubagent(name, false);
+    }
+  });
+});
+
+test("a global profile of the same name wins over a package profile", async () => {
+  await withProfilePackage(async ({ cwd }) => {
+    try {
+      saveSubagentProfile(cwd, "global", profile({ name: "scout-agent", description: "Global scout" }));
+      const sources = listSubagentProfileSources(cwd).filter((item) => item.name === "scout-agent");
+      assert.deepEqual(sources.map((item) => item.scope).sort(), ["global", "package"]);
+      assert.equal(isSubagentProfileOverridden(sources.find((item) => item.scope === "package"), sources), true);
+      assert.equal(resolveSubagentProfile(cwd, "scout-agent").description, "Global scout");
+
+      deleteSubagentProfile(cwd, "global", "scout-agent");
+      assert.equal(resolveSubagentProfile(cwd, "scout-agent").scope, "package");
+    } finally {
+      deleteSubagentProfile(cwd, "global", "scout-agent");
+    }
+  });
 });
 
 test("disabled profiles cannot be resolved for execution", async () => {

@@ -162,6 +162,7 @@ export const enLocale: LocalePlugin = {
     "agents.save": "Save",
     "agents.saving": "Saving...",
     "agents.scope.builtin": "built-in",
+    "agents.scope.package": "package",
     "agents.scope.global": "global",
     "agents.scope.workspace": "workspace",
     "agents.scope.project": "project",
