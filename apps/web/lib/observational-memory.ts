@@ -1,13 +1,16 @@
-import { getPackageDir } from "@earendil-works/pi-coding-agent";
+import { getPackageDir, type EventBus } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { stripAnsi } from "./ansi";
-import type { MemoryRun, MemorySnapshot } from "./memory-panel-types";
+import type { MemoryRun, MemorySnapshot, MemoryStatus } from "./memory-panel-types";
 
-// The memory panel's reading of one session branch (F046 prototype). Counts
-// come from the pi fork's own session ledger, imported from its source rather
-// than copied, so the panel and `/om:status` cannot disagree on what the
-// branch remembers. Node strips the module's types; Turbopack never sees it.
+// The memory panel's reading of one session (F046 prototype). A running
+// session's status, progress and stage errors are what observational memory
+// publishes on its event bus, the same values `/om:status` prints. The counts
+// of a session read from its file, the latest runs and the memory text come
+// from the pi fork's own modules, imported from source rather than copied, so
+// the panel and `/om:status` cannot disagree. Node strips the modules' types;
+// Turbopack never sees them.
 
 interface LedgerEntry {
   type: string;
@@ -21,19 +24,8 @@ interface Projection { observations: Observation[]; reflections: Reflection[] }
 
 /** The part of the fork's `extensions/observational-memory/src/session-ledger/index.ts` the panel reads. */
 interface SessionLedgerModule {
-  foldLedger(entries: LedgerEntry[]): {
-    observations: Observation[];
-    activeObservations: Observation[];
-    droppedObservationIds: Set<string>;
-    reflections: Reflection[];
-  };
   visibleProjection(entries: LedgerEntry[]): Projection;
   fullProjection(entries: LedgerEntry[]): Projection;
-  diffProjection(visible: Projection, full: Projection): {
-    observationsOnlyInFull: Observation[];
-    reflectionsOnlyInFull: Reflection[];
-    droppedOnlyInFull: Observation[];
-  };
   branchLedger(entries: LedgerEntry[]): Array<{
     entry: LedgerEntry & { customType: string; data: { coversUpToId?: string; observations?: unknown[]; reflections?: unknown[]; observationIds?: unknown[] } };
   }>;
@@ -41,36 +33,93 @@ interface SessionLedgerModule {
   reflectionToSummaryLine(reflection: Reflection): string;
 }
 
+/** The part of the fork's `extensions/observational-memory/src/memory-status.ts` the panel reads. */
+interface MemoryStatusModule {
+  memoryCountLines(entries: LedgerEntry[]): string[];
+}
+
 /** The extension's footer status key (`ACTIVATION_STATUS_KEY`). */
 const ACTIVATION_STATUS_KEY = "observational-memory";
-const NOTICE_PREFIX = "Observational memory:";
+
+/** The channel the extension publishes its status on (`MEMORY_STATUS_EVENT`). */
+export const MEMORY_STATUS_EVENT = "observational-memory:status";
+
+function extensionSourceDir(env: NodeJS.ProcessEnv): string {
+  // The fork whose packages/coding-agent pi-web runs, so the modules import that same SDK.
+  const repo = env.PI_MONO_REPO || join(getPackageDir(), "..", "..");
+  return join(repo, "extensions", "observational-memory", "src");
+}
 
 export function sessionLedgerPath(env: NodeJS.ProcessEnv = process.env): string {
-  // The fork whose packages/coding-agent pi-web runs, so the ledger module imports that same SDK.
-  const repo = env.PI_MONO_REPO || join(getPackageDir(), "..", "..");
-  return join(repo, "extensions", "observational-memory", "src", "session-ledger", "index.ts");
+  return join(extensionSourceDir(env), "session-ledger", "index.ts");
 }
 
-let ledgerModule: Promise<SessionLedgerModule> | undefined;
+export function memoryStatusPath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(extensionSourceDir(env), "memory-status.ts");
+}
 
-function loadSessionLedger(): Promise<SessionLedgerModule> {
-  ledgerModule ??= import(/* webpackIgnore: true */ /* turbopackIgnore: true */ pathToFileURL(sessionLedgerPath()).href)
-    .then((loaded: SessionLedgerModule) => {
-      if (typeof loaded.foldLedger !== "function" || typeof loaded.visibleProjection !== "function") {
+interface ForkModules { ledger: SessionLedgerModule; status: MemoryStatusModule }
+
+let forkModules: Promise<ForkModules> | undefined;
+
+function importForkModule<T>(path: string): Promise<T> {
+  return import(/* webpackIgnore: true */ /* turbopackIgnore: true */ pathToFileURL(path).href);
+}
+
+function loadForkModules(): Promise<ForkModules> {
+  forkModules ??= Promise.all([
+    importForkModule<SessionLedgerModule>(sessionLedgerPath()),
+    importForkModule<MemoryStatusModule>(memoryStatusPath()),
+  ])
+    .then(([ledger, status]) => {
+      // The fork's source is outside pi-web's type check: an older checkout lacks these exports.
+      if (typeof ledger.branchLedger !== "function" || typeof ledger.visibleProjection !== "function") {
         throw new Error(`${sessionLedgerPath()} does not export the session ledger`);
       }
-      return loaded;
+      if (typeof status.memoryCountLines !== "function") {
+        throw new Error(`${memoryStatusPath()} does not export memoryCountLines`);
+      }
+      return { ledger, status };
     })
     .catch((error: unknown) => {
-      ledgerModule = undefined;
+      forkModules = undefined;
       throw error;
     });
-  return ledgerModule;
+  return forkModules;
 }
 
-function suffixed(line: string, suffixes: Array<[string, number]>): string {
-  const shown = suffixes.filter(([, count]) => count > 0).map(([sign, count]) => `${sign}${count.toLocaleString()}`);
-  return shown.length > 0 ? `${line} ${shown.join(" ")}` : line;
+/** The latest status a session's observational memory published on `bus`. */
+export interface MemoryStatusWatch {
+  latest(): MemoryStatus | undefined;
+}
+
+/** Keep the latest `MEMORY_STATUS_EVENT` a session's extensions publish; subscribe before they load. */
+export function watchMemoryStatus(bus: EventBus): MemoryStatusWatch {
+  let latest: MemoryStatus | undefined;
+  bus.on(MEMORY_STATUS_EVENT, (data) => {
+    latest = parseMemoryStatus(data) ?? latest;
+  });
+  return { latest: () => latest };
+}
+
+const isStrings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
+const optionalString = (value: unknown): value is string | undefined => value === undefined || typeof value === "string";
+
+/** The event bus carries `unknown`: an extension of another version may publish another shape. */
+function parseMemoryStatus(data: unknown): MemoryStatus | undefined {
+  if (!isRecord(data) || typeof data.passive !== "boolean") return undefined;
+  const { memory, activity, inFlight, errors } = data;
+  if (!isStrings(memory) || !isStrings(activity) || !isStrings(inFlight) || !isRecord(errors)) return undefined;
+  const { observer, reflector } = errors;
+  if (!optionalString(observer) || !optionalString(reflector)) return undefined;
+  return {
+    passive: data.passive,
+    memory,
+    activity,
+    inFlight,
+    errors: { ...(observer ? { observer } : {}), ...(reflector ? { reflector } : {}) },
+  };
 }
 
 function latestRun(
@@ -89,23 +138,22 @@ function latestRun(
 export interface MemorySource {
   sessionId: string;
   entries: LedgerEntry[];
-  /** The running wrapper, when there is one: the status and notices live only there. */
+  /** The running wrapper, when there is one: the status lives only there. */
   live?: {
     getExtensionStatus(key: string): string | undefined;
-    getRecentNotices(): ReadonlyArray<{ at: string; message: string }>;
+    getMemoryStatus(): MemoryStatus | undefined;
   };
 }
 
-/** What `/om:status` and `/om:view` show for this branch, plus the latest stage runs and errors. */
+/** What `/om:status` and `/om:view` show for this branch, plus the latest stage runs. */
 export async function buildMemorySnapshot(source: MemorySource): Promise<MemorySnapshot> {
-  const ledger = await loadSessionLedger();
+  const { ledger, status: statusModule } = await loadForkModules();
   const { entries } = source;
-  const folded = ledger.foldLedger(entries);
   const visible = ledger.visibleProjection(entries);
   const full = ledger.fullProjection(entries);
-  const drift = ledger.diffProjection(visible, full);
   const branch = ledger.branchLedger(entries);
-  const status = source.live?.getExtensionStatus(ACTIVATION_STATUS_KEY);
+  const footer = source.live?.getExtensionStatus(ACTIVATION_STATUS_KEY);
+  const omStatus = source.live?.getMemoryStatus();
   const observer = latestRun(branch, ["om.observations.recorded"]);
   const reflector = latestRun(branch, ["om.reflections.recorded", "om.observations.dropped"]);
   const render = (projection: Projection, scope: string) => [
@@ -118,20 +166,11 @@ export async function buildMemorySnapshot(source: MemorySource): Promise<MemoryS
   return {
     sessionId: source.sessionId,
     live: source.live !== undefined,
-    ...(status ? { status: stripAnsi(status) } : {}),
-    observationLine: suffixed(
-      `Observations: ${folded.observations.length} recorded / ${folded.droppedObservationIds.size} dropped / ${folded.activeObservations.length} active / ${visible.observations.length} visible`,
-      [["+", drift.observationsOnlyInFull.length], ["-", drift.droppedOnlyInFull.length]],
-    ),
-    reflectionLine: suffixed(
-      `Reflections:  ${folded.reflections.length} recorded / ${visible.reflections.length} visible`,
-      [["+", drift.reflectionsOnlyInFull.length]],
-    ),
+    ...(footer ? { status: stripAnsi(footer) } : {}),
+    ...(omStatus ? { omStatus } : {}),
+    memoryLines: omStatus?.memory ?? statusModule.memoryCountLines(entries),
     ...(observer ? { observer } : {}),
     ...(reflector ? { reflector } : {}),
-    errors: (source.live?.getRecentNotices() ?? [])
-      .filter((notice) => notice.message.startsWith(NOTICE_PREFIX))
-      .map(({ at, message }) => ({ at, message: message.slice(NOTICE_PREFIX.length).trim() })),
     memoryText: render(visible, "visible"),
     recordedMemoryText: render(full, "recorded"),
     ledgerModule: sessionLedgerPath(),

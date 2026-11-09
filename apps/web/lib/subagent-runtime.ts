@@ -2,6 +2,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
   createAgentSessionFromServices,
   createAgentSessionServices,
+  createEventBus,
   getAgentDir,
   initTheme,
   SessionManager,
@@ -9,6 +10,7 @@ import {
   type ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike } from "./pi-types";
+import { watchMemoryStatus, type MemoryStatusWatch } from "./observational-memory";
 import {
   subagentNotificationText,
   subagentToolDetails,
@@ -67,7 +69,7 @@ export interface SubagentRuntimeDependencies {
   getSession(sessionId: string): HostSession | undefined;
   registerSession(
     inner: AgentSessionLike,
-    options?: { exactSystemPrompt?: () => string; chatOnly?: boolean; mcpHost?: McpHost },
+    options?: { exactSystemPrompt?: () => string; chatOnly?: boolean; mcpHost?: McpHost; memoryStatus?: MemoryStatusWatch },
   ): HostSession | void;
   reopenSession(sessionId: string, sessionFile: string): Promise<HostSession>;
   resolveSessionPath(sessionId: string): Promise<string | null>;
@@ -527,12 +529,15 @@ export function createSubagentController(
         ...(skillsBinding.loaderOptions.extensionFactories ?? []),
       ];
       if (!chatOnly) initTheme();
+      const eventBus = createEventBus();
+      const memoryStatus = watchMemoryStatus(eventBus);
       const services = await createAgentSessionServices({
         cwd: childCwd,
         agentDir,
         modelRuntime: parentModelRuntime,
         settingsManager,
         resourceLoaderOptions: {
+          eventBus,
           ...subagentExtensionLoaderOptions({ ...profile, mcp: mcpEnabled }),
           ...skillsBinding.loaderOptions,
           ...(extensionFactories.length > 0 ? { extensionFactories } : {}),
@@ -575,6 +580,21 @@ export function createSubagentController(
       mcpScope.tools = activeTools;
       mcpScope.allExtensionTools = allExtensionTools;
 
+      // A `:level` suffix travels with its model. As with pi's `--thinking` over `--model x:level`,
+      // the profile's own `thinking` beats a suffix on the profile's model, while a call naming
+      // a model with a suffix chose both for this run.
+      const callModel = parseSubagentModel(parentModelRuntime, request.model);
+      const profileModel = callModel ? undefined : parseSubagentModel(parentModelRuntime, profile.model);
+      const thinking = callModel?.thinkingLevel
+        ?? profile.thinking
+        ?? profileModel?.thinkingLevel
+        ?? parent.inner.agent.state?.thinkingLevel;
+      if (thinking && !THINKING_LEVELS.has(thinking as ThinkingLevel)) {
+        throw new Error(`Invalid subagent thinking level: ${thinking}`);
+      }
+      const parentModel = parent.inner.model as ReturnType<ModelRuntime["getModel"]>;
+      const childModel = (callModel ?? profileModel)?.model ?? parentModel;
+
       const sessionManager = SessionManager.create(childCwd, undefined, { parentSession: parent.sessionFile });
       const createdAt = new Date().toISOString();
       const metadata: SubagentMetadata = {
@@ -589,6 +609,7 @@ export function createSubagentController(
         createdAt,
         ...(request.ticket ? { ticket: request.ticket } : {}),
         ...(repo ? { repo } : {}),
+        ...(childModel ? { model: `${childModel.provider}/${childModel.id}` } : {}),
         resourceSnapshot: {
           version: 1,
           appendSystemPrompt: [...appendSystemPrompt],
@@ -607,23 +628,10 @@ export function createSubagentController(
       sessionManager.appendCustomEntry(SUBAGENT_META_TYPE, metadata);
       sessionManager.appendSessionInfo(metadata.description);
 
-      // A `:level` suffix travels with its model. As with pi's `--thinking` over `--model x:level`,
-      // the profile's own `thinking` beats a suffix on the profile's model, while a call naming
-      // a model with a suffix chose both for this run.
-      const callModel = parseSubagentModel(parentModelRuntime, request.model);
-      const profileModel = callModel ? undefined : parseSubagentModel(parentModelRuntime, profile.model);
-      const thinking = callModel?.thinkingLevel
-        ?? profile.thinking
-        ?? profileModel?.thinkingLevel
-        ?? parent.inner.agent.state?.thinkingLevel;
-      if (thinking && !THINKING_LEVELS.has(thinking as ThinkingLevel)) {
-        throw new Error(`Invalid subagent thinking level: ${thinking}`);
-      }
-      const parentModel = parent.inner.model as ReturnType<ModelRuntime["getModel"]>;
       const { session: inner } = await createAgentSessionFromServices({
         services,
         sessionManager,
-        model: (callModel ?? profileModel)?.model ?? parentModel,
+        model: childModel,
         ...(thinking ? { thinkingLevel: thinking as ThinkingLevel } : {}),
         ...subagentToolOptions({ tools: activeTools, allExtensionTools, mcp: mcpEnabled }),
       });
@@ -635,6 +643,7 @@ export function createSubagentController(
           : {}),
         chatOnly,
         ...(mcp?.mcpHost ? { mcpHost: mcp.mcpHost } : {}),
+        memoryStatus,
       });
 
       const initialRun: SubagentRunInfo = {

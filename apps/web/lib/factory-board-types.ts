@@ -25,7 +25,7 @@ export interface BoardSubagent {
   status: SubagentSessionStatus;
   profile: string;
   description: string;
-  /** `provider/modelId` the child's branch records. */
+  /** `provider/id` the child started on (its start record, or its branch for an older child). */
   model?: string;
   created: string;
 }

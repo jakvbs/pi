@@ -110,9 +110,9 @@ lib/
   missing-cwd.ts            client-safe `reason: "cwd-missing"` refusal of a folder that no longer exists: error class, body fields, parsing
   debug-types.ts            client-safe shapes of the Debug panel: GET /api/agent/debug and the page's own snapshot
   debug-snapshot.ts         buildDebugSnapshot(): the debug route's synchronous field reads, each source guarded
-  factory-board.ts          the board's spec lanes: active/planned folders, the ten latest done (F046 prototype)
+  factory-board.ts          the board's spec lanes (active/planned folders, the ten latest done) and its subagents with the model from their start record (F046 prototype)
   factory-board-types.ts    client-safe shapes of GET /api/board
-  observational-memory.ts   the memory panel's snapshot: the fork's session-ledger module imported from source, footer status, OM warnings
+  observational-memory.ts   the memory panel's snapshot: the status observational memory publishes on the session's event bus (`/om:status`'s data), the fork's ledger and status modules imported from source for a session read from its file
   memory-panel-types.ts     client-safe shape of GET /api/sessions/[id]/memory
   stream-client.ts          an event stream's reported address and "Chrome · macOS" label, for the Debug panel's connected pages and SSE titles only
   page-stream-registry.ts   open terminal and file-watch streams with their page (`?holder=`) and client, for the Debug panel's connected pages

@@ -260,7 +260,7 @@ function mapScannedSession(
       : catalogFirstMessage(scanned.firstMessage || "(no messages)"),
     parentSessionId: originSessionId,
     ...(subagent
-      ? { relation: { kind: "subagent" as const, parentSessionId: subagent.parentSessionId, profile: subagent.profile, description: subagent.description, status: subagent.status, ...(subagent.ticket ? { ticket: subagent.ticket } : {}), ...(subagent.repo ? { repo: subagent.repo } : {}) } }
+      ? { relation: { kind: "subagent" as const, parentSessionId: subagent.parentSessionId, profile: subagent.profile, description: subagent.description, status: subagent.status, ...(subagent.ticket ? { ticket: subagent.ticket } : {}), ...(subagent.repo ? { repo: subagent.repo } : {}), ...(subagent.model ? { model: subagent.model } : {}) } }
       : side
         ? { relation: { kind: "side" as const, ...side } }
         : scanned.parentSessionPath

@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { BoardLane, BoardTicket } from "./factory-board-types";
+import type { BoardLane, BoardSubagent, BoardTicket } from "./factory-board-types";
+import type { SessionInfo } from "./types";
 
 // The factory board's lanes, read from a spec directory laid out as
 // ~/.repos/legible/spec/README.md says: features/{active,planned}/FNNN-slug/
@@ -59,4 +60,37 @@ export function readBoardLanes(specDir: string): Record<BoardLane, BoardTicket[]
     .sort((left, right) => (right.landed ?? "").localeCompare(left.landed ?? "") || featureNumber(right) - featureNumber(left))
     .slice(0, BOARD_DONE_SHOWN);
   return { active: lane("active"), planned: lane("planned"), done };
+}
+
+/** Subagents without a ticket the board lists, newest first. */
+const UNTICKETED_SHOWN = 20;
+
+/**
+ * The board's subagents: every ticketed child, then the latest unticketed ones.
+ * The model comes from the child's start record; only a child started before
+ * the record named it costs a read of its session (`olderChildModel`).
+ */
+export function boardSubagents(
+  sessions: readonly SessionInfo[],
+  olderChildModel: (session: SessionInfo) => string | undefined,
+): BoardSubagent[] {
+  const children = sessions.flatMap((session) => session.relation?.kind === "subagent" ? [{ session, relation: session.relation }] : []);
+  const ticketed = children.filter(({ relation }) => relation.ticket);
+  const unticketed = children
+    .filter(({ relation }) => !relation.ticket)
+    .sort((left, right) => right.session.created.localeCompare(left.session.created))
+    .slice(0, UNTICKETED_SHOWN);
+  return [...ticketed, ...unticketed].map(({ session, relation }) => {
+    const model = relation.model ?? olderChildModel(session);
+    return {
+      sessionId: session.id,
+      ...(relation.ticket ? { ticket: relation.ticket } : {}),
+      ...(relation.repo ? { repo: relation.repo } : {}),
+      status: relation.status,
+      profile: relation.profile,
+      description: relation.description,
+      ...(model ? { model } : {}),
+      created: session.created,
+    };
+  });
 }

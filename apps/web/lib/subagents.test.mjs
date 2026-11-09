@@ -1007,17 +1007,20 @@ test("persisted runs distinguish interrupted, failed, aborted, and latest result
   assert.equal(readSubagentRun([{ ...meta, data: { version: 2 } }], "child", "/tmp/child.jsonl"), null);
 });
 
-test("a subagent's ticket is read back from its metadata entry", () => {
+test("a subagent's ticket and model are read back from its metadata entry", () => {
   const meta = {
     type: "custom",
     customType: SUBAGENT_META_TYPE,
     id: "meta",
     parentId: null,
     timestamp: "2026-01-01T00:00:00.000Z",
-    data: { version: 1, parentSessionId: "parent", parentSessionPath: "/tmp/parent.jsonl", ticket: "F046" },
+    data: { version: 1, parentSessionId: "parent", parentSessionPath: "/tmp/parent.jsonl", ticket: "F046", model: "faux/faux-model" },
   };
   assert.equal(readSubagentRun([meta], "child", "/tmp/child.jsonl").ticket, "F046");
-  assert.equal("ticket" in readSubagentRun([{ ...meta, data: { ...meta.data, ticket: undefined } }], "child", "/tmp/child.jsonl"), false);
+  assert.equal(readSubagentRun([meta], "child", "/tmp/child.jsonl").model, "faux/faux-model");
+  const older = readSubagentRun([{ ...meta, data: { ...meta.data, ticket: undefined, model: undefined } }], "child", "/tmp/child.jsonl");
+  assert.equal("ticket" in older, false);
+  assert.equal("model" in older, false);
 });
 
 test("project profile directories cannot escape cwd through symbolic links", async (t) => {

@@ -752,6 +752,9 @@ test("a call model added to models.json after the parent started still runs", as
     assert.equal(result.status, "completed");
     assert.equal(result.result, "LATE_MODEL_RESULT");
     assert.equal(sessions.get(result.sessionId).inner.model.id, "late-model");
+    // The start record names the model, so the board reads it without opening the child's session.
+    const child = sessions.get(result.sessionId).inner.sessionManager;
+    assert.equal(readSubagentRun(child.getEntries(), result.sessionId, child.getSessionFile()).model, "faux/late-model");
   }, undefined, { modelsFile: true });
 });
 
@@ -779,8 +782,9 @@ test("a profile model from a provider only the child's extensions register still
       const result = await execution.completion;
       assert.equal(result.status, "completed");
       assert.equal(result.result, "EXTENSION_MODEL_RESULT");
-      const { model } = sessions.get(result.sessionId).inner;
+      const { model, sessionManager } = sessions.get(result.sessionId).inner;
       assert.equal(`${model.provider}/${model.id}`, "late/late-model");
+      assert.equal(readSubagentRun(sessionManager.getEntries(), result.sessionId, sessionManager.getSessionFile()).model, "late/late-model");
     } finally {
       delete globalThis.__subagentFixtureStream;
     }

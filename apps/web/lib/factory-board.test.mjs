@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
 
-const { readBoardLanes, boardSpecDir, BOARD_DONE_SHOWN } = await createJiti(import.meta.url).import("./factory-board.ts");
+const { readBoardLanes, boardSpecDir, boardSubagents, BOARD_DONE_SHOWN } = await createJiti(import.meta.url).import("./factory-board.ts");
 
 function ticket(dir, number, fields) {
   mkdirSync(dir, { recursive: true });
@@ -36,4 +36,31 @@ test("the board lists every active and planned folder and the latest done ones b
 test("PI_WEB_SPEC_DIR names the spec directory", () => {
   assert.equal(boardSpecDir({ PI_WEB_SPEC_DIR: "/tmp/spec" }), "/tmp/spec");
   assert.match(boardSpecDir({}), /\.repos\/legible\/spec$/);
+});
+
+function child(id, created, relation) {
+  return {
+    path: `/sessions/${id}.jsonl`, id, cwd: "/repo", created, modified: created, messageCount: 1, firstMessage: "task",
+    relation: { kind: "subagent", parentSessionId: "parent", profile: "worker", description: id, status: "completed", ...relation },
+  };
+}
+
+test("the board takes a child's model from its start record and reads only an older child's session", () => {
+  const read = [];
+  const subagents = boardSubagents([
+    child("new-ticketed", "2026-11-09T10:00:00.000Z", { ticket: "F054", repo: "/repos/other", model: "faux/faux-model" }),
+    child("new-unticketed", "2026-11-09T11:00:00.000Z", { model: "faux/small" }),
+    child("older", "2026-11-08T10:00:00.000Z", {}),
+    { ...child("not-a-child", "2026-11-09T12:00:00.000Z", {}), relation: { kind: "fork" } },
+  ], (session) => {
+    read.push(session.id);
+    return "faux/from-file";
+  });
+
+  assert.deepEqual(read, ["older"]);
+  assert.deepEqual(subagents.map(({ sessionId, ticket, repo, model }) => ({ sessionId, ticket, repo, model })), [
+    { sessionId: "new-ticketed", ticket: "F054", repo: "/repos/other", model: "faux/faux-model" },
+    { sessionId: "new-unticketed", ticket: undefined, repo: undefined, model: "faux/small" },
+    { sessionId: "older", ticket: undefined, repo: undefined, model: "faux/from-file" },
+  ]);
 });

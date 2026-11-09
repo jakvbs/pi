@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { MemoryRun, MemorySnapshot } from "@/lib/memory-panel-types";
+import type { MemoryRun, MemorySnapshot, MemoryStatus } from "@/lib/memory-panel-types";
 
 // Observational memory in the open session (F046 prototype): a read-only top
-// panel polling GET /api/sessions/[id]/memory while open.
+// panel polling GET /api/sessions/[id]/memory while open. Its rows are the
+// sections `/om:status` prints, as the running extension published them.
 
 const POLL_MS = 3000;
 
@@ -12,6 +13,14 @@ function runText(run: MemoryRun | undefined, noun: string): string {
   if (!run) return "none yet";
   const dropped = run.dropped ? `, ${run.dropped} dropped` : "";
   return `${run.at ? new Date(run.at).toLocaleString() : "unknown time"}: ${run.recorded} ${noun}${dropped}`;
+}
+
+function errorText(errors: MemoryStatus["errors"]): string {
+  const lines = [
+    ...(errors.observer ? [`Observer: ${errors.observer}`] : []),
+    ...(errors.reflector ? [`Reflector: ${errors.reflector}`] : []),
+  ];
+  return lines.join("\n") || "none";
 }
 
 export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
@@ -52,16 +61,19 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
     <div data-memory-panel style={{ background: "var(--bg-panel)", borderBottom: "1px solid var(--border)", boxShadow: "0 10px 28px rgba(0,0,0,0.10)", padding: "12px 16px", fontSize: 12, fontFamily: "var(--font-mono)", lineHeight: 1.5 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "baseline", marginBottom: 8, fontFamily: "inherit" }}>
         <strong>Observational memory</strong>
-        {shown && <span style={{ color: "var(--text-dim)" }}>{shown.live ? "live session" : "from file (no status or errors until it runs)"}</span>}
+        {shown && <span style={{ color: "var(--text-dim)" }}>{!shown.live ? "from file (no progress or errors until it runs)" : shown.omStatus ? "live session, as /om:status" : "live session (memory has published no status yet)"}</span>}
         {error && <span style={{ color: "#f85149" }}>{error}</span>}
       </div>
       {!sessionId ? <div style={{ color: "var(--text-muted)" }}>Open a session.</div> : !shown ? <div style={{ color: "var(--text-muted)" }}>Loading…</div> : (
         <>
           {row("Status", shown.status ?? "not shown", "status")}
-          {row("Memory", `${shown.observationLine}\n${shown.reflectionLine}`, "counts")}
+          {shown.omStatus?.passive && row("Mode", "Passive: automatic memory workers and activation disabled", "mode")}
+          {row("Memory", shown.memoryLines.join("\n"), "counts")}
+          {shown.omStatus && row("Activity", shown.omStatus.activity.join("\n"), "activity")}
+          {shown.omStatus && row("In flight", shown.omStatus.inFlight.join("\n") || "nothing", "in-flight")}
+          {shown.omStatus && row("Last error", errorText(shown.omStatus.errors), "errors")}
           {row("Observer", runText(shown.observer, "observations"), "observer")}
           {row("Reflector", runText(shown.reflector, "reflections"), "reflector")}
-          {row("Errors", shown.errors.length > 0 ? shown.errors.map((item) => `${new Date(item.at).toLocaleTimeString()} ${item.message}`).join("\n") : "none", "errors")}
           {([["visible", "Visible memory (/om:view)", shown.memoryText], ["recorded", "Recorded memory (/om:view full)", shown.recordedMemoryText]] as const).map(([key, label, text]) => (
             <details key={key} style={{ marginTop: 8 }}>
               <summary style={{ cursor: "pointer", color: "var(--text-muted)" }}>{label}</summary>

@@ -380,6 +380,8 @@ export interface SessionInfo {
         ticket?: string;
         /** Repository the run works in when it is not its parent's (`Agent`'s `repo`). */
         repo?: string;
+        /** `provider/id` the child started on, from its start record; absent for older children. */
+        model?: string;
       }
     | { kind: "side"; parentSessionId: string };
   /** Main repo root shared by all worktrees of this cwd (cwd itself for non-git dirs).

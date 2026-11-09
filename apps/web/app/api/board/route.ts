@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { boardSpecDir, readBoardLanes } from "@/lib/factory-board";
-import type { BoardSubagent, FactoryBoard } from "@/lib/factory-board-types";
+import { boardSpecDir, boardSubagents, readBoardLanes } from "@/lib/factory-board";
+import type { FactoryBoard } from "@/lib/factory-board-types";
 import { getRpcSession, getRpcSessionInfos, withSubagentDisplayStatus } from "@/lib/rpc-manager";
 import {
   attachSessionProjectInfo,
@@ -14,10 +14,8 @@ import type { SessionEntry, SessionInfo } from "@/lib/types";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/** Subagents without a ticket the board lists, newest first. */
-const UNTICKETED_SHOWN = 20;
-
-function childModel(session: SessionInfo): string | undefined {
+/** A child started before its start record named its model: read the model from its session. */
+function olderChildModel(session: SessionInfo): string | undefined {
   try {
     const live = getRpcSession(session.id);
     const manager = live?.isAlive() ? live.inner.sessionManager : session.path ? openSessionManager(session.path) : undefined;
@@ -43,28 +41,7 @@ export async function GET() {
   }
 
   const [persisted, live] = await Promise.all([listAllSessions(), attachSessionProjectInfo(getRpcSessionInfos())]);
-  const children = withSubagentDisplayStatus(mergeSessionLists(persisted, live))
-    .filter((session) => session.relation?.kind === "subagent");
-  const ticketed = children.filter((session) => session.relation?.kind === "subagent" && session.relation.ticket);
-  const unticketed = children
-    .filter((session) => session.relation?.kind === "subagent" && !session.relation.ticket)
-    .sort((left, right) => right.created.localeCompare(left.created))
-    .slice(0, UNTICKETED_SHOWN);
-  const subagents: BoardSubagent[] = [...ticketed, ...unticketed].flatMap((session) => {
-    const relation = session.relation;
-    if (relation?.kind !== "subagent") return [];
-    const model = childModel(session);
-    return [{
-      sessionId: session.id,
-      ...(relation.ticket ? { ticket: relation.ticket } : {}),
-      ...(relation.repo ? { repo: relation.repo } : {}),
-      status: relation.status,
-      profile: relation.profile,
-      description: relation.description,
-      ...(model ? { model } : {}),
-      created: session.created,
-    }];
-  });
+  const subagents = boardSubagents(withSubagentDisplayStatus(mergeSessionLists(persisted, live)), olderChildModel);
 
   const board: FactoryBoard = { specDir, lanes, subagents, ...(error ? { error } : {}) };
   return NextResponse.json(board, { headers: { "Cache-Control": "no-store" } });

@@ -1,5 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, initTheme, SessionManager, SettingsManager, Theme, type ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { createAgentSessionFromServices, createAgentSessionServices, createEventBus, getAgentDir, initTheme, SessionManager, SettingsManager, Theme, type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
 import { existsSync, realpathSync, writeFileSync } from "fs";
@@ -63,6 +63,8 @@ import { CHAT_ONLY_RESOURCE_LOADER_OPTIONS, contextFilesSystemPrompt } from "./c
 import { createExactSystemPromptExtension } from "./exact-system-prompt";
 import { createPiWebBuiltinExtensions, createSubagentCodemodeExtension, createSubagentMcpExtensions } from "./builtin-extensions";
 import type { McpHost } from "./mcp-host";
+import type { MemoryStatus } from "./memory-panel-types";
+import { watchMemoryStatus, type MemoryStatusWatch } from "./observational-memory";
 import type { DebugMcpHost, DebugSessionLifecycle, DebugWrapperSnapshot } from "./debug-types";
 import { mcpPromptPreparation, type McpCommandCandidate } from "./mcp-command";
 import { createReadOnlyMcpPolicyExtension, createSubagentMcpPolicyExtension } from "./mcp-read-only-policy";
@@ -179,6 +181,8 @@ type AgentSessionWrapperOptions = {
   /** Chat only: the extension-provided model the session wanted, named when a prompt finds no model. */
   chatOnlyExtensionModel?: { provider: string; id: string };
   sideChat?: boolean;
+  /** The latest status observational memory published on the session's event bus (lib/observational-memory.ts). */
+  memoryStatus?: MemoryStatusWatch;
   /**
    * The notices of what went wrong as the session started (lib/startup-issues.ts), told to every
    * stream it opens. Left out (a subagent, a side chat), the wrapper keeps none: its parent's page said them.
@@ -188,7 +192,6 @@ type AgentSessionWrapperOptions = {
 
 /** Startup notices kept for later streams: the loader's (capped), the model, then session_start errors. */
 const STARTUP_NOTICE_LIMIT = 20;
-const RECENT_NOTICE_LIMIT = 20;
 
 /**
  * Chat only loads no extensions, so a provider one registers is missing from its runtime (#804).
@@ -349,8 +352,6 @@ export class AgentSessionWrapper {
   private activeCustomUis = new Map<string, ActiveCustomUi>();
   private extensionUiAbortController = new AbortController();
   private extensionStatuses = new Map<string, string>();
-  /** The latest extension notifications, for the memory panel's stage errors (F046 prototype). */
-  private recentNotices: Array<{ at: string; type?: string; message: string }> = [];
   private extensionWidgets = new Map<string, ExtensionWidgetItem>();
   private activeExtensionWidgets = new Map<string, ActiveExtensionWidget>();
   private extensionWidgetGenerations = new Map<string, number>();
@@ -375,6 +376,7 @@ export class AgentSessionWrapper {
   private readonly mcpHost?: WrapperMcpHost;
   private readonly chatOnlyExtensionModel?: { provider: string; id: string };
   private readonly sideChat: boolean;
+  private readonly memoryStatus?: MemoryStatusWatch;
   private mcpHostDisposed = false;
   // The MCP wait of the prompt being admitted; Stop ends it.
   private mcpPromptWait: { controller: AbortController; done: Promise<void> } | null = null;
@@ -422,6 +424,7 @@ export class AgentSessionWrapper {
     this.mcpHost = options.mcpHost;
     this.chatOnlyExtensionModel = options.chatOnlyExtensionModel;
     this.sideChat = options.sideChat === true;
+    this.memoryStatus = options.memoryStatus;
     this.startupNotices = options.startupIssues ? [] : null;
     for (const issue of options.startupIssues ?? []) this.notifyIssue(issue);
   }
@@ -1917,8 +1920,9 @@ export class AgentSessionWrapper {
     return this.extensionStatuses.get(key);
   }
 
-  getRecentNotices(): ReadonlyArray<{ at: string; type?: string; message: string }> {
-    return this.recentNotices;
+  /** The memory panel's status: what `/om:status` would print now, as observational memory last published it. */
+  getMemoryStatus(): MemoryStatus | undefined {
+    return this.memoryStatus?.latest();
   }
 
   private getExtensionStatuses(): Array<{ key: string; text: string }> {
@@ -2347,7 +2351,6 @@ export class AgentSessionWrapper {
         opts?.signal,
       ),
       notify: (message, type) => {
-        this.recentNotices = [...this.recentNotices, { at: new Date().toISOString(), ...(type ? { type } : {}), message }].slice(-RECENT_NOTICE_LIMIT);
         this.emit({
           type: "extension_ui_request",
           id: randomUUID(),
@@ -2640,6 +2643,7 @@ const SUBAGENT_CONTROLLER = createSubagentController({
       suppressCompletionNotifications: true,
       onDirectTurnSettled: (aborted) => SUBAGENT_CONTROLLER.settleDirectTurn(inner.sessionId, aborted),
       ...(options?.mcpHost ? { mcpHost: options.mcpHost } : {}),
+      ...(options?.memoryStatus ? { memoryStatus: options.memoryStatus } : {}),
     });
     registerRpcWrapper(wrapper);
     return wrapper;
@@ -2958,6 +2962,7 @@ export function getRpcSessionInfos(options: { includeTransient?: boolean } = {})
           status: session.isRunning() ? "running" as const : subagent.status,
           ...(subagent.ticket ? { ticket: subagent.ticket } : {}),
           ...(subagent.repo ? { repo: subagent.repo } : {}),
+          ...(subagent.model ? { model: subagent.model } : {}),
         },
       } : side ? {
         parentSessionId: side.parentSessionId,
@@ -3284,11 +3289,14 @@ export async function startRpcSession(
         : []),
       ...(skillsBinding?.loaderOptions.extensionFactories ?? []),
     ];
+    // The memory panel subscribes before the extensions load: they publish from session_start on.
+    const eventBus = createEventBus();
+    const memoryStatus = watchMemoryStatus(eventBus);
     const services = await createAgentSessionServices({
       cwd: sessionCwd,
       agentDir,
       settingsManager,
-      resourceLoaderOptions: subagentResources
+      resourceLoaderOptions: { eventBus, ...(subagentResources
         ? {
             ...subagentExtensionLoaderOptions(subagentResources),
             ...skillsBinding!.loaderOptions,
@@ -3321,7 +3329,7 @@ export async function startRpcSession(
               ),
             ],
             extensionsOverride: (base) => preferUserBashExtension(preferPiWebSubagentExtension(base)),
-          },
+          }) },
       ...(trustReloadOptions ? { resourceLoaderReloadOptions: trustReloadOptions } : {}),
     });
     if (subagentResources?.codemode
@@ -3467,6 +3475,7 @@ export async function startRpcSession(
       ...(mcpHost ? { mcpHost } : {}),
       ...(chatOnlyExtensionModel ? { chatOnlyExtensionModel } : {}),
       sideChat: isSideChat,
+      memoryStatus,
       // A subagent's or side chat's tab would say again what its parent's page said.
       ...(subagentResources || isSideChat ? {} : { startupIssues: limitStartupNotices(startupIssues) }),
     });

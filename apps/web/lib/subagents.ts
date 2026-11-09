@@ -69,6 +69,8 @@ export interface SubagentMetadata {
   ticket?: string;
   /** Checkout root the child works in, or cuts its worktree from (`Agent`'s `repo`); absent means the parent's cwd. */
   repo?: string;
+  /** `provider/id` of the model the child started on, so the board needs no read of its session. */
+  model?: string;
   resourceSnapshot: SubagentResourceSnapshot;
   worktreePath?: string;
   worktreeBranch?: string;
@@ -132,6 +134,8 @@ export interface SubagentRunInfo {
   ticket?: string;
   /** As `SubagentMetadata.repo`. */
   repo?: string;
+  /** `SubagentMetadata.model`; absent for a child started before it was recorded. */
+  model?: string;
   completedAt?: string;
   result?: string;
   error?: string;
@@ -1008,6 +1012,7 @@ export function readSubagentRun(entries: readonly SessionEntry[], sessionId: str
     createdAt: typeof data.createdAt === "string" ? data.createdAt : "",
     ...(typeof data.ticket === "string" ? { ticket: data.ticket } : {}),
     ...(typeof data.repo === "string" ? { repo: data.repo } : {}),
+    ...(typeof data.model === "string" ? { model: data.model } : {}),
     ...(result && typeof result.completedAt === "string" ? { completedAt: result.completedAt } : {}),
     ...(result && typeof result.result === "string" ? { result: result.result } : {}),
     ...(result && typeof result.error === "string" ? { error: result.error } : {}),
