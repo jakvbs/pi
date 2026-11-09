@@ -6,6 +6,10 @@
 
 - `streamProxy` carries `errorCode` from the proxy `error` event to the assistant message
 
+### Fixed
+
+- Fixed the agent loop running a shell and a file-writing tool from one assistant message in parallel, so one tool's write could replace the other's. `AgentTool` takes a new `fileWrites` field (`ToolFileWrites`): `"argument"` for a tool that writes only files named in its arguments, `"any"` for a shell. A batch that holds both kinds runs sequentially in the model's order; other batches keep their execution mode
+
 ## [1.5.0] - 2026-11-02
 
 ### Breaking Changes

@@ -2313,6 +2313,8 @@ async execute(toolCallId, params) {
 
 **Execution mode:** Tool calls from one assistant message run in parallel by default. Set `executionMode: "sequential"` when a tool must not run concurrently with other calls, for example because it shares mutable in-memory state.
 
+**File writes:** Set `fileWrites` when a tool writes files, so pi can order a batch that could touch the same file. Use `"argument"` for a tool that writes only files named in its arguments, like `edit` and `write`, and `"any"` for a tool that can write any file, like `bash`. A batch that holds both kinds runs sequentially in the model's order; other batches stay parallel.
+
 **Other definition fields:**
 
 | Field | Purpose |

@@ -62,4 +62,13 @@ describe("edit and write replace files atomically", () => {
 		expect((await stat(file)).mode & 0o777).toBe(0o755);
 		expect(await readFile(link, "utf-8")).toBe("via link");
 	});
+
+	// A rename over the target ignores the target's own mode, so the write must check write access itself.
+	it("write: refuses a read-only file and keeps its content", async () => {
+		await chmod(file, 0o444);
+		await expect(createWriteTool(dir).execute("write", { path: "file.txt", content: "new" })).rejects.toThrow(
+			/EACCES/,
+		);
+		expect(await readFile(file, "utf-8")).toBe(original);
+	});
 });
