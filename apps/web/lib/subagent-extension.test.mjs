@@ -695,3 +695,32 @@ test("a foreground result is marked consumed in case its Agent wait expired", as
   assert.equal(result.isError, true);
   assert.deepEqual(consumed, [finished]);
 });
+
+test("Agent passes a ticket to a new run and refuses one that is no feature id or comes with resume", async () => {
+  const requests = [];
+  const { tools } = await loadTools({
+    async start(request) {
+      requests.push(request);
+      return { run: run({ runInBackground: true, ticket: request.ticket }), completion: new Promise(() => {}) };
+    },
+    async resume() { throw new Error("resume must not be reached"); },
+    async notifyParent() {},
+  });
+  const agent = tools.get("Agent");
+
+  const started = await agent.execute("call-1", { prompt: "Do it", description: "Work", run_in_background: true, ticket: " F046 " });
+  assert.equal(requests[0].ticket, "F046");
+  assert.equal(started.details.ticket, "F046");
+
+  await agent.execute("call-2", { prompt: "Do it", description: "Work", run_in_background: true, ticket: "" });
+  assert.equal("ticket" in requests[1], false);
+
+  const malformed = await agent.execute("call-3", { prompt: "Do it", description: "Work", ticket: "feature 46" });
+  assert.equal(malformed.isError, true);
+  assert.match(malformed.content[0].text, /feature id such as F046/);
+
+  const resumed = await agent.execute("call-4", { prompt: "Again", description: "Work", resume: "child-session", ticket: "F046" });
+  assert.equal(resumed.isError, true);
+  assert.match(resumed.content[0].text, /^ticket only apply to new subagents/);
+  assert.equal(requests.length, 2);
+});

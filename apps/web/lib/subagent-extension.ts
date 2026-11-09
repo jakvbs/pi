@@ -80,6 +80,16 @@ async function waitForSubagent<T>(
   }
 }
 
+const SUBAGENT_TICKET_PATTERN = /^F\d{3,}$/;
+
+/** A factory feature id (`F046`); an empty value, as models send for optional fields, means none. */
+function subagentTicket(value: string | undefined): string | undefined {
+  const ticket = value?.trim();
+  if (!ticket) return undefined;
+  if (!SUBAGENT_TICKET_PATTERN.test(ticket)) throw new Error(`ticket must be a feature id such as F046, not ${JSON.stringify(ticket)}`);
+  return ticket;
+}
+
 const SUBAGENT_CANDIDATE_LIMIT = 10;
 
 /**
@@ -124,6 +134,7 @@ export interface SubagentToolDetails {
   status: SubagentRunInfo["status"];
   runInBackground: boolean;
   createdAt: string;
+  ticket?: string;
   completedAt?: string;
   error?: string;
   worktreePath?: string;
@@ -141,6 +152,7 @@ export interface StartSubagentRequest {
   runInBackground?: boolean;
   model?: string;
   isolation?: "worktree";
+  ticket?: string;
   signal?: AbortSignal;
   onUpdate?: (run: SubagentRunInfo) => void;
 }
@@ -193,6 +205,7 @@ export function subagentToolDetails(run: SubagentRunInfo): SubagentToolDetails {
     status: run.status,
     runInBackground: run.runInBackground,
     createdAt: run.createdAt,
+    ...(run.ticket ? { ticket: run.ticket } : {}),
     ...(run.completedAt ? { completedAt: run.completedAt } : {}),
     ...(run.error ? { error: run.error } : {}),
     ...(run.worktreePath ? { worktreePath: run.worktreePath } : {}),
@@ -293,6 +306,7 @@ export function createSubagentExtension(
           wait_timeout: waitTimeoutParameter(),
           model: Type.Optional(Type.String({ description: 'Optional provider/modelId override. Append ":<level>" (off, minimal, low, medium, high, xhigh, max) to also set the thinking level for this run, e.g. "provider/model:high".' })),
           isolation: Type.Optional(Type.String({ description: 'Set to "worktree" to run the subagent in an isolated git worktree.' })),
+          ticket: Type.Optional(Type.String({ description: "Factory ticket this work belongs to, as its feature id (e.g. F046). Kept with the subagent session and shown on the board." })),
         }),
         async execute(toolCallId, params, signal, onUpdate, ctx) {
           // Runtime cancellation follows this signal only while the Agent call is attached.
@@ -322,12 +336,14 @@ export function createSubagentExtension(
           };
           try {
             const timeoutMs = waitTimeoutMs(params.wait_timeout);
+            const ticket = subagentTicket(params.ticket);
             const resume = params.resume?.trim();
             if (resume) {
               const creationOptions = [
                 params.model?.trim() && "model",
                 params.input_files?.length && "input_files",
                 params.isolation?.trim() && "isolation",
+                params.ticket?.trim() && "ticket",
               ].filter(Boolean);
               if (creationOptions.length > 0) {
                 throw new Error(`${creationOptions.join(", ")} only apply to new subagents. Omit them to resume the existing session, or start a new subagent.`);
@@ -354,6 +370,7 @@ export function createSubagentExtension(
               ...(params.run_in_background !== undefined ? { runInBackground: params.run_in_background } : {}),
               ...(params.model ? { model: params.model } : {}),
               ...(params.isolation === "worktree" ? { isolation: "worktree" as const } : {}),
+              ...(ticket ? { ticket } : {}),
               signal: childAbort.signal,
               onUpdate: update,
                 });

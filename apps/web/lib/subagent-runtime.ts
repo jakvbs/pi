@@ -572,6 +572,7 @@ export function createSubagentController(
         task: request.task,
         runInBackground,
         createdAt,
+        ...(request.ticket ? { ticket: request.ticket } : {}),
         resourceSnapshot: {
           version: 1,
           appendSystemPrompt: [...appendSystemPrompt],
@@ -631,6 +632,7 @@ export function createSubagentController(
         runInBackground,
         status: "queued",
         createdAt,
+        ...(request.ticket ? { ticket: request.ticket } : {}),
         ...(isolatedWorktree ? { worktreePath: isolatedWorktree.path, worktreeBranch: isolatedWorktree.branch } : {}),
       };
 

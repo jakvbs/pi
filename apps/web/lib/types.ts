@@ -376,6 +376,8 @@ export interface SessionInfo {
         profile: string;
         description: string;
         status: SubagentSessionStatus;
+        /** Factory ticket the run works on (`Agent`'s `ticket`, e.g. F046). */
+        ticket?: string;
       }
     | { kind: "side"; parentSessionId: string };
   /** Main repo root shared by all worktrees of this cwd (cwd itself for non-git dirs).

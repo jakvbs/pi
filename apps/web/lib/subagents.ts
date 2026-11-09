@@ -65,6 +65,8 @@ export interface SubagentMetadata {
   task: string;
   runInBackground: boolean;
   createdAt: string;
+  /** Factory ticket the run works on (`Agent`'s `ticket`, e.g. F046). */
+  ticket?: string;
   resourceSnapshot: SubagentResourceSnapshot;
   worktreePath?: string;
   worktreeBranch?: string;
@@ -125,6 +127,7 @@ export interface SubagentRunInfo {
   runInBackground: boolean;
   status: SubagentStatus;
   createdAt: string;
+  ticket?: string;
   completedAt?: string;
   result?: string;
   error?: string;
@@ -999,6 +1002,7 @@ export function readSubagentRun(entries: readonly SessionEntry[], sessionId: str
     runInBackground: data.runInBackground === true,
     status: persistedStatus,
     createdAt: typeof data.createdAt === "string" ? data.createdAt : "",
+    ...(typeof data.ticket === "string" ? { ticket: data.ticket } : {}),
     ...(result && typeof result.completedAt === "string" ? { completedAt: result.completedAt } : {}),
     ...(result && typeof result.result === "string" ? { result: result.result } : {}),
     ...(result && typeof result.error === "string" ? { error: result.error } : {}),
