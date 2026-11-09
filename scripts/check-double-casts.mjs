@@ -12,6 +12,8 @@ const doubleCast = /\bas\s+(?:unknown|any)\s+as\b/;
 // An exception approved by a person: `// double-cast-ok(2026-12-31, kuba): why TypeScript cannot express this`.
 const exception = /double-cast-ok\((\d{4}-\d{2}-\d{2}), [^)]+\): \S/;
 const typeScript = /\.(?:ts|tsx|mts|cts)$/;
+// pi-web is imported from agegr/pi-web with its own TypeScript and ESLint config, outside the root tsc and Biome.
+const ownLint = /^apps\/web\//;
 const today = new Date().toISOString().slice(0, 10);
 
 const failures = expiredExceptions();
@@ -63,7 +65,7 @@ function baseCommit() {
 function changedFiles(commit) {
 	const changed = git(["diff", "--name-only", "-z", commit]).split("\0");
 	const untracked = git(["ls-files", "--others", "--exclude-standard", "-z"]).split("\0");
-	return [...new Set([...changed, ...untracked])].filter((file) => typeScript.test(file));
+	return [...new Set([...changed, ...untracked])].filter((file) => typeScript.test(file) && !ownLint.test(file));
 }
 
 /** The lines holding a double cast without an exception that is still valid. */
