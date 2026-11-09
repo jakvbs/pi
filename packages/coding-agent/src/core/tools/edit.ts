@@ -1,8 +1,9 @@
 import { constants } from "fs";
-import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
+import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
 import { type Static, Type } from "typebox";
 import { splitBom } from "../../utils/text.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { writeFileAtomic } from "./atomic-write.ts";
 import {
 	applyEditsToNormalizedContent,
 	applyReplacementsToOriginal,
@@ -86,7 +87,7 @@ export interface EditOperations {
 
 const defaultEditOperations: EditOperations = {
 	readFile: (path) => fsReadFile(path),
-	writeFile: (path, content) => fsWriteFile(path, content, "utf-8"),
+	writeFile: writeFileAtomic,
 	access: (path) => fsAccess(path, constants.R_OK | constants.W_OK),
 };
 
