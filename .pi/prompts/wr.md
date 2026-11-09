@@ -23,9 +23,9 @@ Unless I explicitly override something in this request, do the following in orde
    ```
 3. Commit only files you changed in this session.
 4. If this task is tied to exactly one GitHub issue, include `closes #<issue>` in the commit message. If it is tied to multiple issues, stop and ask which one to use. If it is not tied to any issue, do not include `closes #` or `fixes #` in the commit message.
-5. Check the current git branch. If it is not `main`, stop and ask what to do. Do not land from another branch unless I explicitly say so.
-6. Land the commit on `main` through the lever (section Delivery of `AGENTS.md`): `cd ~/.repos/legible && bun run land ~/.repos/pi main HEAD`, then `git merge --ff-only origin/main` in `~/.repos/pi`. The ruleset refuses a direct push to `main`.
-7. If this task is tied to exactly one GitHub issue, explicitly close that issue with reason `completed` after the landing so the issue-close workflows in `.github/` run. This applies to issues only, not PRs.
+5. Check the current git branch. Land from `main` in `~/.repos/pi` or from a `run/...` branch in its worktree. On any other branch, stop and ask what to do.
+6. Land `HEAD` on `main` through the lever (section Delivery of `AGENTS.md`): `cd ~/.repos/legible && bun run land <checkout-or-worktree> main HEAD`, then `git -C ~/.repos/pi merge --ff-only origin/main`. The ruleset refuses a direct push to `main`. On `NotFastForward`, rebase onto `origin/main` and land again. On any other lever error, stop, report it, and skip step 7.
+7. If this task is tied to exactly one GitHub issue, explicitly close that issue with reason `completed` after a successful landing so the issue-close workflows in `.github/` run. This applies to issues only, not PRs.
    - Inspect `gh issue view <issue> --json state,stateReason,labels`.
    - If the issue is open, run `gh issue close <issue> --reason completed`.
    - If the issue is already closed with any reason other than `COMPLETED`, reopen it first, then close it with `gh issue close <issue> --reason completed` so GitHub emits a fresh close event.
