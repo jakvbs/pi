@@ -2892,3 +2892,76 @@ describe("openai-codex streaming", () => {
 		expect(codexRequests).toBe(4);
 	});
 });
+
+// F037: a Codex error code reaches the message in errorCode; errorMessage keeps main's text.
+describe("openai-codex error codes", () => {
+	const model: Model<"openai-codex-responses"> = {
+		id: "gpt-5.1-codex",
+		name: "GPT-5.1 Codex",
+		api: "openai-codex-responses",
+		provider: "openai-codex",
+		baseUrl: "https://chatgpt.com/backend-api",
+		reasoning: true,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 400000,
+		maxTokens: 128000,
+	};
+	const context = normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] });
+	// Message text recorded from session 01a1bece-587b-7333-85da-489ec175f00e.
+	const message =
+		"This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request.";
+
+	function codexErrorEvent(eventType: "error" | "response.failed", code: unknown) {
+		return eventType === "error"
+			? { type: "error", error: { code, message } }
+			: { type: "response.failed", response: { error: { code, message } } };
+	}
+
+	async function streamCodexEvent(transport: "sse" | "websocket", event: object) {
+		class OneEventWebSocket extends EventTarget {
+			constructor() {
+				super();
+				queueMicrotask(() => this.dispatchEvent(new Event("open")));
+			}
+			send() {
+				queueMicrotask(() => this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(event) })));
+			}
+			close() {}
+		}
+		vi.stubGlobal("WebSocket", OneEventWebSocket);
+		return streamOpenAICodexResponses(model, context, {
+			apiKey: mockToken(),
+			transport,
+			fetch: async () =>
+				new Response(`data: ${JSON.stringify(event)}\n\n`, {
+					status: 200,
+					headers: { "content-type": "text/event-stream" },
+				}),
+		}).result();
+	}
+
+	// The text main produces for each event; the code never enters it.
+	const mainErrorMessage = { error: `Codex error: ${message}`, "response.failed": message };
+
+	for (const transport of ["sse", "websocket"] as const) {
+		for (const eventType of ["error", "response.failed"] as const) {
+			it(`${transport} ${eventType} keeps the code in errorCode and main's text in errorMessage`, async () => {
+				const result = await streamCodexEvent(transport, codexErrorEvent(eventType, "cyber_policy"));
+
+				expect(result.stopReason).toBe("error");
+				expect(result.errorCode).toBe("cyber_policy");
+				expect(result.errorMessage).toBe(mainErrorMessage[eventType]);
+			});
+
+			it(`${transport} ${eventType} ignores a code that is not a string`, async () => {
+				for (const code of [500, { x: 1 }]) {
+					const result = await streamCodexEvent(transport, codexErrorEvent(eventType, code));
+
+					expect(result.errorCode).toBeUndefined();
+					expect(result.errorMessage).toBe(mainErrorMessage[eventType]);
+				}
+			});
+		}
+	}
+});

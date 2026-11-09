@@ -40,6 +40,7 @@ export type ProxyAssistantMessageEvent =
 			type: "error";
 			reason: Extract<StopReason, "aborted" | "error">;
 			errorMessage?: string;
+			errorCode?: string;
 			usage: AssistantMessage["usage"];
 			providerThinkingLevel?: string;
 	  };
@@ -382,6 +383,7 @@ function processProxyEvent(
 		case "error":
 			partial.stopReason = proxyEvent.reason;
 			partial.errorMessage = proxyEvent.errorMessage;
+			if (proxyEvent.errorCode !== undefined) partial.errorCode = proxyEvent.errorCode;
 			partial.usage = proxyEvent.usage;
 			if (proxyEvent.providerThinkingLevel !== undefined) {
 				partial.providerThinkingLevel = proxyEvent.providerThinkingLevel;

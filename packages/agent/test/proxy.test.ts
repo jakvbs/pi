@@ -116,6 +116,28 @@ describe("streamProxy", () => {
 		expect(result.errorMessage).toContain("Connection closed by proxy server");
 	});
 
+	// F037
+	it("carries the provider error code from the error event to the message", async () => {
+		const proxyEvents: ProxyAssistantMessageEvent[] = [
+			{ type: "start" },
+			{ type: "error", reason: "error", errorMessage: "Codex error: flagged", errorCode: "cyber_policy", usage },
+		];
+		const body = proxyEvents.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(body, { status: 200 })),
+		);
+
+		const result = await streamProxy(model, normalizeContext({ systemPrompt: "", messages: [] }), {
+			authToken: "test-token",
+			proxyUrl: "https://proxy.example.com",
+		}).result();
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toBe("Codex error: flagged");
+		expect(result.errorCode).toBe("cyber_policy");
+	});
+
 	// #9265
 	it("shows growing partial arguments without keeping the raw text on the block, in linear time", async () => {
 		const content = 'line "quoted" \\ end\n'.repeat(20_000);

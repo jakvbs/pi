@@ -607,6 +607,8 @@ export interface AssistantMessage {
 	stopReason: StopReason;
 	deferred?: DeferredHandle;
 	errorMessage?: string;
+	/** Provider error code of a failed request, such as Codex's `cyber_policy`. Never part of `errorMessage`. */
+	errorCode?: string;
 	rawStopReason?: string;
 	/**
 	 * Provider indication of whether the model explicitly ended its turn.

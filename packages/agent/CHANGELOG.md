@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `streamProxy` carries `errorCode` from the proxy `error` event to the assistant message
+
 ## [1.5.0] - 2026-11-02
 
 ### Breaking Changes

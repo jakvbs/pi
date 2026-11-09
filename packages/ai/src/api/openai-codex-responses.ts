@@ -503,6 +503,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 		} catch (error) {
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			if (error instanceof CodexApiError && error.code !== undefined) output.errorCode = error.code;
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -786,8 +787,8 @@ async function* mapCodexEvents(
 		}
 
 		if (type === "response.failed") {
-			const response = (event as { response?: { error?: { code?: string; message?: string } } }).response;
-			const code = response?.error?.code;
+			const response = (event as { response?: { error?: { code?: unknown; message?: string } } }).response;
+			const code = typeof response?.error?.code === "string" ? response.error.code : undefined;
 			const message = response?.error?.message;
 			throw new CodexApiError(message || "Codex response failed", { code, payload: event });
 		}

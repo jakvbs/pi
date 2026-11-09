@@ -244,6 +244,7 @@ describe("pi-messages", () => {
 					reason: "error",
 					usage,
 					errorMessage: "Upstream failed",
+					errorCode: "cyber_policy",
 					responseModel: "claude-opus-5-5",
 				},
 			],
@@ -254,6 +255,7 @@ describe("pi-messages", () => {
 
 		expect(message.stopReason).toBe("error");
 		expect(message.errorMessage).toBe("Upstream failed");
+		expect(message.errorCode).toBe("cyber_policy");
 		expect(message.usage).toEqual(usage);
 		expect(message.responseModel).toBe("claude-opus-5-5");
 	});

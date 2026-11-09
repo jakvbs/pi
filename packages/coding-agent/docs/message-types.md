@@ -134,13 +134,14 @@ interface AssistantMessage {
   stopReason: "pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred";
   deferred?: DeferredHandle;
   errorMessage?: string;
+  errorCode?: string;
   rawStopReason?: string;
   endTurn?: boolean;
   timestamp: number;
 }
 ```
 
-`responseModel` records the concrete model reported by the provider, when the provider reports one. It may equal the requested model. `responseId`, `providerThinkingLevel`, `thinkingLevel`, `diagnostics`, and `rawStopReason` preserve provider or runtime details.
+`responseModel` records the concrete model reported by the provider, when the provider reports one. It may equal the requested model. `responseId`, `providerThinkingLevel`, `thinkingLevel`, `diagnostics`, and `rawStopReason` preserve provider or runtime details. `errorCode` is the provider's error code for a failed request, such as Codex's `cyber_policy`; it is never part of `errorMessage`.
 
 `"pending"` is used for a partial assistant message while it streams. The completed message in `message_end` has a terminal stop reason, and Pi does not persist `"pending"` assistant messages in session JSONL.
 

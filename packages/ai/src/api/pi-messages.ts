@@ -84,6 +84,7 @@ export type PiMessagesEvent =
 			reason: Extract<PiMessagesStopReason, "aborted" | "error">;
 			usage: PiMessagesUsage;
 			errorMessage?: string;
+			errorCode?: string;
 			responseId?: string;
 			responseModel?: string;
 			providerThinkingLevel?: string;
@@ -226,6 +227,9 @@ function createEventConverter(model: Model<"pi-messages">) {
 					errorMessage: event.errorMessage,
 					responseId: event.responseId,
 				});
+				if (event.errorCode !== undefined) {
+					partial.errorCode = event.errorCode;
+				}
 				if (event.responseModel !== undefined) {
 					partial.responseModel = event.responseModel;
 				}
