@@ -74,6 +74,7 @@
 	},
 	"version": "0.0.3",
 	"overrides": {
-		"protobufjs": "7.6.6"
+		"protobufjs": "7.6.6",
+		"mdast-util-gfm-autolink-literal": "2.0.1"
 	}
 }

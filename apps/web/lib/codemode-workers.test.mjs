@@ -29,7 +29,7 @@ test("the SDK still reads PI_CODEMODE_MAX_WORKERS on every script", async () => 
   // Fails when pi renames the variable or stops reading it per call, which
   // would leave pi-web's default without effect.
   const source = await readFile(
-    new URL("../node_modules/@earendil-works/pi-coding-agent/dist/extensions/codemode/execute.js", import.meta.url),
+    new URL("extensions/codemode/execute.js", import.meta.resolve("@earendil-works/pi-coding-agent")),
     "utf8",
   );
   assert.match(source, /function maxCodemodeWorkers\(\) \{\s*const value = Number\(process\.env\.PI_CODEMODE_MAX_WORKERS\);/);

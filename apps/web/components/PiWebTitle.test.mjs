@@ -96,7 +96,7 @@ test("the brand's text sits in the chevron column and is never cut at the sideba
   const room = SIDEBAR_MIN_WIDTH - 1 - 36 - 36;
   const box = (text, fontSize) => marginLeft + 2 * paddingLeft + text.length * 0.6 * fontSize;
   assert.ok(box(BRAND_TEXT, 15) <= room, "the brand at 15px");
-  const piPackage = JSON.parse(await readFile(new URL("../node_modules/@earendil-works/pi-coding-agent/package.json", import.meta.url), "utf8"));
+  const piPackage = JSON.parse(await readFile(new URL("../package.json", import.meta.resolve("@earendil-works/pi-coding-agent")), "utf8"));
   // Today's versions, with room for a longer one.
   const versions = brandVersionText(packageJson.version, piPackage.version);
   assert.ok(box(versions, 11) <= room, `${versions} at 11px`);

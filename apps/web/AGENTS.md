@@ -2,13 +2,15 @@
 
 ## Quick Start
 
+pi-web lives in the pi fork as the npm workspace `apps/web`: `npm install` runs in the fork's root, and every `@earendil-works/*` package is a link to the fork's `packages/*`.
+
 ```bash
-npm run dev   # port 30141
+npm run dev   # port 30141 (PORT, HOST override), on the fork's source
 ```
 
-On the pi fork's source (`~/.repos/pi`, or `PI_MONO_REPO`): `PORT=30141 npm run dev:fork` (`bin/dev-fork.js` preloads the fork's `source-resolver.ts`; the server log's `[pi-web] pi-coding-agent:` line names the SDK entry it loaded).
+`bin/dev-fork.js` preloads the fork's `source-resolver.ts`; the server log's `[pi-web] pi-coding-agent:` line names the SDK entry it loaded. Turbopack would bundle the linked packages, so `next.config.ts` aliases each pi entry pi-web imports to a stub in `lib/pi-runtime/` that `require()`s it at run time; a new pi entry point needs its own stub. Plain `next dev`, `next start` and the `pi-web` launcher do not run in the fork.
 
-Typecheck: `node_modules/.bin/tsc --noEmit` · Lint: `npm run lint`
+Typecheck: `node_modules/.bin/tsc --noEmit` (needs `npm run build` in the fork's root: the pi packages' types come from their `dist/`) · Lint: `npm run lint` (`bin/lint.mjs` hands ESLint pi-web's TypeScript 5, not the root's 7) · Tests: `npm test` (`bin/test-fork.mjs` skips the MCP tests until F050). Run them with a clean environment: `PI_*` variables of an agent shell break the tests.
 
 **Never run `next build` during dev**: it pollutes `.next/` and breaks `npm run dev`.
 
@@ -22,7 +24,7 @@ Typecheck: `node_modules/.bin/tsc --noEmit` · Lint: `npm run lint`
 
 ### Upgrading pi
 
-pi's packages up to 1.2.0 depend on each other with `^` ranges (1.3.0 pins them exactly), and the published pi-web's dependencies resolve afresh on install (no lockfile ships). Install every `@earendil-works/*` package the tree holds, the SDK's own dependencies included (`pi-codemode`, `pi-mcp`, `pi-telemetry`, …), with `npm install --save-exact`, so npm reuses those exact versions for the SDK's ranges. `lib/pi-packages.test.mjs` fails on any pi package that is not pinned that way; pi-web 0.12.0 pinned four, and installs after pi 1.2.0 paired pi-coding-agent 1.1.0 with pi-codemode 1.2.0.
+Pin every `@earendil-works/*` package the SDK depends on (`pi-codemode`, `pi-mcp`, `pi-telemetry`, …) at the fork's version, so npm links each to the fork's package. `lib/pi-packages.test.mjs` fails on a pin that is not a link at that version, on a pi dependency of a pinned package that pi-web does not pin, and on a second copy in the fork's lockfile. `package-lock.json` here is upstream's: the fork's root lockfile installs pi-web, and it stays untouched so upstream commits to it still apply.
 
 ---
 

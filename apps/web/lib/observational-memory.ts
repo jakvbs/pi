@@ -1,4 +1,4 @@
-import { homedir } from "node:os";
+import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { stripAnsi } from "./ansi";
@@ -46,7 +46,8 @@ const ACTIVATION_STATUS_KEY = "observational-memory";
 const NOTICE_PREFIX = "Observational memory:";
 
 export function sessionLedgerPath(env: NodeJS.ProcessEnv = process.env): string {
-  const repo = env.PI_MONO_REPO || join(homedir(), ".repos", "pi");
+  // The fork whose packages/coding-agent pi-web runs, so the ledger module imports that same SDK.
+  const repo = env.PI_MONO_REPO || join(getPackageDir(), "..", "..");
   return join(repo, "extensions", "observational-memory", "src", "session-ledger", "index.ts");
 }
 

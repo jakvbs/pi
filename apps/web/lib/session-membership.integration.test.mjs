@@ -3,7 +3,6 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { createJiti } from 'jiti';
 
@@ -11,7 +10,7 @@ const jiti = createJiti(import.meta.url, { alias: { '@': process.cwd() }, module
 const { invalidateSessionListCache } = await jiti.import('./session-reader.ts');
 const { GET: list } = await jiti.import('../app/api/sessions/route.ts');
 const { GET: running } = await jiti.import('../app/api/agent/running/route.ts');
-const sdk = pathToFileURL(join(process.cwd(), 'node_modules/@earendil-works/pi-coding-agent/dist/index.js')).href;
+const sdk = import.meta.resolve('@earendil-works/pi-coding-agent');
 
 for (const mode of ['sessions-dir-present', 'sessions-dir-absent']) test(`independent SDK writes refresh cached lists (${mode})`, { timeout: 15000 }, async (t) => {
   const existingRoot = mode === 'sessions-dir-present';

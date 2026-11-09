@@ -163,7 +163,7 @@ test("a project's settings file is read raw, and anything but a regular file is 
 
 test("the default inline budget is the SDK's", async () => {
   // The SDK root does not export it; the codemode tool's module does.
-  const tool = await import(new URL("../node_modules/@earendil-works/pi-coding-agent/dist/extensions/codemode/tool.js", import.meta.url).href);
+  const tool = await import(new URL("extensions/codemode/tool.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href);
   assert.equal(CODEMODE_INLINE_BUDGET_DEFAULT, tool.DEFAULT_CODEMODE_INLINE_BUDGET);
 });
 
@@ -274,7 +274,7 @@ test("the mode is read as the codemode extension reads it", async () => {
 
   // The extension's own reader agrees: the SDK root does not export it, the module's factory reads it.
   const { createCodemodeExtension } = await import(
-    new URL("../node_modules/@earendil-works/pi-coding-agent/dist/extensions/codemode/index.js", import.meta.url).href
+    new URL("extensions/codemode/index.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href
   );
   for (const codemode of [undefined, { mode: "only" }, { mode: "on" }, { mode: "ONLY" }, { mode: null }, "only"]) {
     let definition;
