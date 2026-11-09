@@ -48,6 +48,7 @@ app/api/
   sessions/delete/route.ts         POST { ids } delete sessions and their subagents (a project's Delete all sessions); running ones kept
   sessions/stats/route.ts          POST { ids } each session's tokens, cost, tool calls, active time (the agent switcher's rows)
   sessions/[id]/state/route.ts     GET live wrapper state while running
+  sessions/[id]/memory/route.ts   GET observational memory of the session's branch, read through the pi fork's session ledger (F046 prototype)
   sessions/ui-state/route.ts       GET/POST sidebar pins, archive, project order and names (set, restore, pin-project, add-projects, move-project, rename-project)
   sessions/[id]/auto-name/route.ts POST generate a session title
   sessions/search/route.ts         GET session search
@@ -57,6 +58,7 @@ app/api/
   agent/[id]/lease/route.ts        POST reset the selected session's idle timer (with or without its stream; never starts one); reply: running, awaitingInput, subagentsActive
   agent/running/route.ts           GET running + awaiting-input session ids, sidebar pins/archive revision
   agent/debug/route.ts             GET ?session= the Debug panel's read-only snapshot: wrappers, streams, subagents, MCP, terminals, file watches
+  board/route.ts                   GET the factory board: spec lanes (PI_WEB_SPEC_DIR) and subagents by ticket (F046 prototype)
   auth/api-key/[provider]/route.ts POST/DELETE stored provider API key
   auth/login/[provider]/route.ts   GET OAuth/device-code SSE | POST manual code
   auth/logout/[provider]/route.ts  POST OAuth logout
@@ -106,6 +108,10 @@ lib/
   missing-cwd.ts            client-safe `reason: "cwd-missing"` refusal of a folder that no longer exists: error class, body fields, parsing
   debug-types.ts            client-safe shapes of the Debug panel: GET /api/agent/debug and the page's own snapshot
   debug-snapshot.ts         buildDebugSnapshot(): the debug route's synchronous field reads, each source guarded
+  factory-board.ts          the board's spec lanes: active/planned folders, the ten latest done (F046 prototype)
+  factory-board-types.ts    client-safe shapes of GET /api/board
+  observational-memory.ts   the memory panel's snapshot: the fork's session-ledger module imported from source, footer status, OM warnings
+  memory-panel-types.ts     client-safe shape of GET /api/sessions/[id]/memory
   stream-client.ts          an event stream's reported address and "Chrome · macOS" label, for the Debug panel's connected pages and SSE titles only
   page-stream-registry.ts   open terminal and file-watch streams with their page (`?holder=`) and client, for the Debug panel's connected pages
   page-debug.ts             client: the page's id (`?holder=` of its streams), EventSources, visibility history, protocol and running-poll record (Debug panel)
@@ -228,6 +234,8 @@ components/
   AgentsConfig.tsx         built-in subagent toggle + agent profile editor
   SessionChatPanel.tsx     right-panel tab of a subagent or side chat: a ChatWindow for that session
   DebugPanel.tsx           Debug top panel (toolbar, left of the stats): page and server state, its own tick and poll, error boundary
+  FactoryBoardPanel.tsx    Board top panel (desktop toolbar): lanes, subagents under each ticket, Open chat links (F046 prototype)
+  MemoryPanel.tsx          Memory top panel: status, counts, observer/reflector runs, errors, memory text (F046 prototype)
   debug-panel-state.ts     pure helpers of DebugPanel: formatting, server clock, poller, issues, session grouping, poll samples
   PluginsConfig.tsx        Settings › Plugins: installed package plugins
   SkillsConfig.tsx         Settings › Skills: loaded, search, install

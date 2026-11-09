@@ -188,6 +188,7 @@ type AgentSessionWrapperOptions = {
 
 /** Startup notices kept for later streams: the loader's (capped), the model, then session_start errors. */
 const STARTUP_NOTICE_LIMIT = 20;
+const RECENT_NOTICE_LIMIT = 20;
 
 /**
  * Chat only loads no extensions, so a provider one registers is missing from its runtime (#804).
@@ -348,6 +349,8 @@ export class AgentSessionWrapper {
   private activeCustomUis = new Map<string, ActiveCustomUi>();
   private extensionUiAbortController = new AbortController();
   private extensionStatuses = new Map<string, string>();
+  /** The latest extension notifications, for the memory panel's stage errors (F046 prototype). */
+  private recentNotices: Array<{ at: string; type?: string; message: string }> = [];
   private extensionWidgets = new Map<string, ExtensionWidgetItem>();
   private activeExtensionWidgets = new Map<string, ActiveExtensionWidget>();
   private extensionWidgetGenerations = new Map<string, number>();
@@ -1910,6 +1913,14 @@ export class AgentSessionWrapper {
     pending.resolve(response);
   }
 
+  getExtensionStatus(key: string): string | undefined {
+    return this.extensionStatuses.get(key);
+  }
+
+  getRecentNotices(): ReadonlyArray<{ at: string; type?: string; message: string }> {
+    return this.recentNotices;
+  }
+
   private getExtensionStatuses(): Array<{ key: string; text: string }> {
     return Array.from(this.extensionStatuses, ([key, text]) => ({ key, text }));
   }
@@ -2336,6 +2347,7 @@ export class AgentSessionWrapper {
         opts?.signal,
       ),
       notify: (message, type) => {
+        this.recentNotices = [...this.recentNotices, { at: new Date().toISOString(), ...(type ? { type } : {}), message }].slice(-RECENT_NOTICE_LIMIT);
         this.emit({
           type: "extension_ui_request",
           id: randomUUID(),

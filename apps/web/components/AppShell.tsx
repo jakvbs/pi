@@ -18,6 +18,8 @@ import { SystemPromptPanel } from "./SystemPromptPanel";
 import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
 import { AgentSessionPanel } from "./AgentSessionPanel";
 import { DebugPanel, DebugPanelBoundary } from "./DebugPanel";
+import { FactoryBoardPanel } from "./FactoryBoardPanel";
+import { MemoryPanel } from "./MemoryPanel";
 import { SessionChatPanel } from "./SessionChatPanel";
 import { TerminalPanel } from "./TerminalPanel";
 import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state";
@@ -408,7 +410,7 @@ export function AppShell() {
   }, []);
 
   // Single active panel — only one dropdown open at a time
-  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "system" | "tools" | "session" | "debug" | null>(null);
+  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "system" | "tools" | "session" | "debug" | "board" | "memory" | null>(null);
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   useEffect(() => {
@@ -428,7 +430,7 @@ export function AppShell() {
   }, [rightPanelFullWidth]);
 
   const toggleTopPanel = useCallback((
-    panel: "agents" | "branches" | "system" | "tools" | "session" | "debug",
+    panel: "agents" | "branches" | "system" | "tools" | "session" | "debug" | "board" | "memory",
     keepMobileToolbarOpen = false,
   ) => {
     if (isMobile) setSidebarOpen(false);
@@ -2251,6 +2253,31 @@ export function AppShell() {
     );
   };
 
+  // F046 prototype: the factory board and the observational memory panel, desktop only.
+  const renderFactoryPanelButton = (panel: "board" | "memory", label: string) => {
+    if (!showChat) return null;
+    const open = activeTopPanel === panel;
+    return (
+      <button
+        type="button"
+        onClick={() => toggleTopPanel(panel)}
+        aria-pressed={open}
+        data-factory-panel-button={panel}
+        style={{
+          display: "flex", alignItems: "center", height: "100%", padding: "0 10px",
+          background: open ? "var(--bg-selected)" : "none",
+          border: "none",
+          borderTop: open ? "2px solid var(--accent)" : "2px solid transparent",
+          borderLeft: "1px solid var(--border)",
+          color: open ? "var(--text)" : "var(--text-muted)",
+          cursor: "pointer", flexShrink: 0, fontSize: 12,
+        }}
+      >
+        {label}
+      </button>
+    );
+  };
+
   const renderMainFileToggle = (mobile: boolean) => {
     const covered = mobile && isNarrowMobile && mobileToolbarMoreOpen;
     return (
@@ -2541,6 +2568,8 @@ export function AppShell() {
               {renderProjectTrustWarning(false)}
               {renderChatToolbarActions(false)}
               {renderDebugButton(false)}
+              {renderFactoryPanelButton("board", "Board")}
+              {renderFactoryPanelButton("memory", "Memory")}
               {renderSessionStatsButton(false)}
             </>
           )}
@@ -2802,6 +2831,12 @@ export function AppShell() {
                     onClose={closeDebugPanel}
                   />
                 </DebugPanelBoundary>
+              )}
+              {activeTopPanel === "board" && (
+                <FactoryBoardPanel sessions={sessionsWithSelection} onSelectSession={handleSelectSession} />
+              )}
+              {activeTopPanel === "memory" && (
+                <MemoryPanel sessionId={selectedSession?.id ?? null} />
               )}
             </div>
           )}
