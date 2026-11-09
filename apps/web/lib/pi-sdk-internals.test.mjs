@@ -1,16 +1,14 @@
 import assert from "node:assert/strict";
-import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { getPackageDir } from "@earendil-works/pi-coding-agent";
+import { StdioTransport } from "@earendil-works/pi-mcp";
 
-import { importPiSdkInternals, loadPiSdkInternals } from "./pi-sdk-internals.ts";
+import { loadPiSdkInternals } from "./pi-sdk-internals.ts";
 
-// The adapter reaches into SDK files the package does not export. An SDK
-// upgrade that moves, renames or reshapes any of them must fail here, not at
-// runtime, where MCP would only turn itself off.
+// pi-web relies on more than the SDK's types say: arity, class-ness and the
+// methods it calls. An SDK change that breaks one of them must fail here.
 const EXPECTED_MEMBERS = {
   McpServerConnection: {
     kind: "class",
@@ -59,7 +57,6 @@ async function loadedInternals() {
 
 test("loads every MCP internal from the SDK pi-web runs", async () => {
   const internals = await loadedInternals();
-  assert.equal(internals.packageDir, realpathSync(getPackageDir()));
   for (const [name, expected] of Object.entries(EXPECTED_MEMBERS)) {
     const member = internals[name];
     assert.equal(typeof member, "function", `${name} is missing`);
@@ -69,18 +66,18 @@ test("loads every MCP internal from the SDK pi-web runs", async () => {
       assert.equal(typeof member.prototype[method], "function", `${name}.prototype.${method} is missing`);
     }
   }
-  const exposed = Object.keys(internals).filter((key) => key !== "ok" && key !== "packageDir").sort();
+  const exposed = Object.keys(internals).filter((key) => key !== "ok").sort();
   assert.deepEqual(exposed, Object.keys(EXPECTED_MEMBERS).sort());
 });
 
-test("loads the internals once per process", async () => {
-  assert.equal(loadPiSdkInternals(), loadPiSdkInternals());
-  assert.equal(await loadPiSdkInternals(), await loadPiSdkInternals());
+test("every copy of the module hands out the one SDK pi-web imports", async () => {
   // Next.js bundles route handlers into separate module graphs and hot reload
-  // re-evaluates modules; every copy of this module shares the one load.
+  // re-evaluates modules; the SDK's `instanceof` checks need one copy of it.
   const copy = await import(`./pi-sdk-internals.ts?copy=${Date.now()}`);
   assert.notEqual(copy.loadPiSdkInternals, loadPiSdkInternals);
-  assert.equal(copy.loadPiSdkInternals(), loadPiSdkInternals());
+  const [internals, copied] = [await loadedInternals(), await copy.loadPiSdkInternals()];
+  for (const name of Object.keys(EXPECTED_MEMBERS)) assert.equal(copied[name], internals[name], name);
+  assert.equal(internals.StdioTransport, StdioTransport);
 });
 
 test("the SDK builds stdio transports from the StdioTransport class it exposes", async () => {
@@ -162,36 +159,5 @@ test("a project's mcp.json is read only once the project is trusted, and replace
 
     assert.deepEqual(read(false), [["files", "global", "global-files"]]);
     assert.deepEqual(read(true), [["files", "project", "repo-files"], ["repo", "project", "repo-srv"]]);
-  });
-});
-
-test("refuses to load while PI_PACKAGE_DIR points the SDK elsewhere", async () => {
-  await withTempDir(async (dir) => {
-    const result = await importPiSdkInternals({ environment: { ...process.env, PI_PACKAGE_DIR: dir } });
-    assert.equal(result.ok, false);
-    assert.match(result.reason, /PI_PACKAGE_DIR is set/);
-  });
-});
-
-test("refuses to load when pi-web resolves another copy of the SDK", async () => {
-  await withTempDir(async (dir) => {
-    const packageDir = join(dir, "node_modules", "@earendil-works", "pi-coding-agent");
-    await mkdir(packageDir, { recursive: true });
-    await writeFile(join(packageDir, "package.json"), JSON.stringify({
-      name: "@earendil-works/pi-coding-agent",
-      type: "module",
-      exports: { ".": { import: "./dist/index.js" } },
-    }));
-    const result = await importPiSdkInternals({ cwd: dir });
-    assert.equal(result.ok, false);
-    assert.match(result.reason, /is not the package Pi Web resolves/);
-  });
-});
-
-test("refuses to load when pi-web cannot resolve the SDK at all", async () => {
-  await withTempDir(async (dir) => {
-    const result = await importPiSdkInternals({ cwd: dir });
-    assert.equal(result.ok, false);
-    assert.match(result.reason, /cannot locate @earendil-works\/pi-coding-agent/);
   });
 });

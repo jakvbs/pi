@@ -34,7 +34,7 @@ test("PI_WEB_DISABLE_MCP turns MCP off for any value but empty, 0, or false", ()
 });
 
 test("MCP is available only when the operator allows it and the internals loaded", () => {
-  const internals = { ok: true, packageDir: "/sdk" };
+  const internals = { ok: true };
   assert.deepEqual(mcpRuntimeFromInternals(internals, {}), { available: true, internals });
   assert.deepEqual(
     mcpRuntimeFromInternals(internals, { PI_WEB_DISABLE_MCP: "1" }),

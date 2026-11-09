@@ -10,7 +10,7 @@ npm run dev   # port 30141 (PORT, HOST override), on the fork's source
 
 `bin/dev-fork.js` preloads the fork's `source-resolver.ts`; the server log's `[pi-web] pi-coding-agent:` line names the SDK entry it loaded. Turbopack would bundle the linked packages, so `next.config.ts` aliases each pi entry pi-web imports to a stub in `lib/pi-runtime/` that `require()`s it at run time; a new pi entry point needs its own stub. Plain `next dev`, `next start` and the `pi-web` launcher do not run in the fork.
 
-Typecheck: `node_modules/.bin/tsc --noEmit` (needs `npm run build` in the fork's root: the pi packages' types come from their `dist/`) · Lint: `npm run lint` (`bin/lint.mjs` hands ESLint pi-web's TypeScript 5, not the root's 7) · Tests: `npm test` (`bin/test-fork.mjs` skips the MCP tests until F050). Run them with a clean environment: `PI_*` variables of an agent shell break the tests.
+Typecheck: `node_modules/.bin/tsc --noEmit` (needs `npm run build` in the fork's root: the pi packages' types come from their `dist/`) · Lint: `npm run lint` (`bin/lint.mjs` hands ESLint pi-web's TypeScript 5, not the root's 7) · Tests: `npm test` (also needs `npm run build`: the tests load the pi packages from `dist/`). Run them with a clean environment: `PI_*` variables of an agent shell break the tests.
 
 **Never run `next build` during dev**: it pollutes `.next/` and breaks `npm run dev`.
 
@@ -137,7 +137,7 @@ lib/
   message-keys.ts           client-safe React keys of chat messages: a run's messages keep theirs when the file is read again
   types.ts                  shared TypeScript types
   pi-types.ts               local structural types for pi SDK objects
-  pi-sdk-internals.ts       loader for SDK modules the package does not export (MCP connection, config, OAuth)
+  pi-sdk-internals.ts       the SDK's MCP host API (connection, config, OAuth), from the fork's SDK root and pi-mcp
   tool-presets.ts           PRESET_NONE/READ_ONLY/DEFAULT/FULL + getPresetFromTools()
   tool-preset-preference.ts browser-persisted default preset for fresh sessions
   tool-fields.ts            a tool call's arguments as flat rows: all of them or no table

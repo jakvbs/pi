@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
+import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
 // Contract tests of the paste importer against the SDK it imitates: the real
@@ -26,7 +27,7 @@ const { loadPiSdkInternals } = await jiti.import("./pi-sdk-internals.ts");
 
 const internals = await loadPiSdkInternals();
 assert.equal(internals.ok, true, internals.reason);
-const { runMcpCommand } = await import(pathToFileURL(join(internals.packageDir, "dist/extensions/mcp/cli.js")).href);
+const { runMcpCommand } = await import(pathToFileURL(join(getPackageDir(), "dist/extensions/mcp/cli.js")).href);
 
 function tempDir(t) {
   const dir = mkdtempSync(join(tmpdir(), "pi-web-mcp-import-"));

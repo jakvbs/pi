@@ -36,6 +36,8 @@ const piRuntimeAliases = {
     browser: "../../packages/ai/src/utils/json-parse.ts",
     default: "./lib/pi-runtime/pi-ai-utils-json-parse.cjs",
   },
+  "@earendil-works/pi-mcp": "./lib/pi-runtime/pi-mcp.cjs",
+  "@earendil-works/pi-mcp/oauth": "./lib/pi-runtime/pi-mcp-oauth.cjs",
   "@earendil-works/pi-tui": "./lib/pi-runtime/pi-tui.cjs",
 };
 
@@ -76,6 +78,7 @@ const nextConfig: NextConfig = {
     "@earendil-works/pi-coding-agent",
     "@earendil-works/pi-agent-core",
     "@earendil-works/pi-ai",
+    "@earendil-works/pi-mcp",
     "@earendil-works/pi-tui",
   ],
   // Next 16 blocks cross-origin access to dev resources by default. Allow the
