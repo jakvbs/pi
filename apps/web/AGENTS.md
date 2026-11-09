@@ -6,6 +6,8 @@
 npm run dev   # port 30141
 ```
 
+On the pi fork's source (`~/.repos/pi`, or `PI_MONO_REPO`): `PORT=30141 npm run dev:fork` (`bin/dev-fork.js` preloads the fork's `source-resolver.ts`; the server log's `[pi-web] pi-coding-agent:` line names the SDK entry it loaded).
+
 Typecheck: `node_modules/.bin/tsc --noEmit` · Lint: `npm run lint`
 
 **Never run `next build` during dev**: it pollutes `.next/` and breaks `npm run dev`.

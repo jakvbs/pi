@@ -2,6 +2,8 @@ import { configureHttpDispatcher, readHttpIdleTimeoutMs } from "@/lib/http-dispa
 import { closeAllAgentEventStreams } from "@/lib/agent-event-stream";
 import { applyCodemodeWorkerDefault } from "@/lib/codemode-workers";
 
+const SDK = "@earendil-works/pi-coding-agent";
+
 export function registerNodeInstrumentation(): void {
   // Before any session can run a codemode script (lib/codemode-workers.ts).
   applyCodemodeWorkerDefault();
@@ -26,4 +28,20 @@ export function registerNodeInstrumentation(): void {
   // it (bin/browser-opener.js), and the routes reuse Node's cached module.
   // A failure is left for the routes' own import to report.
   import("@earendil-works/pi-coding-agent").catch(() => {});
+  // Which copy of the SDK Node resolves: the package, or the fork's source under `npm run dev:fork`.
+  logSdkEntry().catch(() => {});
+}
+
+// Turbopack rewrites `import.meta.resolve` in bundled code, so ask Node from an
+// unbundled module. A data: URL resolves a bare specifier only through a
+// resolve hook such as the fork's source resolver.
+async function logSdkEntry(): Promise<void> {
+  const probe = `data:text/javascript,export default import.meta.resolve(${JSON.stringify(SDK)})`;
+  try {
+    const resolved = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ probe) as { default: string };
+    console.log(`[pi-web] pi-coding-agent: ${resolved.default}`);
+  } catch {
+    const { getPackageDir } = await import("@earendil-works/pi-coding-agent");
+    console.log(`[pi-web] pi-coding-agent: ${getPackageDir()} (no resolve hook)`);
+  }
 }
