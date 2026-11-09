@@ -70,10 +70,10 @@ test("rejects registry alias ranges", async (t) => {
 });
 
 test("skips a package.json that git ignores, like the one pi installs project packages into, but not an untracked one", async (t) => {
-	const ranged = JSON.stringify({ dependencies: { "pi-subagents": "npm:@tintinweb/pi-subagents@^1.0.0" } });
+	const ranged = JSON.stringify({ dependencies: { "pi-probe": "npm:@example/pi-probe@^1.0.0" } });
 	const ignored = await check(t, {}, { ".gitignore": ".pi/npm/\n", ".pi/npm/package.json": ranged });
 	assert.equal(ignored.status, 0, ignored.stderr);
 	const untracked = await check(t, {}, { ".gitignore": ".pi/npm/\n", "extensions/probe/package.json": ranged });
 	assert.equal(untracked.status, 1);
-	assert.match(untracked.stderr, /extensions\/probe\/package\.json: dependencies\.pi-subagents must be pinned/);
+	assert.match(untracked.stderr, /extensions\/probe\/package\.json: dependencies\.pi-probe must be pinned/);
 });
