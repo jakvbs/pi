@@ -420,7 +420,11 @@ test(
 			const removedRefs = [removedServer, removedWorker, removedUnseen];
 			await poll(() => removedRefs.every((ref) => statusOf(ref) === "failed"));
 			for (const ref of removedRefs) ref.release();
-			assert.equal((await http(port, "/__dev_removable")).status, 404, "registration was removed");
+			assert.equal(
+				(await http(port, "/__dev_removable", { headers: await local(port) })).status,
+				404,
+				"registration was removed",
+			);
 			for (const pid of [serverPid, removedPid, secondPid])
 				await poll(
 					async () =>
@@ -495,7 +499,7 @@ test(
 			await poll(() => statusOf(addedServer) === "failed" && statusOf(addedWorker) === "failed");
 			addedServer.release();
 			addedWorker.release();
-			assert.equal((await http(port, "/__dev_added")).status, 404);
+			assert.equal((await http(port, "/__dev_added", { headers: await local(port) })).status, 404);
 			assert.equal(ports().length, 1, "add/remove never restarts the backend");
 			assert(!log.includes("Unknown p2 plugin: dev-removable"));
 			await chat.send({ text: "slow restart-stream-sentinel", requestId: "restart-stream" }, BACKGROUND_CONTEXT);
