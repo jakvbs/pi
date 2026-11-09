@@ -55,7 +55,6 @@ Binding for Chord v2 (`packages/chord/src/`) and its tests, when writing and whe
 - For `packages/coding-agent/test/suite/`, use `test/suite/harness.ts` + the faux provider. No real provider APIs, keys, or paid tokens.
 - When regressions tests for fixing a github issue, add a comment with the github issue number next to the test.
 - For ad-hoc scripts, `write` them to a temp file (e.g. `/tmp`), run, edit if needed, remove when done. Don't embed multi-line scripts in `bash` commands.
-- Never commit unless the user asks.
 
 ## Dependency and Install Security
 
@@ -82,11 +81,12 @@ Never run (destroys other agents' work or bypasses checks):
 
 - `git reset --hard`, `git checkout .`, `git clean -fd`, `git stash`, `git add -A`, `git add .`, `git commit --no-verify`.
 
+Never force-push, reset or delete `main`. Run branches may be pushed, rewritten and force-pushed; Git authorization is in the global contract (`~/.pi/agent/AGENTS.md`).
+
 If conflicts occur while rebasing your own branch (an upstream merge follows section Fork):
 
 - Resolve conflicts only in files you modified.
 - If a conflict is in a file you did not modify, abort and ask the user.
-- Never force-push, reset or delete `main`. Run branches may be pushed, rewritten and force-pushed; Git authorization is in the global contract (`~/.pi/agent/AGENTS.md`).
 
 ## Fork
 
