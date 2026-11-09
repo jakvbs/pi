@@ -218,7 +218,11 @@ export {
 } from "./core/extensions/index.ts";
 // Footer data provider (git branch + extension statuses - data not otherwise available to extensions)
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.ts";
-export type { RegisteredMcpServer } from "./core/mcp-servers.ts";
+export {
+	getMcpToolExposure,
+	type RegisteredMcpServer,
+	validateMcpServerConfig,
+} from "./core/mcp-servers.ts";
 export { convertToLlm } from "./core/messages.ts";
 export { ModelRegistry } from "./core/model-registry.ts";
 export {
@@ -246,6 +250,13 @@ export type {
 	ResolvedResource,
 } from "./core/package-manager.ts";
 export { DefaultPackageManager } from "./core/package-manager.ts";
+// Config values in mcp.json and models.json: `${NAME}` references and `!command` values.
+export {
+	getConfigValueEnvVarNames,
+	isCommandConfigValue,
+	resolveConfigValueOrThrow,
+	resolveHeadersOrThrow,
+} from "./core/resolve-config-value.ts";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.ts";
 export { DefaultResourceLoader, loadProjectContextFiles } from "./core/resource-loader.ts";
 export { RESTORED_SKILLS_MESSAGE_TYPE } from "./core/restored-skills.ts";
@@ -418,8 +429,21 @@ export {
 // Built-in extensions. The CLI loads them; SDK sessions add them to their extension factories.
 export { type CodemodeExtensionOptions, createCodemodeExtension } from "./extensions/codemode/index.ts";
 export type { CodemodeStoreEntryData, CodemodeToolDetails } from "./extensions/codemode/tool.ts";
-export type { LoadedMcpConfig, McpExposure, McpServerConfig, McpServerEntry } from "./extensions/mcp/config.ts";
+export {
+	addMcpServerConfig,
+	type LoadedMcpConfig,
+	loadMcpConfig,
+	type McpExposure,
+	type McpServerConfig,
+	type McpServerConfigPatch,
+	type McpServerEntry,
+	removeMcpServerConfig,
+	updateMcpServerConfig,
+} from "./extensions/mcp/config.ts";
 export { createMcpExtension, type McpExtensionOptions, type McpTransportFactory } from "./extensions/mcp/index.ts";
+// MCP host API for apps that run MCP servers outside a session (a server's own settings page, a sign-in route).
+export { McpOAuthCredentialStore, signInMcpServer } from "./extensions/mcp/oauth.ts";
+export { createDefaultTransport, McpServerConnection } from "./extensions/mcp/runtime.ts";
 export { createToolSearchExtension } from "./extensions/tool-search/index.ts";
 // Main entry point
 export { type MainOptions, main } from "./main.ts";

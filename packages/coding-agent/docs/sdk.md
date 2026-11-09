@@ -115,6 +115,8 @@ Inline extension factories can be supplied through `DefaultResourceLoader`. Give
 
 The CLI loads `codemode`, `tool_search`, and MCP as built-in extensions. SDK sessions do not; add `createCodemodeExtension()`, `createToolSearchExtension()`, and `createMcpExtension()` to the `extensionFactories` of `DefaultResourceLoader`. `codemode` and `tool_search` are registered inactive: enable them through the `defaultTools` setting (`["+codemode", "+tool_search"]` keeps the other default tools), or let the MCP extension activate them: `codemode` for servers with `codemode` exposure, `tool_search` for servers with `deferred` exposure. The MCP extension connects its servers on `session_start`, so call `session.bindExtensions()`. See [Codemode and MCP](../examples/sdk/14-codemode-mcp.ts).
 
+An app that manages MCP servers outside a session, such as a settings page, uses the MCP host API from the package root: `loadMcpConfig()` and `addMcpServerConfig()`, `updateMcpServerConfig()` and `removeMcpServerConfig()` read and edit `mcp.json`, `validateMcpServerConfig()` checks an entry, and `McpServerConnection` with `createDefaultTransport()` connects one server and calls its tools. `signInMcpServer()` signs in to an OAuth server and stores its tokens in `McpOAuthCredentialStore` (`mcp-auth.json` in the agent directory); it fails with pi-mcp's `McpSignInCancelledError` when its `signal` aborts. pi-mcp's `StdioTransport` and `McpSignInCancelledError` come from `@earendil-works/pi-mcp` and `@earendil-works/pi-mcp/oauth`.
+
 See the focused examples for [models](../examples/sdk/02-custom-model.ts), [tools](../examples/sdk/05-tools.ts), [extensions](../examples/sdk/06-extensions.ts), and [full control](../examples/sdk/12-full-control.ts).
 
 ## Examples
