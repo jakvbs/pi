@@ -2568,9 +2568,9 @@ export function AppShell() {
               {renderProjectTrustWarning(false)}
               {renderChatToolbarActions(false)}
               {renderDebugButton(false)}
+              {renderSessionStatsButton(false)}
               {renderFactoryPanelButton("board", "Board")}
               {renderFactoryPanelButton("memory", "Memory")}
-              {renderSessionStatsButton(false)}
             </>
           )}
           {!isMobile && renderMainFileToggle(false)}

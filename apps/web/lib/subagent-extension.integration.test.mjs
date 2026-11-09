@@ -248,7 +248,7 @@ test("Agent exposes only the parameters the model can choose correctly", async (
     session = await createSession(dir, faux, [createSubagentExtension(runtime, () => [])]);
     const agent = session.getAllTools().find((tool) => tool.name === "Agent");
     assert.deepEqual(Object.keys(agent.parameters.properties).sort(), [
-      "description", "input_files", "isolation", "model", "prompt", "resume", "run_in_background", "subagent_type", "wait_timeout",
+      "description", "input_files", "isolation", "model", "prompt", "resume", "run_in_background", "subagent_type", "ticket", "wait_timeout",
     ]);
     const resultTool = session.getAllTools().find((tool) => tool.name === "get_subagent_result");
     for (const tool of [agent, resultTool]) {
