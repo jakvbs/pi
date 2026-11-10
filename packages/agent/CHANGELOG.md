@@ -10,6 +10,12 @@
 
 - Fixed the agent loop running a shell and a file-writing tool from one assistant message in parallel, so one tool's write could replace the other's. `AgentTool` takes a new `fileWrites` field (`ToolFileWrites`): `"argument"` for a tool that writes only files named in its arguments, `"any"` for a shell. A batch that holds both kinds runs sequentially in the model's order; other batches keep their execution mode
 
+## [1.5.1] - 2026-11-09
+
+### Added
+
+- Added `disableContinuation` forwarding in `streamProxy()` so proxied requests can opt out of server-side continuation state such as Anthropic message threads ([#11545](https://github.com/earendil-works/pi/pull/11545))
+
 ## [1.5.0] - 2026-11-02
 
 ### Breaking Changes
