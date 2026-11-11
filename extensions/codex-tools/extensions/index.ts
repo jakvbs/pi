@@ -86,7 +86,7 @@ export default function piCodexTools(pi: ExtensionAPI): void {
       if (!component.cache || component.cache.key !== key) {
         component.cache = {
           key,
-          text: formatApplyPatchCallText(rawPatch, theme, { expanded: context.expanded }),
+          text: formatApplyPatchCallText(rawPatch, theme, { expanded: context.expanded, keyHint: context.keyHint }),
         };
       }
       component.setText(component.cache.text);

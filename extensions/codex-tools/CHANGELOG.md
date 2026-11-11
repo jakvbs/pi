@@ -9,6 +9,7 @@ This project follows the spirit of [Keep a Changelog](https://keepachangelog.com
 ### Fixed
 
 - Re-check `apply_patch` after `/tree` navigation and similar branch switches. Restoring a branch's tool loadout re-activated `apply_patch` for models without grammar-tool support, so they called it and got an error.
+- Show the configured expand key in long `apply_patch` previews. The hint now uses Pi's render-context `keyHint`, so it no longer renders without the key when the package resolves its own copy of Pi.
 
 ## [0.4.1] - 2026-10-30
 
