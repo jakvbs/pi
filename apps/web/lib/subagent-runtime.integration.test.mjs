@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -1072,6 +1072,107 @@ test("an isolated run's result says where its worktree went, live and read back 
       const result = await (await runtime.start(request)).completion;
       assert.equal(subagentFinalText(result), `Subagent ${result.sessionId} completed.\n\nPLAIN`);
       assert.equal(readBack(result).worktreeExists, undefined);
+    }, undefined, { repo: true });
+  });
+
+  await t.test("isolation: \"none\" in an Agent call overrides a profile's isolation: worktree", async () => {
+    await withRuntime(async ({ runtime, request, faux, dir }) => {
+      await writeFile(join(dir, "agents", "fixture-worktree.md"), [
+        "---", "description: Isolate by default.", "tools: read",
+        "load_skills: false", "load_extensions: false", "isolation: worktree",
+        "---", "Complete the assigned task.",
+      ].join("\n"));
+      const tools = new Map();
+      await createSubagentExtension(runtime, () => []).factory({ on() {}, registerTool(tool) { tools.set(tool.name, tool); } });
+      const agent = tools.get("Agent");
+
+      faux.setResponses([answer("DIRECT")]);
+      const overridden = await agent.execute("call-none", {
+        subagent_type: "fixture-worktree", prompt: "Inspect", description: "No worktree", isolation: "none",
+      }, undefined, undefined, request.parentContext);
+      assert.equal(overridden.isError, undefined);
+      assert.equal(overridden.details.worktreePath, undefined);
+      assert.equal(overridden.content[0].text, `Subagent ${overridden.details.sessionId} completed.\n\nDIRECT`);
+      assert.equal(SessionManager.open(await runtime.get(overridden.details.sessionId).then((r) => r.sessionPath)).getHeader().cwd, dir);
+      assert.equal(existsSync(`${await realpath(dir)}-worktrees`), false);
+      assert.equal(execFileSync("git", ["-C", dir, "worktree", "list"], { encoding: "utf8" }).trim().split("\n").length, 1);
+
+      // Without the override, the same profile still cuts a worktree.
+      faux.setResponses([answer("DEFAULT_WORKTREE")]);
+      const defaulted = await agent.execute("call-default", {
+        subagent_type: "fixture-worktree", prompt: "Inspect", description: "Default worktree",
+      }, undefined, undefined, request.parentContext);
+      assert.ok(defaulted.details.worktreePath);
+      assert.match(defaulted.content[0].text, /Its worktree was removed/);
+    }, undefined, { repo: true });
+  });
+
+  await t.test("a slow worktree removal finishes instead of timing out mid-delete and leaving a damaged kept worktree", { skip: process.platform === "win32", timeout: 30_000 }, async () => {
+    await withRuntime(async ({ runtime, request, faux, dir }) => {
+      await writeFile(join(dir, ".gitignore"), "node_modules/\n");
+      await exec("git", ["-C", dir, "add", ".gitignore"]);
+      await exec("git", ["-C", dir, "commit", "-qm", "ignore node_modules"]);
+
+      const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+      const bin = join(dir, "slow-git-bin");
+      await mkdir(bin);
+      const shim = join(bin, "git");
+      // Models `git worktree remove` on a checkout with node_modules (F105/F107): once git has
+      // checked that the checkout is clean, unlinking node_modules and tracked files takes >10 s.
+      // A 10 s timeout kills git mid-unlink, retaining a half-deleted checkout with HEAD intact.
+      await writeFile(shim, [
+        "#!/bin/sh",
+        'if [ "$1" = "-C" ] && [ "$3" = "worktree" ] && [ "$4" = "remove" ] && [ "$5" != "--force" ]; then',
+        '  target="$5"',
+        `  if [ -n "$("${realGit}" -C "$target" status --porcelain)" ]; then`,
+        `    exec "${realGit}" "$@"`,
+        "  fi",
+        '  rm -rf "$target/node_modules" "$target/fact.txt"',
+        '  trap \'kill "$sleep_pid" 2>/dev/null; exit 143\' TERM INT',
+        "  sleep 10.5 &",
+        "  sleep_pid=$!",
+        '  wait "$sleep_pid"',
+        `  exec "${realGit}" -C "$2" worktree remove --force "$target"`,
+        "fi",
+        `exec "${realGit}" "$@"`,
+        "",
+      ].join("\n"));
+      await chmod(shim, 0o755);
+
+      const savedPath = process.env.PATH;
+      process.env.PATH = `${bin}:${savedPath ?? ""}`;
+      try {
+        // Dirty checkout with node_modules: kept intact with every tracked file and node_modules.
+        let dirtyPath;
+        faux.setResponses([async () => {
+          await mkdir(join(dirtyPath, "node_modules", "pkg"), { recursive: true });
+          await writeFile(join(dirtyPath, "node_modules", "pkg", "index.js"), "export {};\n");
+          await writeFile(join(dirtyPath, "draft.txt"), "uncommitted\n");
+          return answer("KEPT");
+        }]);
+        const kept = await (await runtime.start({
+          ...request, isolation: "worktree", onUpdate: (run) => { dirtyPath ??= run.worktreePath; },
+        })).completion;
+        assert.equal(existsSync(join(kept.worktreePath, "fact.txt")), true);
+        assert.equal(existsSync(join(kept.worktreePath, "node_modules", "pkg", "index.js")), true);
+        assert.equal(execFileSync(realGit, ["-C", kept.worktreePath, "ls-files", "-d"], { encoding: "utf8" }).trim(), "");
+
+        // Clean checkout with node_modules taking >10 s to unlink: removed whole, never retained damaged.
+        let cleanPath;
+        faux.setResponses([async () => {
+          await mkdir(join(cleanPath, "node_modules", "pkg"), { recursive: true });
+          await writeFile(join(cleanPath, "node_modules", "pkg", "index.js"), "export {};\n");
+          return answer("CLEAN_SLOW");
+        }]);
+        const cleaned = await (await runtime.start({
+          ...request, isolation: "worktree", onUpdate: (run) => { cleanPath ??= run.worktreePath; },
+        })).completion;
+        assert.equal(existsSync(cleaned.worktreePath), false,
+          `Expected clean worktree to be removed, not retained damaged (${cleaned.worktreeCleanupError ?? "no error"})`);
+        assert.equal(subagentFinalText(cleaned), `Subagent ${cleaned.sessionId} completed.\n\n${removed(cleaned)}\n\nCLEAN_SLOW`);
+      } finally {
+        process.env.PATH = savedPath;
+      }
     }, undefined, { repo: true });
   });
 });

@@ -95,6 +95,14 @@ function subagentTicket(value: string | undefined): string | undefined {
   return ticket;
 }
 
+/** `"worktree"` or `"none"` (`"none"` overrides a profile's `isolation: worktree`); empty means none. */
+function subagentIsolation(value: string | undefined): "worktree" | "none" | undefined {
+  const isolation = value?.trim();
+  if (!isolation) return undefined;
+  if (isolation === "worktree" || isolation === "none") return isolation;
+  throw new Error(`isolation must be "worktree" or "none", not ${JSON.stringify(isolation)}`);
+}
+
 const SUBAGENT_CANDIDATE_LIMIT = 10;
 
 /**
@@ -161,7 +169,7 @@ export interface StartSubagentRequest {
   /** The run's thinking level, over the role's and the profile's; `model`'s own `:level` must agree with it. */
   thinking?: ThinkingLevel;
   model?: string;
-  isolation?: "worktree";
+  isolation?: "worktree" | "none";
   ticket?: string;
   /** Absolute path of the Git repository the child works in; the parent's cwd when absent. */
   repo?: string;
@@ -333,7 +341,7 @@ export function createSubagentExtension(
           wait_timeout: waitTimeoutParameter(),
           model: Type.Optional(Type.String({ description: modelDescription })),
           thinking: Type.Optional(Type.String({ description: `Thinking level for this run, one of: ${LEVELS_TEXT}. Overrides the role's and the profile's level without changing the model. A model pinned to a level in the model list runs only at that level.` })),
-          isolation: Type.Optional(Type.String({ description: 'Set to "worktree" to run the subagent in an isolated git worktree.' })),
+          isolation: Type.Optional(Type.String({ description: 'Set to "worktree" to run the subagent in an isolated git worktree, or "none" to run without one even when the profile uses a worktree.' })),
           ticket: Type.Optional(Type.String({ description: "Factory ticket this work belongs to, as its feature id (e.g. F046). Kept with the subagent session and shown on the board." })),
           repo: Type.Optional(Type.String({ description: 'Absolute path of another Git repository to work in. With isolation "worktree" the worktree and its branch are cut from that repository. Default: this session\'s cwd.' })),
         }),
@@ -371,13 +379,14 @@ export function createSubagentExtension(
             const thinkingText = params.thinking?.trim();
             const thinking = thinkingText ? parseThinkingLevel(thinkingText) : undefined;
             if (thinkingText && !thinking) throw new Error(`thinking must be one of: ${LEVELS_TEXT}, not ${JSON.stringify(thinkingText)}`);
+            const isolation = subagentIsolation(params.isolation);
             if (resume) {
               const creationOptions = [
                 role && "role",
                 thinking && "thinking",
                 params.model?.trim() && "model",
                 params.input_files?.length && "input_files",
-                params.isolation?.trim() && "isolation",
+                isolation && "isolation",
                 params.ticket?.trim() && "ticket",
                 params.repo?.trim() && "repo",
               ].filter(Boolean);
@@ -407,7 +416,7 @@ export function createSubagentExtension(
               ...(role ? { role } : {}),
               ...(thinking ? { thinking } : {}),
               ...(params.model ? { model: params.model } : {}),
-              ...(params.isolation === "worktree" ? { isolation: "worktree" as const } : {}),
+              ...(isolation ? { isolation } : {}),
               ...(ticket ? { ticket } : {}),
               ...(params.repo?.trim() ? { repo: params.repo.trim() } : {}),
               signal: childAbort.signal,

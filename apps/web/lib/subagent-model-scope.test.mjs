@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createJiti } from "jiti";
 
-const { agentModelDescription, scopedThinkingLevel, THINKING_LEVELS } = await createJiti(import.meta.url)
+const { agentModelDescription, isSubagentRoleModelReference, scopedThinkingLevel, THINKING_LEVELS } = await createJiti(import.meta.url)
   .import("./subagent-model-scope.ts");
 
 const opus = { provider: "pi-sub-anthropic", id: "claude-opus-5-5" };
@@ -48,4 +48,30 @@ test("a model pinned to a level runs only at that level, whatever chose it", () 
 
 test("an empty scope admits any model", () => {
   assert.equal(scopedThinkingLevel({ model: { provider: "openai", id: "gpt-4o" }, level: "high", source: "the call" }, []), undefined);
+});
+
+test("role model reference shape requires provider/modelId and an optional valid thinking level", () => {
+  for (const valid of [
+    "pi-sub-anthropic/claude-opus-5-5:medium",
+    "google/gemini-4-carbon",
+    "openrouter/anthropic/claude-sonnet-4:high",
+    "ollama/qwen3:8b:low",
+  ]) {
+    assert.equal(isSubagentRoleModelReference(valid), true, valid);
+  }
+  for (const malformed of [
+    "",
+    "claude-opus-5-5",
+    "claude-opus-5-5:high",
+    "/claude-opus-5-5",
+    "pi-sub-anthropic/",
+    "pi-sub-anthropic/:high",
+    "pi-sub-anthropic/claude-opus-5-5:",
+    "pi-sub-anthropic/claude-opus-5-5:turbo",
+    "pi-sub-anthropic/claude opus:high",
+    "pi-sub-anthropic:extra/claude-opus-5-5",
+    "pi-sub-anthropic//claude-opus-5-5",
+  ]) {
+    assert.equal(isSubagentRoleModelReference(malformed), false, malformed);
+  }
 });

@@ -42,6 +42,23 @@ export function modelReferenceLevel(reference: string): ThinkingLevel | undefine
 }
 
 /**
+ * Whether a role's `model` in `roles.json` has the `provider/modelId` or `provider/modelId:level`
+ * shape, checked when the file loads so a malformed entry is reported before a call uses it.
+ */
+export function isSubagentRoleModelReference(reference: string): boolean {
+  if (!reference || /\s/.test(reference)) return false;
+  const slash = reference.indexOf("/");
+  if (slash <= 0) return false;
+  const provider = reference.slice(0, slash);
+  if (provider.includes(":")) return false;
+  const rest = reference.slice(slash + 1);
+  const colon = rest.lastIndexOf(":");
+  const modelId = colon >= 0 ? rest.slice(0, colon) : rest;
+  if (!modelId || modelId.startsWith("/") || modelId.endsWith("/") || modelId.includes("//")) return false;
+  return colon < 0 || parseThinkingLevel(rest.slice(colon + 1)) !== undefined;
+}
+
+/**
  * Reads a model reference as pi's `--model` does: `provider/modelId` or a bare id, optionally
  * followed by `:<thinking level>`. The whole reference is tried first, so an id that itself
  * contains a colon (`qwen3:8b`) still matches; a suffix that is no thinking level never matches.

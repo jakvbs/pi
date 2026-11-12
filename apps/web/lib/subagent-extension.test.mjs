@@ -725,13 +725,13 @@ test("Agent passes a ticket to a new run and refuses one that is no feature id o
   assert.equal(requests.length, 2);
 });
 
-test("Agent lists each role with its model and level, passes a call's role, and refuses one with resume", async () => {
+test("Agent lists each role with its model, level and reading, passes a call's role, and refuses one with resume", async () => {
   const requests = [];
   const scout = {
     name: "scout-agent", displayName: "scout-agent", description: "The only subagent type", systemPrompt: "Delegate",
     tools: ["read"], model: "pi-sub-anthropic/claude-opus-5-5", thinking: "medium",
     roles: { kind: "loaded", path: "../spec/roles.json", roles: [
-      { name: "worker", model: "pi-sub-anthropic/claude-opus-5-5:medium", reading: [] },
+      { name: "worker", model: "pi-sub-anthropic/claude-opus-5-5:medium", reading: ["~/.repos/legible/skills/scout-mode/SKILL.md"] },
       { name: "review", model: "pi-sub-anthropic/claude-sonnet-5-5:high", reading: [] },
     ] },
     inheritContext: false, runInBackground: true, enabled: true, scope: "package",
@@ -746,7 +746,10 @@ test("Agent lists each role with its model and level, passes a call's role, and 
   };
   const { tools } = await loadTools(runtime, () => [scout]);
   const agent = tools.get("Agent");
-  assert.match(agent.description, /- scout-agent: The only subagent type \(Tools: read; Model: pi-sub-anthropic\/claude-opus-5-5; Thinking: medium; Roles: worker \(pi-sub-anthropic\/claude-opus-5-5:medium\), review \(pi-sub-anthropic\/claude-sonnet-5-5:high\)\)/);
+  assert.match(
+    agent.description,
+    /- scout-agent: The only subagent type \(Tools: read; Model: pi-sub-anthropic\/claude-opus-5-5; Thinking: medium; Roles: worker \(pi-sub-anthropic\/claude-opus-5-5:medium, reading: ~\/\.repos\/legible\/skills\/scout-mode\/SKILL\.md\), review \(pi-sub-anthropic\/claude-sonnet-5-5:high\)\)/,
+  );
   assert.match(agent.parameters.properties.role.description, /model in this call replaces the role's model and keeps its level unless it names one; thinking sets the level alone/);
 
   await agent.execute("call-1", { subagent_type: "scout-agent", role: " review ", prompt: "Do it", description: "Work" });
@@ -757,13 +760,25 @@ test("Agent lists each role with its model and level, passes a call's role, and 
   await agent.execute("call-5", { subagent_type: "scout-agent", thinking: "", prompt: "Do it", description: "Work" });
   assert.equal(requests[2].thinking, "high");
   assert.equal("thinking" in requests[3], false);
+  await agent.execute("call-7", { subagent_type: "scout-agent", isolation: " none ", prompt: "Do it", description: "Work" });
+  await agent.execute("call-8", { subagent_type: "scout-agent", isolation: " worktree ", prompt: "Do it", description: "Work" });
+  await agent.execute("call-9", { subagent_type: "scout-agent", isolation: "", prompt: "Do it", description: "Work" });
+  assert.equal(requests[4].isolation, "none");
+  assert.equal(requests[5].isolation, "worktree");
+  assert.equal("isolation" in requests[6], false);
+  const badIsolation = await agent.execute("call-10", { subagent_type: "scout-agent", isolation: "off", prompt: "Do it", description: "Work" });
+  assert.equal(badIsolation.isError, true);
+  assert.equal(badIsolation.content[0].text, 'isolation must be "worktree" or "none", not "off"');
   const loud = await agent.execute("call-6", { subagent_type: "scout-agent", thinking: "loud", prompt: "Do it", description: "Work" });
   assert.equal(loud.isError, true);
   assert.equal(loud.content[0].text, 'thinking must be one of: off, minimal, low, medium, high, xhigh, max, not "loud"');
-  assert.equal(requests.length, 4);
+  assert.equal(requests.length, 7);
   const resumed = await agent.execute("call-3", { prompt: "Again", description: "Work", resume: "child-session", role: "review" });
   assert.equal(resumed.isError, true);
   assert.match(resumed.content[0].text, /^role only apply to new subagents/);
+  const resumedNone = await agent.execute("call-11", { prompt: "Again", description: "Work", resume: "child-session", isolation: "none" });
+  assert.equal(resumedNone.isError, true);
+  assert.match(resumedNone.content[0].text, /^isolation only apply to new subagents/);
 
   const broken = await loadTools(runtime, () => [{ ...scout, roles: { kind: "invalid", path: "r.json", error: "cannot read roles file r.json: ENOENT" } }]);
   assert.match(broken.tools.get("Agent").description, /Roles unavailable: cannot read roles file r\.json: ENOENT\)/);

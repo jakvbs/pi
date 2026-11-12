@@ -322,6 +322,9 @@ export class WorktreeBranchInUseError extends Error {
   }
 }
 
+/** Large repos (30k+ files, or node_modules in a removed checkout) can take minutes to create or remove. */
+const WORKTREE_TIMEOUT = 5 * 60_000;
+
 export async function addWorktree(cwd: string, branch: string): Promise<{ path: string; branch: string }> {
   const trimmed = branch.trim();
   if (!trimmed) throw new Error("Branch name is required");
@@ -354,8 +357,6 @@ export async function addWorktree(cwd: string, branch: string): Promise<{ path: 
   }
 
   try {
-    // Large repos (30k+ files) can take minutes to checkout.
-    const WORKTREE_TIMEOUT = 5 * 60_000;
     if (branchExists) {
       await git(repoRoot, ["worktree", "add", "--", worktreePath, trimmed], WORKTREE_TIMEOUT);
     } else {
@@ -390,7 +391,7 @@ export async function removeWorktree(cwd: string, worktreePath: string, force = 
   if (target.isMain) throw new Error("Cannot remove the main worktree");
 
   try {
-    await git(cwd, ["worktree", "remove", ...(force ? ["--force"] : []), target.path]);
+    await git(cwd, ["worktree", "remove", ...(force ? ["--force"] : []), target.path], WORKTREE_TIMEOUT);
   } catch (error) {
     throw new Error(extractGitError(error));
   }

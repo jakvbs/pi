@@ -1,7 +1,9 @@
 // The roles a profile's `roles:` file defines: per role a default model (with its level) and required reading.
-import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { jsonErrorMessage } from "./mcp-json-error";
+import { PROJECT_SETTINGS_MAX_BYTES, readRegularFileText } from "./regular-file";
+import { isSubagentRoleModelReference, LEVELS_TEXT } from "./subagent-model-scope";
 
 export interface SubagentRole {
   name: string;
@@ -28,11 +30,20 @@ export function readSubagentRoles(value: unknown, profileFile: string): Subagent
   }
   const path = value.trim();
   const file = path === "~" || path.startsWith("~/") ? resolve(homedir(), path.slice(2)) : resolve(dirname(profileFile), path);
-  let data: unknown;
+  let text: string | undefined;
   try {
-    data = JSON.parse(readFileSync(file, "utf8"));
+    text = readRegularFileText(file, PROJECT_SETTINGS_MAX_BYTES);
   } catch (error) {
     return { kind: "invalid", path, error: `cannot read roles file ${path}: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  if (text === undefined) {
+    return { kind: "invalid", path, error: `cannot read roles file ${path}: ENOENT: no such file or directory` };
+  }
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch (error) {
+    return { kind: "invalid", path, error: `cannot read roles file ${path}: ${jsonErrorMessage(error, text)}` };
   }
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
     return { kind: "invalid", path, error: `roles file ${path} must be a JSON object of roles` };
@@ -42,8 +53,18 @@ export function readSubagentRoles(value: unknown, profileFile: string): Subagent
     const invalid: SubagentRoles = { kind: "invalid", path, error: `roles file ${path}: role ${name} needs a model string and a reading list of paths` };
     if (typeof entry !== "object" || entry === null || !("model" in entry) || !("reading" in entry)) return invalid;
     const { model, reading } = entry;
-    if (typeof model !== "string" || !model.trim() || !Array.isArray(reading) || !reading.every((item) => typeof item === "string")) return invalid;
-    roles.push({ name, model: model.trim(), reading });
+    if (typeof model !== "string" || !model.trim() || !Array.isArray(reading) || !reading.every((item): item is string => typeof item === "string" && item.trim() !== "")) {
+      return invalid;
+    }
+    const trimmedModel = model.trim();
+    if (!isSubagentRoleModelReference(trimmedModel)) {
+      return {
+        kind: "invalid",
+        path,
+        error: `roles file ${path}: role ${name} has invalid model ${JSON.stringify(trimmedModel)}; expected provider/modelId or provider/modelId:level (${LEVELS_TEXT})`,
+      };
+    }
+    roles.push({ name, model: trimmedModel, reading });
   }
   return { kind: "loaded", path, roles };
 }
@@ -58,12 +79,19 @@ export function findSubagentRole(profileName: string, roles: SubagentRoles | und
 }
 
 /**
- * The roles as the `Agent` declaration lists them: each with its model and level, marked when
- * `inScope` says the session's `enabledModels` would refuse that model.
+ * The roles as the `Agent` declaration lists them: each with its model, level and required reading,
+ * marked when `inScope` says the session's `enabledModels` would refuse that model.
  */
 export function subagentRolesText(roles: SubagentRoles, inScope: (model: string) => boolean): string {
   if (roles.kind === "invalid") return `Roles unavailable: ${roles.error}`;
-  return `Roles: ${roles.roles.map((role) => `${role.name} (${role.model}${inScope(role.model) ? "" : ", outside enabledModels"})`).join(", ")}`;
+  return `Roles: ${roles.roles.map((role) => {
+    const notes = [
+      role.model,
+      ...(inScope(role.model) ? [] : ["outside enabledModels"]),
+      ...(role.reading.length > 0 ? [`reading: ${role.reading.join(", ")}`] : []),
+    ];
+    return `${role.name} (${notes.join(", ")})`;
+  }).join(", ")}`;
 }
 
 /** The delegated task with the role named and its required reading listed first. */

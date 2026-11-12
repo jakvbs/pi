@@ -308,8 +308,8 @@ test("Agent's model declaration lists the session's scoped models in every reque
 const SCOUT_PROFILE = {
   name: "scout-agent", displayName: "scout-agent", description: "The only subagent type", systemPrompt: "Delegate",
   tools: ["read"], roles: { kind: "loaded", path: "roles.json", roles: [
-    { name: "worker", model: "faux/faux-model:medium", reading: [] },
-    { name: "review", model: "faux/reviewer:high", reading: [] },
+    { name: "worker", model: "faux/faux-model:medium", reading: ["skills/scout-mode/SKILL.md"] },
+    { name: "review", model: "faux/reviewer:high", reading: ["skills/scout-mode/SKILL.md", "docs/wizja/00-mapa.md"] },
     // Its own model, not `pinned` at `high`: the declaration resolves it as the runtime does.
     { name: "stray", model: "faux/pinned:high", reading: [] },
   ] },
@@ -317,7 +317,7 @@ const SCOUT_PROFILE = {
 };
 
 // The coordinator should not learn only at call time that a role's model is refused.
-test("Agent's declaration marks a role whose model the session's scope refuses", async () => {
+test("Agent's declaration lists each role's reading and marks a role whose model the session's scope refuses", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-web-subagent-role-scope-"));
   let session;
   try {
@@ -337,12 +337,13 @@ test("Agent's declaration marks a role whose model the session's scope refuses",
     };
 
     assert.equal(await declaredRoles(),
-      "worker (faux/faux-model:medium), review (faux/reviewer:high, outside enabledModels), stray (faux/pinned:high, outside enabledModels)");
+      "worker (faux/faux-model:medium, reading: skills/scout-mode/SKILL.md), review (faux/reviewer:high, outside enabledModels, reading: skills/scout-mode/SKILL.md, docs/wizja/00-mapa.md), stray (faux/pinned:high, outside enabledModels)");
     session.setScopedModels([...session.scopedModels, { model: faux.getModel("reviewer") }]);
     assert.equal(await declaredRoles(),
-      "worker (faux/faux-model:medium), review (faux/reviewer:high), stray (faux/pinned:high, outside enabledModels)");
+      "worker (faux/faux-model:medium, reading: skills/scout-mode/SKILL.md), review (faux/reviewer:high, reading: skills/scout-mode/SKILL.md, docs/wizja/00-mapa.md), stray (faux/pinned:high, outside enabledModels)");
     session.setScopedModels([]);
-    assert.equal(await declaredRoles(), "worker (faux/faux-model:medium), review (faux/reviewer:high), stray (faux/pinned:high)");
+    assert.equal(await declaredRoles(),
+      "worker (faux/faux-model:medium, reading: skills/scout-mode/SKILL.md), review (faux/reviewer:high, reading: skills/scout-mode/SKILL.md, docs/wizja/00-mapa.md), stray (faux/pinned:high)");
   } finally {
     session?.dispose();
     await rm(dir, { recursive: true, force: true });
