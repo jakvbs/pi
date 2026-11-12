@@ -312,7 +312,7 @@ const SCOUT_PROFILE = {
     { name: "review", model: "faux/reviewer:high", reading: ["skills/scout-mode/SKILL.md", "docs/wizja/00-mapa.md"] },
     // Its own model, not `pinned` at `high`: the declaration resolves it as the runtime does.
     { name: "stray", model: "faux/pinned:high", reading: [] },
-  ] },
+  ], rejected: [] },
   inheritContext: false, runInBackground: true, enabled: true, scope: "package",
 };
 

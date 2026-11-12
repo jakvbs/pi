@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createJiti } from "jiti";
 
-const { agentModelDescription, isSubagentRoleModelReference, scopedThinkingLevel, THINKING_LEVELS } = await createJiti(import.meta.url)
+const { agentModelDescription, isSubagentRoleModelReference, parseSubagentModel, scopedThinkingLevel, THINKING_LEVELS } = await createJiti(import.meta.url)
   .import("./subagent-model-scope.ts");
 
 const opus = { provider: "pi-sub-anthropic", id: "claude-opus-5-5" };
@@ -50,28 +50,25 @@ test("an empty scope admits any model", () => {
   assert.equal(scopedThinkingLevel({ model: { provider: "openai", id: "gpt-4o" }, level: "high", source: "the call" }, []), undefined);
 });
 
-test("role model reference shape requires provider/modelId and an optional valid thinking level", () => {
-  for (const valid of [
-    "pi-sub-anthropic/claude-opus-5-5:medium",
-    "google/gemini-4-carbon",
-    "openrouter/anthropic/claude-sonnet-4:high",
-    "ollama/qwen3:8b:low",
+test("a role's model passes the load check exactly when the run's own parse could resolve it", () => {
+  // Each is resolved by parseSubagentModel against a catalog holding the model it names.
+  for (const [reference, provider, id] of [
+    ["pi-sub-anthropic/claude-opus-5-5:medium", "pi-sub-anthropic", "claude-opus-5-5"],
+    ["google/gemini-4-carbon", "google", "gemini-4-carbon"],
+    ["openrouter/anthropic/claude-sonnet-4:high", "openrouter", "anthropic/claude-sonnet-4"],
+    ["ollama/qwen3:8b", "ollama", "qwen3:8b"],
+    ["ollama/qwen3:8b:low", "ollama", "qwen3:8b"],
+    ["claude-opus-5-5", "anthropic", "claude-opus-5-5"],
+    ["claude-opus-5-5:high", "anthropic", "claude-opus-5-5"],
+    ["pi-sub-anthropic/claude-opus-5-5:turbo", "pi-sub-anthropic", "claude-opus-5-5:turbo"],
   ]) {
-    assert.equal(isSubagentRoleModelReference(valid), true, valid);
+    const model = { provider, id };
+    const catalog = { getModel: (p, i) => (p === provider && i === id ? model : undefined), getModels: () => [model] };
+    assert.equal(parseSubagentModel(catalog, reference).model, model, reference);
+    assert.equal(isSubagentRoleModelReference(reference), true, reference);
   }
-  for (const malformed of [
-    "",
-    "claude-opus-5-5",
-    "claude-opus-5-5:high",
-    "/claude-opus-5-5",
-    "pi-sub-anthropic/",
-    "pi-sub-anthropic/:high",
-    "pi-sub-anthropic/claude-opus-5-5:",
-    "pi-sub-anthropic/claude-opus-5-5:turbo",
-    "pi-sub-anthropic/claude opus:high",
-    "pi-sub-anthropic:extra/claude-opus-5-5",
-    "pi-sub-anthropic//claude-opus-5-5",
-  ]) {
+  // No catalog can match these: an empty provider or model id, or whitespace.
+  for (const malformed of ["", "/claude-opus-5-5", "pi-sub-anthropic/", "pi-sub-anthropic/claude opus:high", "claude opus"]) {
     assert.equal(isSubagentRoleModelReference(malformed), false, malformed);
   }
 });

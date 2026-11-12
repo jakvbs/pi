@@ -42,20 +42,27 @@ export function modelReferenceLevel(reference: string): ThinkingLevel | undefine
 }
 
 /**
- * Whether a role's `model` in `roles.json` has the `provider/modelId` or `provider/modelId:level`
- * shape, checked when the file loads so a malformed entry is reported before a call uses it.
+ * The ways `parseSubagentModel` reads a reference, in the order it tries them: the whole reference,
+ * then the reference without a `:level` suffix.
+ */
+function modelReferenceReadings(reference: string): { base: string; level?: ThinkingLevel }[] {
+  const split = splitLevel(reference);
+  return split ? [{ base: reference }, split] : [{ base: reference }];
+}
+
+/** Whether a lookup could ever find `base`: a bare id, or `provider/modelId` with both parts. */
+function isModelKey(base: string): boolean {
+  const slash = base.indexOf("/");
+  return base !== "" && !/\s/.test(base) && slash !== 0 && slash !== base.length - 1;
+}
+
+/**
+ * Whether a role's `model` in `roles.json` could resolve at all, read as `parseSubagentModel` reads
+ * it (so `ollama/qwen3:8b` and a bare id pass); checked when the file loads, where no models are
+ * known yet, so an entry no lookup can match is reported before a call uses it.
  */
 export function isSubagentRoleModelReference(reference: string): boolean {
-  if (!reference || /\s/.test(reference)) return false;
-  const slash = reference.indexOf("/");
-  if (slash <= 0) return false;
-  const provider = reference.slice(0, slash);
-  if (provider.includes(":")) return false;
-  const rest = reference.slice(slash + 1);
-  const colon = rest.lastIndexOf(":");
-  const modelId = colon >= 0 ? rest.slice(0, colon) : rest;
-  if (!modelId || modelId.startsWith("/") || modelId.endsWith("/") || modelId.includes("//")) return false;
-  return colon < 0 || parseThinkingLevel(rest.slice(colon + 1)) !== undefined;
+  return modelReferenceReadings(reference).some(({ base }) => isModelKey(base));
 }
 
 /**
@@ -69,11 +76,10 @@ export function parseSubagentModel<M extends { provider: string; id: string }>(
 ): { model: M; thinkingLevel?: ThinkingLevel } | undefined {
   if (!value?.trim()) return undefined;
   const requested = value.trim();
-  const exact = findSubagentModel(models, requested);
-  if (exact) return { model: exact };
-  const split = splitLevel(requested);
-  const model = split && findSubagentModel(models, split.base);
-  if (split && model) return { model, thinkingLevel: split.level };
+  for (const { base, level } of modelReferenceReadings(requested)) {
+    const model = findSubagentModel(models, base);
+    if (model) return level ? { model, thinkingLevel: level } : { model };
+  }
   throw new Error(`Subagent model not found: ${requested}`);
 }
 

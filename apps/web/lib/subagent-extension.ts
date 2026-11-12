@@ -15,7 +15,7 @@ import {
 import { MAX_SUBAGENT_INPUT_BYTES, MAX_SUBAGENT_INPUT_FILES } from "./subagent-input";
 import { agentModelDescription, LEVELS_TEXT, parseThinkingLevel, referenceInScope } from "./subagent-model-scope";
 import { subagentRolesText } from "./subagent-roles";
-import { worktreeHasUncommittedFiles } from "./worktree";
+import { worktreeHasUncommittedFiles, worktreeRemovalRefused } from "./worktree";
 
 export const HOST_SUBAGENT_EXTENSION_NAME = "pi-web-subagents";
 const HOST_SUBAGENT_EXTENSION_PATH = `<inline:${HOST_SUBAGENT_EXTENSION_NAME}>`;
@@ -95,12 +95,16 @@ function subagentTicket(value: string | undefined): string | undefined {
   return ticket;
 }
 
-/** `"worktree"` or `"none"` (`"none"` overrides a profile's `isolation: worktree`); empty means none. */
+/**
+ * `"worktree"`, or `"none"` and the profile's own word `"off"`, which override a profile's
+ * `isolation: worktree`; empty means none.
+ */
 function subagentIsolation(value: string | undefined): "worktree" | "none" | undefined {
   const isolation = value?.trim();
   if (!isolation) return undefined;
   if (isolation === "worktree" || isolation === "none") return isolation;
-  throw new Error(`isolation must be "worktree" or "none", not ${JSON.stringify(isolation)}`);
+  if (isolation === "off") return "none";
+  throw new Error(`isolation must be "worktree", "none" or "off", not ${JSON.stringify(isolation)}`);
 }
 
 const SUBAGENT_CANDIDATE_LIMIT = 10;
@@ -242,15 +246,18 @@ export function subagentToolDetails(run: SubagentRunInfo): SubagentToolDetails {
  * Where an isolated run's worktree is, as its result was recorded: the model reads only `content`,
  * never `details` (#1202). Git keeps the branch, with any commits, when it removes the checkout,
  * and refuses to remove one that still has changes. Only this run's own refusal gives a reason, and
- * never in git's words, which end in "use --force to delete it". A result recorded without
- * `worktreeExists` (before #1202) says nothing.
+ * never in git's words, which end in "use --force to delete it". A removal that failed rather than
+ * being refused may have been cut short mid-delete (by a removal before F107), so that checkout is
+ * reported as possibly damaged. A result recorded without `worktreeExists` (before #1202) says nothing.
  */
 function worktreeOutcomeText(run: SubagentRunInfo): string | undefined {
   if (!run.worktreePath || !run.worktreeBranch || run.worktreeExists === undefined) return undefined;
   if (!run.worktreeExists) return `Its worktree was removed; branch ${run.worktreeBranch} keeps any commits it made.`;
-  return run.worktreeCleanupError && worktreeHasUncommittedFiles(run.worktreeCleanupError)
-    ? `Its worktree was kept at ${run.worktreePath} (branch ${run.worktreeBranch}) because it still has uncommitted or untracked files.`
-    : `Its worktree is still at ${run.worktreePath} (branch ${run.worktreeBranch}).`;
+  const where = `${run.worktreePath} (branch ${run.worktreeBranch})`;
+  if (!run.worktreeCleanupError) return `Its worktree is still at ${where}.`;
+  if (worktreeHasUncommittedFiles(run.worktreeCleanupError)) return `Its worktree was kept at ${where} because it still has uncommitted or untracked files.`;
+  if (worktreeRemovalRefused(run.worktreeCleanupError)) return `Its worktree is still at ${where}.`;
+  return `Its worktree is still at ${where}, but removing it failed, so the checkout may be damaged; check git status there before relying on it. The branch keeps any commits it made.`;
 }
 
 export function subagentFinalText(run: SubagentRunInfo): string {
@@ -341,7 +348,7 @@ export function createSubagentExtension(
           wait_timeout: waitTimeoutParameter(),
           model: Type.Optional(Type.String({ description: modelDescription })),
           thinking: Type.Optional(Type.String({ description: `Thinking level for this run, one of: ${LEVELS_TEXT}. Overrides the role's and the profile's level without changing the model. A model pinned to a level in the model list runs only at that level.` })),
-          isolation: Type.Optional(Type.String({ description: 'Set to "worktree" to run the subagent in an isolated git worktree, or "none" to run without one even when the profile uses a worktree.' })),
+          isolation: Type.Optional(Type.String({ description: 'Set to "worktree" to run the subagent in an isolated git worktree, or "none" (or "off") to run without one even when the profile uses a worktree.' })),
           ticket: Type.Optional(Type.String({ description: "Factory ticket this work belongs to, as its feature id (e.g. F046). Kept with the subagent session and shown on the board." })),
           repo: Type.Optional(Type.String({ description: 'Absolute path of another Git repository to work in. With isolation "worktree" the worktree and its branch are cut from that repository. Default: this session\'s cwd.' })),
         }),

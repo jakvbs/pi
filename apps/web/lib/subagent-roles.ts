@@ -13,9 +13,15 @@ export interface SubagentRole {
   reading: string[];
 }
 
-/** A profile's roles file, read, or the reason it could not be: a broken file is reported, never ignored. */
+/** A role the file holds that cannot be used, with the reason; the file's other roles still work. */
+export interface RejectedSubagentRole {
+  name: string;
+  error: string;
+}
+
+/** A profile's roles file, read, or the reason it could not be: a broken file or role is reported, never ignored. */
 export type SubagentRoles =
-  | { kind: "loaded"; path: string; roles: SubagentRole[] }
+  | { kind: "loaded"; path: string; roles: SubagentRole[]; rejected: RejectedSubagentRole[] }
   | { kind: "invalid"; path: string; error: string };
 
 /**
@@ -49,30 +55,36 @@ export function readSubagentRoles(value: unknown, profileFile: string): Subagent
     return { kind: "invalid", path, error: `roles file ${path} must be a JSON object of roles` };
   }
   const roles: SubagentRole[] = [];
+  const rejected: RejectedSubagentRole[] = [];
   for (const [name, entry] of Object.entries(data)) {
-    const invalid: SubagentRoles = { kind: "invalid", path, error: `roles file ${path}: role ${name} needs a model string and a reading list of paths` };
-    if (typeof entry !== "object" || entry === null || !("model" in entry) || !("reading" in entry)) return invalid;
-    const { model, reading } = entry;
-    if (typeof model !== "string" || !model.trim() || !Array.isArray(reading) || !reading.every((item): item is string => typeof item === "string" && item.trim() !== "")) {
-      return invalid;
-    }
-    const trimmedModel = model.trim();
-    if (!isSubagentRoleModelReference(trimmedModel)) {
-      return {
-        kind: "invalid",
-        path,
-        error: `roles file ${path}: role ${name} has invalid model ${JSON.stringify(trimmedModel)}; expected provider/modelId or provider/modelId:level (${LEVELS_TEXT})`,
-      };
-    }
-    roles.push({ name, model: trimmedModel, reading });
+    const role = readSubagentRole(name, entry);
+    if (typeof role === "string") rejected.push({ name, error: role });
+    else roles.push(role);
   }
-  return { kind: "loaded", path, roles };
+  return { kind: "loaded", path, roles, rejected };
+}
+
+/** One role of the file, or why it cannot be used. */
+function readSubagentRole(name: string, entry: unknown): SubagentRole | string {
+  const invalid = `role ${name} needs a model string and a reading list of paths`;
+  if (typeof entry !== "object" || entry === null || !("model" in entry) || !("reading" in entry)) return invalid;
+  const { model, reading } = entry;
+  if (typeof model !== "string" || !model.trim() || !Array.isArray(reading) || !reading.every((item): item is string => typeof item === "string" && item.trim() !== "")) {
+    return invalid;
+  }
+  const trimmedModel = model.trim();
+  if (!isSubagentRoleModelReference(trimmedModel)) {
+    return `role ${name} has invalid model ${JSON.stringify(trimmedModel)}; expected provider/modelId or a model id, optionally ending in :level (${LEVELS_TEXT})`;
+  }
+  return { name, model: trimmedModel, reading };
 }
 
 /** The role a call names, refused with the profile's roles when it has none of that name. */
 export function findSubagentRole(profileName: string, roles: SubagentRoles | undefined, name: string): SubagentRole {
   if (!roles) throw new Error(`Subagent profile ${profileName} has no roles; omit role.`);
   if (roles.kind === "invalid") throw new Error(`Subagent profile ${profileName} has no usable roles: ${roles.error}`);
+  const rejected = roles.rejected.find((entry) => entry.name === name);
+  if (rejected) throw new Error(`Role ${name} of subagent ${profileName} is unavailable: roles file ${roles.path}: ${rejected.error}`);
   const role = roles.roles.find((entry) => entry.name === name);
   if (!role) throw new Error(`Unknown role ${name} for subagent ${profileName}. Roles: ${roles.roles.map((entry) => entry.name).join(", ")}.`);
   return role;
@@ -80,11 +92,20 @@ export function findSubagentRole(profileName: string, roles: SubagentRoles | und
 
 /**
  * The roles as the `Agent` declaration lists them: each with its model, level and required reading,
- * marked when `inScope` says the session's `enabledModels` would refuse that model.
+ * marked when `inScope` says the session's `enabledModels` would refuse that model, then the
+ * roles the file holds that cannot be used, with the reason.
  */
 export function subagentRolesText(roles: SubagentRoles, inScope: (model: string) => boolean): string {
   if (roles.kind === "invalid") return `Roles unavailable: ${roles.error}`;
-  return `Roles: ${roles.roles.map((role) => {
+  const unavailable = roles.rejected.length > 0
+    ? [`Roles unavailable: roles file ${roles.path}: ${roles.rejected.map((role) => role.error).join("; ")}`]
+    : [];
+  if (roles.roles.length === 0 && unavailable.length > 0) return unavailable[0];
+  return [usableRolesText(roles.roles, inScope), ...unavailable].join("; ");
+}
+
+function usableRolesText(roles: readonly SubagentRole[], inScope: (model: string) => boolean): string {
+  return `Roles: ${roles.map((role) => {
     const notes = [
       role.model,
       ...(inScope(role.model) ? [] : ["outside enabledModels"]),

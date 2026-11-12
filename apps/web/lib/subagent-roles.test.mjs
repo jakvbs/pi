@@ -29,7 +29,7 @@ test("a profile's roles file is read relative to the profile, or from the home d
     const profile = join(dir, "agents", "scout-agent.md");
     const expected = (path) => ({ kind: "loaded", path, roles: [
       { name: "worker", ...ROLES.worker }, { name: "judge", ...ROLES.judge },
-    ] });
+    ], rejected: [] });
     assert.deepEqual(readSubagentRoles("../roles.json", profile), expected("../roles.json"));
     const fromHome = `~/${relative(homedir(), join(dir, "roles.json"))}`;
     assert.deepEqual(readSubagentRoles(fromHome, profile), expected(fromHome));
@@ -51,11 +51,29 @@ test("a missing or malformed roles file is reported, not ignored", async () => {
     assert.equal(readSubagentRoles(["roles.json"], profile).error, "roles must be the path of a roles file");
     await invalid("{ not json", /^cannot read roles file roles\.json: /);
     await invalid("[]", /must be a JSON object of roles/);
-    await invalid(JSON.stringify({ worker: { model: "x/y" } }), /role worker needs a model string and a reading list/);
-    await invalid(JSON.stringify({ worker: { model: "", reading: [] } }), /role worker needs/);
-    await invalid(JSON.stringify({ worker: { model: "x/y", reading: [1] } }), /role worker needs/);
-    await invalid(JSON.stringify({ worker: { model: "x/y", reading: [""] } }), /role worker needs/);
-    await invalid(JSON.stringify({ worker: "x/y" }), /role worker needs/);
+  });
+});
+
+test("a malformed role disables only that role, and says why", async () => {
+  await withDir(async (dir) => {
+    const profile = join(dir, "scout-agent.md");
+    for (const worker of [{ model: "x/y" }, { model: "", reading: [] }, { model: "x/y", reading: [1] }, { model: "x/y", reading: [""] }, "x/y"]) {
+      await writeFile(join(dir, "roles.json"), JSON.stringify({ worker, judge: ROLES.judge }));
+      const roles = readSubagentRoles("roles.json", profile);
+      assert.equal(roles.kind, "loaded", JSON.stringify(worker));
+      assert.deepEqual(roles.roles, [{ name: "judge", ...ROLES.judge }]);
+      assert.deepEqual(roles.rejected, [{ name: "worker", error: "role worker needs a model string and a reading list of paths" }]);
+      assert.equal(findSubagentRole("scout-agent", roles, "judge").model, ROLES.judge.model);
+      assert.throws(() => findSubagentRole("scout-agent", roles, "worker"), {
+        message: "Role worker of subagent scout-agent is unavailable: roles file roles.json: role worker needs a model string and a reading list of paths",
+      });
+      assert.equal(
+        subagentRolesText(roles, () => true),
+        "Roles: judge (pi-sub-anthropic/claude-fable-5-2:high, reading: a.md, b.md); Roles unavailable: roles file roles.json: role worker needs a model string and a reading list of paths",
+      );
+    }
+    await writeFile(join(dir, "roles.json"), JSON.stringify({ worker: { model: "x/", reading: [] } }));
+    assert.match(subagentRolesText(readSubagentRoles("roles.json", profile), () => true), /^Roles unavailable: roles file roles\.json: role worker has invalid model "x\/"/);
   });
 });
 
@@ -101,37 +119,34 @@ test("roles file reading refuses non-regular and oversized files without blockin
 test("a role with a malformed model reference is reported when the roles load", async () => {
   await withDir(async (dir) => {
     const profile = join(dir, "scout-agent.md");
-    for (const model of [
-      "claude-opus-5-5",
-      "claude-opus-5-5:high",
-      "/claude-opus-5-5",
-      "pi-sub-anthropic/",
-      "pi-sub-anthropic/:high",
-      "pi-sub-anthropic/claude-opus-5-5:",
-      "pi-sub-anthropic/claude-opus-5-5:turbo",
-      "pi-sub-anthropic/claude opus:high",
-      "pi-sub-anthropic:extra/claude-opus-5-5",
-      "pi-sub-anthropic//claude-opus-5-5",
-    ]) {
-      await writeFile(join(dir, "roles.json"), JSON.stringify({ worker: { model, reading: [] } }));
+    // No lookup can match these, so the role is reported now; the file's other role still loads.
+    for (const model of ["/claude-opus-5-5", "pi-sub-anthropic/", "pi-sub-anthropic/claude opus:high", "claude opus"]) {
+      await writeFile(join(dir, "roles.json"), JSON.stringify({ worker: { model, reading: [] }, judge: ROLES.judge }));
       const roles = readSubagentRoles("roles.json", profile);
-      assert.equal(roles.kind, "invalid", model);
-      assert.match(roles.error, /role worker .*model/i, model);
+      assert.equal(roles.kind, "loaded", model);
+      assert.deepEqual(roles.roles.map((role) => role.name), ["judge"], model);
+      assert.equal(roles.rejected.length, 1, model);
+      assert.match(roles.rejected[0].error, /^role worker has invalid model /, model);
     }
+    // As loose as the run's own parse: the whole reference is tried first, so a colon id needs no level.
     for (const model of [
       "pi-sub-anthropic/claude-opus-5-5:medium",
       "x/y",
       "openrouter/anthropic/claude-sonnet-4:high",
+      "ollama/qwen3:8b",
       "ollama/qwen3:8b:low",
+      "claude-opus-5-5",
+      "claude-opus-5-5:high",
+      "qwen3:8b",
     ]) {
       await writeFile(join(dir, "roles.json"), JSON.stringify({ worker: { model, reading: [] } }));
-      assert.equal(readSubagentRoles("roles.json", profile).kind, "loaded", model);
+      assert.deepEqual(readSubagentRoles("roles.json", profile).rejected, [], model);
     }
   });
 });
 
 test("a role is found by name, and refused with the list of roles otherwise", () => {
-  const roles = { kind: "loaded", path: "roles.json", roles: [{ name: "worker", ...ROLES.worker }, { name: "judge", ...ROLES.judge }] };
+  const roles = { kind: "loaded", path: "roles.json", roles: [{ name: "worker", ...ROLES.worker }, { name: "judge", ...ROLES.judge }], rejected: [] };
   assert.equal(findSubagentRole("scout-agent", roles, "judge").model, ROLES.judge.model);
   assert.throws(() => findSubagentRole("scout-agent", roles, "Judge"), { message: "Unknown role Judge for subagent scout-agent. Roles: worker, judge." });
   assert.throws(() => findSubagentRole("explore", undefined, "judge"), { message: "Subagent profile explore has no roles; omit role." });

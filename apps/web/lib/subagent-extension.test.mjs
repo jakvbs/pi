@@ -366,6 +366,16 @@ test("an isolated run's result says where its worktree was as the result was rec
       `Subagent child-session completed.\n\n${stillThere}\n\nParser is in lib/parser.ts`,
     );
   }
+  // A removal that failed or was cut short, rather than refused, may have left a half-deleted checkout (F107).
+  const mayBeDamaged = "Its worktree is still at /repo-worktrees/pi-web-agent-1 (branch pi-web-agent-1), but removing it failed, so the checkout may be damaged; check git status there before relying on it. The branch keeps any commits it made.";
+  for (const reason of [
+    "Command failed: git -C /repo worktree remove /repo-worktrees/pi-web-agent-1",
+    "error: failed to delete '/repo-worktrees/pi-web-agent-1': Permission denied",
+  ]) {
+    const text = subagentFinalText(isolated({ worktreeExists: true, worktreeCleanupError: retained(reason) }));
+    assert.equal(text, `Subagent child-session completed.\n\n${mayBeDamaged}\n\nParser is in lib/parser.ts`);
+    assert.doesNotMatch(text, /Command failed|Permission denied/);
+  }
   assert.equal(subagentFinalText(isolated({ result: undefined })), `Subagent child-session completed without text output.\n\n${removed}`);
   assert.equal(
     subagentFinalText(isolated({ status: "failed", error: "provider down", result: "half" })),
@@ -733,7 +743,7 @@ test("Agent lists each role with its model, level and reading, passes a call's r
     roles: { kind: "loaded", path: "../spec/roles.json", roles: [
       { name: "worker", model: "pi-sub-anthropic/claude-opus-5-5:medium", reading: ["~/.repos/legible/skills/scout-mode/SKILL.md"] },
       { name: "review", model: "pi-sub-anthropic/claude-sonnet-5-5:high", reading: [] },
-    ] },
+    ], rejected: [] },
     inheritContext: false, runInBackground: true, enabled: true, scope: "package",
   };
   const runtime = {
@@ -766,13 +776,16 @@ test("Agent lists each role with its model, level and reading, passes a call's r
   assert.equal(requests[4].isolation, "none");
   assert.equal(requests[5].isolation, "worktree");
   assert.equal("isolation" in requests[6], false);
-  const badIsolation = await agent.execute("call-10", { subagent_type: "scout-agent", isolation: "off", prompt: "Do it", description: "Work" });
+  // "off", the profile's own word, means "none".
+  await agent.execute("call-12", { subagent_type: "scout-agent", isolation: " off ", prompt: "Do it", description: "Work" });
+  assert.equal(requests[7].isolation, "none");
+  const badIsolation = await agent.execute("call-10", { subagent_type: "scout-agent", isolation: "false", prompt: "Do it", description: "Work" });
   assert.equal(badIsolation.isError, true);
-  assert.equal(badIsolation.content[0].text, 'isolation must be "worktree" or "none", not "off"');
+  assert.equal(badIsolation.content[0].text, 'isolation must be "worktree", "none" or "off", not "false"');
   const loud = await agent.execute("call-6", { subagent_type: "scout-agent", thinking: "loud", prompt: "Do it", description: "Work" });
   assert.equal(loud.isError, true);
   assert.equal(loud.content[0].text, 'thinking must be one of: off, minimal, low, medium, high, xhigh, max, not "loud"');
-  assert.equal(requests.length, 7);
+  assert.equal(requests.length, 8);
   const resumed = await agent.execute("call-3", { prompt: "Again", description: "Work", resume: "child-session", role: "review" });
   assert.equal(resumed.isError, true);
   assert.match(resumed.content[0].text, /^role only apply to new subagents/);

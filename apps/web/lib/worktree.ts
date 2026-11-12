@@ -1,5 +1,7 @@
 import { execFile } from "child_process";
+import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync } from "fs";
+import { rename, rm } from "fs/promises";
 import { basename, dirname, join, resolve } from "path";
 import { promisify } from "util";
 import { allowFileRoot } from "./allowed-roots";
@@ -255,11 +257,19 @@ async function getRepoRoot(cwd: string): Promise<string> {
   return realPathOrSelf(repoRootFromCommonDir(toNativePath(commonDir)));
 }
 
-/** Every worktree git has registered, `missing` when it is prunable or its folder is gone. */
-async function listRegisteredWorktrees(cwd: string): Promise<{ path: string; branch: string | null; missing: boolean }[]> {
+interface RegisteredWorktree {
+  path: string;
+  branch: string | null;
+  /** Prunable, or its folder is gone. */
+  missing: boolean;
+  locked: boolean;
+}
+
+/** Every worktree git has registered, the main one first. */
+async function listRegisteredWorktrees(cwd: string): Promise<RegisteredWorktree[]> {
   const out = await git(cwd, ["worktree", "list", "--porcelain"]);
-  const worktrees: { path: string; branch: string | null; missing: boolean }[] = [];
-  let current: { path: string; branch?: string; prunable?: boolean } | null = null;
+  const worktrees: RegisteredWorktree[] = [];
+  let current: { path: string; branch?: string; prunable?: boolean; locked?: boolean } | null = null;
 
   const flush = () => {
     if (current?.path) {
@@ -267,6 +277,7 @@ async function listRegisteredWorktrees(cwd: string): Promise<{ path: string; bra
         path: current.path,
         branch: current.branch ?? null,
         missing: current.prunable === true || !existsSync(current.path),
+        locked: current.locked === true,
       });
     }
     current = null;
@@ -280,6 +291,8 @@ async function listRegisteredWorktrees(cwd: string): Promise<{ path: string; bra
       current.branch = line.slice("branch ".length).trim().replace(/^refs\/heads\//, "");
     } else if (line.startsWith("prunable") && current) {
       current.prunable = true;
+    } else if (line.startsWith("locked") && current) {
+      current.locked = true;
     } else if (line.trim() === "") {
       flush();
     }
@@ -382,20 +395,56 @@ export async function addWorktree(cwd: string, branch: string): Promise<{ path: 
   return { path: worktreePath, branch: trimmed };
 }
 
+/**
+ * Removes a linked worktree; its branch stays. `git worktree remove` deletes in place, so a kill
+ * (a timeout, a stopped server) or a failed unlink (a read-only folder in `node_modules`) left a
+ * half-deleted checkout at the path, which git had already unregistered or then refused as dirty
+ * (F107). Here the checks git makes come first and touch nothing; then one rename on the same
+ * filesystem moves the checkout aside, `git worktree prune` drops its entry, and the moved copy
+ * is deleted. The path therefore holds the whole checkout or nothing; an interruption after the
+ * rename leaves at most the hidden trash folder beside it. Without `force`, a checkout with
+ * modified or untracked files (ignored ones are fine) or initialized submodules is refused, in
+ * git's words; a locked one always is.
+ */
 export async function removeWorktree(cwd: string, worktreePath: string, force = false): Promise<void> {
-  const worktrees = await listWorktrees(cwd);
+  const worktrees = (await listRegisteredWorktrees(cwd)).filter((worktree) => !worktree.missing);
   // Git reports worktrees by their real path; the caller's may run through a link
   // (macOS's /var and /tmp are links to /private/...).
-  const target = findWorktreeByPath(worktrees, realPathOrSelf(worktreePath));
+  const realTarget = realPathOrSelf(worktreePath);
+  const target = worktrees.find((worktree) => samePath(worktree.path, realTarget));
   if (!target) throw new Error(`Not a worktree of this repository: ${worktreePath}`);
-  if (target.isMain) throw new Error("Cannot remove the main worktree");
+  if (target === worktrees[0]) throw new Error("Cannot remove the main worktree");
+  if (target.locked) throw new Error(`cannot remove a locked working tree: ${target.path}; unlock it first`);
 
   try {
-    await git(cwd, ["worktree", "remove", ...(force ? ["--force"] : []), target.path], WORKTREE_TIMEOUT);
+    if (!force) {
+      if (await containsSubmodules(target.path)) throw new Error("working trees containing submodules cannot be moved or removed");
+      // git's own check before `worktree remove`: ignored files do not count.
+      if (await git(target.path, ["status", "--porcelain", "--ignore-submodules=none"], WORKTREE_TIMEOUT)) {
+        throw new Error(`'${target.path}' contains modified or untracked files, use --force to delete it`);
+      }
+    }
+    const trash = join(dirname(target.path), `.${basename(target.path)}.removing-${randomUUID()}`);
+    await rename(target.path, trash);
+    invalidateProjectCache();
+    // From the main worktree: the caller's cwd may have been the moved checkout.
+    await git(worktrees[0].path, ["worktree", "prune"], WORKTREE_TIMEOUT);
+    try {
+      await rm(trash, { recursive: true, force: true });
+    } catch (error) {
+      console.error(`[pi-web] removeWorktree: ${target.path} is removed, but its moved copy ${trash} could not be deleted: ${error instanceof Error ? error.message : String(error)}`);
+    }
   } catch (error) {
     throw new Error(extractGitError(error));
   }
-  invalidateProjectCache();
+}
+
+/** git's submodule check before removing a worktree: its own `modules` folder, or a checked-out gitlink. */
+async function containsSubmodules(worktreePath: string): Promise<boolean> {
+  const gitDir = toNativePath(await git(worktreePath, ["rev-parse", "--absolute-git-dir"]));
+  if (existsSync(join(gitDir, "modules"))) return true;
+  const entries = (await git(worktreePath, ["ls-files", "--stage", "-z"], WORKTREE_TIMEOUT)).split("\0");
+  return entries.some((entry) => entry.startsWith("160000 ") && existsSync(join(worktreePath, entry.slice(entry.indexOf("\t") + 1), ".git")));
 }
 
 /**
@@ -405,6 +454,11 @@ export async function removeWorktree(cwd: string, worktreePath: string, force = 
  */
 export function worktreeRemovalRequiresForce(message: string): boolean {
   return worktreeHasUncommittedFiles(message) || /containing submodules/i.test(message);
+}
+
+/** `removeWorktree()` refused before touching the checkout: files, submodules or a lock. */
+export function worktreeRemovalRefused(message: string): boolean {
+  return worktreeRemovalRequiresForce(message) || /locked working tree/i.test(message);
 }
 
 /** The refusal is about modified or untracked files, not initialized submodules. */

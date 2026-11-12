@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -338,3 +338,119 @@ test("New worktree again after its folder was deleted says so, not git's missing
   assert.equal((await addWorktree(repo, "foo")).path, created.path);
 });
 
+
+// F107: removing a worktree never leaves part of it at its path. A checkout with ignored
+// node_modules, its files listed so a test can tell whole from half-deleted.
+async function checkoutWithNodeModules(t, prefix, { packages = 4, filesPerPackage = 3 } = {}) {
+  const { repo } = await linkedWorktree(t, prefix);
+  await writeFile(path.join(repo, ".gitignore"), "node_modules/\n");
+  for (let i = 0; i < 20; i += 1) await writeFile(path.join(repo, `tracked-${i}.txt`), `${i}\n`);
+  await git(repo, ["add", "."]);
+  await git(repo, ["commit", "-m", "tracked files"]);
+  const worktree = path.join(`${repo}-worktrees`, "agent");
+  await git(repo, ["worktree", "add", "-b", "agent", worktree]);
+  const files = Array.from({ length: 20 }, (_, i) => `tracked-${i}.txt`);
+  for (let p = 0; p < packages; p += 1) {
+    await mkdir(path.join(worktree, "node_modules", `pkg-${p}`), { recursive: true });
+    for (let f = 0; f < filesPerPackage; f += 1) {
+      const file = path.join("node_modules", `pkg-${p}`, `${f}.js`);
+      await writeFile(path.join(worktree, file), "export {};\n");
+      files.push(file);
+    }
+  }
+  return { repo, worktree, files };
+}
+
+/** The checkout at `worktree` is entirely there, or not there at all; never part of it. */
+function assertWholeOrGone(worktree, files) {
+  if (!existsSync(worktree)) return "gone";
+  const missing = files.filter((file) => !existsSync(path.join(worktree, file)));
+  assert.deepEqual(missing.slice(0, 5), [], `${missing.length} of ${files.length} files missing at the kept path`);
+  return "whole";
+}
+
+async function trashBeside(worktree) {
+  return (await readdir(path.dirname(worktree))).filter((name) => name.startsWith(`.${path.basename(worktree)}.removing-`));
+}
+
+test("a removal killed mid-delete leaves the worktree's path whole or gone, and its branch (F107)", { skip: process.platform === "win32", timeout: 60_000 }, async (t) => {
+  const { repo, worktree, files } = await checkoutWithNodeModules(t, "pi-web-worktree-kill-", { packages: 40, filesPerPackage: 100 });
+  const jiti = import.meta.resolve("jiti");
+  const subject = new URL("./worktree.ts", import.meta.url).href;
+  const child = spawn(process.execPath, ["--input-type=module", "-e", [
+    `const { createJiti } = await import(${JSON.stringify(jiti)});`,
+    `const { removeWorktree } = await createJiti(${JSON.stringify(subject)}).import(${JSON.stringify(subject)});`,
+    `await removeWorktree(${JSON.stringify(repo)}, ${JSON.stringify(worktree)});`,
+  ].join("\n")], { stdio: "inherit" });
+  const exited = new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
+  // Kill the moment anything under the path is gone: the removal is then deleting.
+  const sentinels = [...files.filter((file) => file.endsWith("/0.js")), ...files.filter((file) => file.startsWith("tracked-"))];
+  let finished = false;
+  void exited.then(() => { finished = true; });
+  while (!finished && existsSync(worktree) && sentinels.every((file) => existsSync(path.join(worktree, file)))) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  child.kill("SIGKILL");
+  const { signal } = await exited;
+  assert.equal(signal, "SIGKILL", "the removal finished before it could be killed; the test proves nothing");
+
+  assert.equal(assertWholeOrGone(worktree, files), "gone");
+  assert.equal(await gitOut(repo, ["rev-parse", "--verify", "--quiet", "refs/heads/agent"]), await gitOut(repo, ["rev-parse", "HEAD"]));
+});
+
+test("a read-only folder in ignored node_modules leaves the worktree's path gone, not half-deleted (F107)", { skip: process.platform === "win32" || process.getuid?.() === 0 }, async (t) => {
+  const { repo, worktree, files } = await checkoutWithNodeModules(t, "pi-web-worktree-readonly-");
+  await chmod(path.join(worktree, "node_modules", "pkg-1"), 0o555);
+  // After hooks run in order, so this one would come after the temp folder's removal.
+  const restore = () => execFileAsync("chmod", ["-R", "u+w", path.dirname(worktree)]);
+  const { removeWorktree } = await loadSubject();
+
+  try {
+    await removeWorktree(repo, worktree);
+  } finally {
+    await restore();
+  }
+  assert.equal(assertWholeOrGone(worktree, files), "gone");
+  // The undeletable copy stays beside it, out of git's list; the branch is untouched.
+  assert.equal((await trashBeside(worktree)).length, 1);
+  assert.doesNotMatch(await gitOut(repo, ["worktree", "list", "--porcelain"]), /agent/);
+  assert.equal(await gitOut(repo, ["rev-parse", "--verify", "--quiet", "refs/heads/agent"]), await gitOut(repo, ["rev-parse", "HEAD"]));
+});
+
+test("a worktree with modified or untracked files, a lock or a submodule is refused and left exactly as it was (F107)", async (t) => {
+  const { repo, worktree, files } = await checkoutWithNodeModules(t, "pi-web-worktree-refused-");
+  const { removeWorktree, worktreeHasUncommittedFiles, worktreeRemovalRefused } = await loadSubject();
+  const refused = async (pattern) => {
+    await assert.rejects(removeWorktree(repo, worktree), (error) => {
+      assert.match(error.message, pattern);
+      assert.equal(worktreeRemovalRefused(error.message), true);
+      return true;
+    });
+    assert.equal(assertWholeOrGone(worktree, files), "whole");
+    assert.deepEqual(await trashBeside(worktree), []);
+  };
+
+  await writeFile(path.join(worktree, "draft.txt"), "uncommitted\n");
+  await refused(/contains modified or untracked files/);
+  assert.equal(worktreeHasUncommittedFiles(`'${worktree}' contains modified or untracked files, use --force to delete it`), true);
+  await rm(path.join(worktree, "draft.txt"));
+  await writeFile(path.join(worktree, "tracked-0.txt"), "changed\n");
+  await refused(/contains modified or untracked files/);
+  await git(worktree, ["checkout", "--", "tracked-0.txt"]);
+
+  await git(repo, ["worktree", "lock", worktree]);
+  await refused(/locked working tree/);
+  await git(repo, ["worktree", "unlock", worktree]);
+
+  const library = path.join(path.dirname(repo), "library");
+  await execFileAsync("git", ["init", library]);
+  await git(library, ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "--allow-empty", "-m", "library"]);
+  await git(worktree, ["-c", "protocol.file.allow=always", "submodule", "add", library, "lib"]);
+  await git(worktree, ["commit", "-m", "add submodule"]);
+  await refused(/containing submodules/);
+
+  // Forced, the same checkout goes, and its branch keeps the commit.
+  await removeWorktree(repo, worktree, true);
+  assert.equal(existsSync(worktree), false);
+  assert.match(await gitOut(repo, ["log", "-1", "--format=%s", "agent"]), /add submodule/);
+});
