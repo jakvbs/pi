@@ -1419,6 +1419,13 @@ export function AppShell() {
     });
   }, [fileTabs, terminalTabs, agentTabs]);
 
+  // An extension's ctx.shutdown() ended the session's runtime, as pi quits: leave it the
+  // way a deleted session is left (the refreshed list shows whether its file remains).
+  const handleSessionEnded = useCallback((sessionId: string) => {
+    handleSessionDeleted(sessionId);
+    handleCloseFileTab(`agent:${sessionId}`);
+  }, [handleSessionDeleted, handleCloseFileTab]);
+
   // The Agents switcher's Delete on a side chat: its tab goes with it, and the
   // main chat showing it goes back to the parent, as the Main agent row does
   // (`handleSessionDeleted` would leave the family for a fresh composer).
@@ -2862,6 +2869,7 @@ export function AppShell() {
               initialNewSessionChoices={selectedSession === null ? carriedNewSessionChoices : null}
               onNewSessionChoicesChange={handleNewSessionChoicesChange}
               onAgentEnd={handleAgentEnd}
+              onSessionEnded={handleSessionEnded}
               onToolEnd={handleToolEnd}
               onAttentionNeeded={handleAttentionNeeded}
               onSessionCreated={handleSessionCreated}
@@ -3064,6 +3072,7 @@ export function AppShell() {
             <SessionChatPanel
               key={activeAgentTab.sessionId}
               sessionId={activeAgentTab.sessionId}
+              onSessionEnded={handleSessionEnded}
               running={runningSessionIds.has(activeAgentTab.sessionId)}
               initialPrompt={sideChatPrompts[activeAgentTab.sessionId]}
               onInitialPromptConsumed={() => setSideChatPrompts((prev) => {
