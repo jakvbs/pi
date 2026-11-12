@@ -8,6 +8,7 @@ import { parseNpmSource } from "./npm-source";
 import { writePrivateFileAtomicSync } from "./atomic-file";
 import { isExistingPathWithinRoots } from "./path-security";
 import { getProjectTrustStatus } from "./project-trust";
+import { readSubagentRoles, type SubagentRoles } from "./subagent-roles";
 import { disabledBuiltInSubagents } from "./subagent-settings";
 import { PRESET_READ_ONLY } from "./tool-presets";
 import type { SessionEntry, SubagentSessionStatus } from "./types";
@@ -45,6 +46,8 @@ export interface SubagentProfile {
   mcp?: SubagentMcp;
   model?: string;
   thinking?: ThinkingLevel;
+  /** The roles file `roles:` names; a call's `role` picks one's model and reading. */
+  roles?: SubagentRoles;
   maxTurns?: number;
   inheritContext: boolean;
   runInBackground: boolean;
@@ -397,6 +400,7 @@ function parseProfileFile(filePath: string, scope: SubagentScope): SubagentProfi
     const name = stringValue(data?.name) ?? basename(filePath, ".md");
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) return null;
     const thinkingValue = stringValue(data?.thinking) as ThinkingLevel | undefined;
+    const roles = readSubagentRoles(data?.roles, filePath);
     const maxTurnsValue = typeof data?.max_turns === "number" ? Math.floor(data.max_turns) : undefined;
     const tools = parseTools(data?.tools, DEFAULT_TOOLS);
     const codemode = parseCodemode(data?.codemode);
@@ -435,6 +439,7 @@ function parseProfileFile(filePath: string, scope: SubagentScope): SubagentProfi
       mcp: parseMcp(data?.mcp),
       ...(stringValue(data?.model) ? { model: stringValue(data?.model) } : {}),
       ...(thinkingValue && THINKING_LEVELS.has(thinkingValue) ? { thinking: thinkingValue } : {}),
+      ...(roles ? { roles } : {}),
       ...(maxTurnsValue && maxTurnsValue > 0 ? { maxTurns: maxTurnsValue } : {}),
       inheritContext: booleanValue(data?.inherit_context, false),
       runInBackground: booleanValue(data?.run_in_background, false),

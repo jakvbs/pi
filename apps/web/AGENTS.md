@@ -154,7 +154,8 @@ lib/
   model-image-limits.ts     client-safe: a custom model's inputLimits.images.resize.maxBytes in the draft, the Save check
   model-provider-check.ts   client-safe: Save refuses a models.json provider entry pi rejects on its own (Add provider's empty stub, oauth without a Base URL)
   subagent-settings.ts      read/write ~/.pi/agent/agents/settings.json
-  subagent-model-scope.ts   Agent's `model` within the parent's scoped models (enabledModels): its description, the refusal, a pinned level
+  subagent-model-scope.ts   the child's model within the parent's scoped models (enabledModels): `model`'s description, the refusal, a pinned level
+  subagent-roles.ts         a profile's `roles:` file decoded (per role a model with its level, required reading), the role lookup and its refusals
   file-access.ts            allowed file roots for /api/files and worktrees
   file-upload-client.ts     browser upload to /api/files ?type=upload, shared by the explorer and chat drops
   linked-directory.ts       directory links leading outside the allowed roots + the allow-link check

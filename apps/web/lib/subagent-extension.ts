@@ -13,6 +13,7 @@ import {
 } from "./subagents";
 import { MAX_SUBAGENT_INPUT_BYTES, MAX_SUBAGENT_INPUT_FILES } from "./subagent-input";
 import { agentModelDescription } from "./subagent-model-scope";
+import { subagentRolesText } from "./subagent-roles";
 import { worktreeHasUncommittedFiles } from "./worktree";
 
 export const HOST_SUBAGENT_EXTENSION_NAME = "pi-web-subagents";
@@ -154,6 +155,8 @@ export interface StartSubagentRequest {
   inputFiles?: string[];
   description: string;
   runInBackground?: boolean;
+  /** A role of the profile's roles file: its model and level unless `model` overrides them, and its required reading. */
+  role?: string;
   model?: string;
   isolation?: "worktree";
   ticket?: string;
@@ -200,6 +203,7 @@ function agentTypeDescription(profiles: readonly SubagentProfile[]): string {
     const details = [`Tools: ${profile.tools.length > 0 ? profile.tools.join(", ") : "none"}`];
     if (profile.model) details.push(`Model: ${profile.model}`);
     if (profile.thinking) details.push(`Thinking: ${profile.thinking}`);
+    if (profile.roles) details.push(subagentRolesText(profile.roles));
     return `- ${profile.name}: ${profile.description} (${details.join("; ")})`;
   }).join("\n");
 }
@@ -313,6 +317,9 @@ export function createSubagentExtension(
         parameters: Type.Object({
           subagent_type: Type.Optional(Type.String({ description: `Configured agent profile. Available types: ${availableTypes}. Default: general-purpose.` })),
           prompt: Type.String({ description: "The complete task for the subagent." }),
+          ...(profiles.some((profile) => profile.roles) ? {
+            role: Type.Optional(Type.String({ description: "Role for an agent type that lists roles above. The subagent starts on the role's model and thinking level and is given the role's required reading; model in this call overrides the role's model and level." })),
+          } : {}),
           resume: Type.Optional(Type.String({ description: "Existing session ID to continue with its current profile, model, thinking, and context. Omit new-session options." })),
           input_files: Type.Optional(Type.Array(Type.String(), {
             description: `UTF-8 text files under the session cwd to include with the task. Together they may fill about a tenth of the subagent model's context window, at most ${MAX_SUBAGENT_INPUT_BYTES / 1024} KB. Pass fewer or smaller files, or name the paths in prompt if the subagent can read them.`,
@@ -356,8 +363,11 @@ export function createSubagentExtension(
             const timeoutMs = waitTimeoutMs(params.wait_timeout);
             const ticket = subagentTicket(params.ticket);
             const resume = params.resume?.trim();
+            // Declared only while an agent type lists roles, so the schema's static type cannot name it.
+            const role = (params as { role?: string }).role?.trim();
             if (resume) {
               const creationOptions = [
+                role && "role",
                 params.model?.trim() && "model",
                 params.input_files?.length && "input_files",
                 params.isolation?.trim() && "isolation",
@@ -387,6 +397,7 @@ export function createSubagentExtension(
               ...(params.input_files ? { inputFiles: params.input_files } : {}),
               description: params.description,
               ...(params.run_in_background !== undefined ? { runInBackground: params.run_in_background } : {}),
+              ...(role ? { role } : {}),
               ...(params.model ? { model: params.model } : {}),
               ...(params.isolation === "worktree" ? { isolation: "worktree" as const } : {}),
               ...(ticket ? { ticket } : {}),

@@ -724,3 +724,41 @@ test("Agent passes a ticket to a new run and refuses one that is no feature id o
   assert.match(resumed.content[0].text, /^ticket only apply to new subagents/);
   assert.equal(requests.length, 2);
 });
+
+test("Agent lists each role with its model and level, passes a call's role, and refuses one with resume", async () => {
+  const requests = [];
+  const scout = {
+    name: "scout-agent", displayName: "scout-agent", description: "The only subagent type", systemPrompt: "Delegate",
+    tools: ["read"], model: "pi-sub-anthropic/claude-opus-5-5", thinking: "medium",
+    roles: { kind: "loaded", path: "../spec/roles.json", roles: [
+      { name: "worker", model: "pi-sub-anthropic/claude-opus-5-5:medium", reading: [] },
+      { name: "review", model: "pi-sub-anthropic/claude-sonnet-5-5:high", reading: [] },
+    ] },
+    inheritContext: false, runInBackground: true, enabled: true, scope: "package",
+  };
+  const runtime = {
+    async start(request) {
+      requests.push(request);
+      return { run: run({ runInBackground: true }), completion: new Promise(() => {}) };
+    },
+    async resume() { throw new Error("resume must not be reached"); },
+    async notifyParent() {},
+  };
+  const { tools } = await loadTools(runtime, () => [scout]);
+  const agent = tools.get("Agent");
+  assert.match(agent.description, /- scout-agent: The only subagent type \(Tools: read; Model: pi-sub-anthropic\/claude-opus-5-5; Thinking: medium; Roles: worker \(pi-sub-anthropic\/claude-opus-5-5:medium\), review \(pi-sub-anthropic\/claude-sonnet-5-5:high\)\)/);
+  assert.match(agent.parameters.properties.role.description, /model in this call overrides the role's model and level/);
+
+  await agent.execute("call-1", { subagent_type: "scout-agent", role: " review ", prompt: "Do it", description: "Work" });
+  await agent.execute("call-2", { subagent_type: "scout-agent", role: "", prompt: "Do it", description: "Work" });
+  assert.equal(requests[0].role, "review");
+  assert.equal("role" in requests[1], false);
+  const resumed = await agent.execute("call-3", { prompt: "Again", description: "Work", resume: "child-session", role: "review" });
+  assert.equal(resumed.isError, true);
+  assert.match(resumed.content[0].text, /^role only apply to new subagents/);
+
+  const broken = await loadTools(runtime, () => [{ ...scout, roles: { kind: "invalid", path: "r.json", error: "cannot read roles file r.json: ENOENT" } }]);
+  assert.match(broken.tools.get("Agent").description, /Roles unavailable: cannot read roles file r\.json: ENOENT\)/);
+  const plain = await loadTools(runtime, () => [{ ...scout, roles: undefined }]);
+  assert.equal(plain.tools.get("Agent").parameters.properties.role, undefined);
+});

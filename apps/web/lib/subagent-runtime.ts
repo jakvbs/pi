@@ -31,6 +31,7 @@ import {
   subagentToolOptions,
   withSubagentExtensionTools,
   type SubagentMetadata,
+  type SubagentProfile,
   type SubagentResultMetadata,
   type SubagentRunInfo,
 } from "./subagents";
@@ -46,7 +47,8 @@ import { createSubagentMcpPolicyExtension } from "./mcp-read-only-policy";
 import { resolveShellTools } from "./powershell-settings";
 import { isBuiltInSubagentsEnabled, readSubagentSettings } from "./subagent-settings";
 import { SubagentQueue } from "./subagent-queue";
-import { scopedThinkingLevel, THINKING_LEVELS } from "./subagent-model-scope";
+import { allowedModelsText, scopedThinkingLevel, THINKING_LEVELS } from "./subagent-model-scope";
+import { findSubagentRole, withRoleReading, type SubagentRole } from "./subagent-roles";
 import { addWorktree, getCheckoutRoot, removeWorktree } from "./worktree";
 import { randomUUID } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
@@ -346,24 +348,41 @@ function parseSubagentModel(runtime: ModelRuntime, value: string | undefined) {
 }
 
 /**
- * The model the child is expected to run (the call's, else the profile's, else the parent's),
- * looked up early to size `input_files` before a worktree or child session exists (#1199). It
- * never throws: the child's model is resolved for real, and a bad reference refused, only after
- * the child's services have refreshed the shared runtime from models.json and registered its
- * extensions' providers. A reference this lookup misses leaves the files the flat limit.
+ * The child's model and thinking level. The model is the call's, else the role's, else the
+ * profile's, else the parent's; a level written with the call's or the role's model travels with
+ * it. Otherwise the profile's `thinking`, the level on the profile's own model (as pi's
+ * `--thinking` beats `--model x:level`), then the parent's. The parent's scope decides on the
+ * resolved model whatever chose it, and a pinned model runs at its pin.
  */
-function expectedSubagentModel(
+function resolveSubagentModel(
   runtime: ModelRuntime,
   callModel: string | undefined,
-  profileModel: string | undefined,
-  parentModel: AgentSessionLike["model"],
+  role: SubagentRole | undefined,
+  profile: SubagentProfile,
+  parent: AgentSessionLike,
 ) {
+  const call = callModel?.trim();
+  const [source, reference] = call
+    ? ["the call", call]
+    : role
+      ? [`role ${role.name}`, role.model]
+      : profile.model
+        ? [`profile ${profile.name}`, profile.model]
+        : ["the parent", undefined];
+  let parsed: ReturnType<typeof parseSubagentModel>;
   try {
-    const reference = callModel?.trim() || profileModel?.trim();
-    return reference ? parseSubagentModel(runtime, reference)?.model : parentModel;
-  } catch {
-    return undefined;
+    parsed = parseSubagentModel(runtime, reference);
+  } catch (error) {
+    if (parent.scopedModels.length === 0) throw error;
+    throw new Error(`${error instanceof Error ? error.message : String(error)} (from ${source}). ${allowedModelsText(parent.scopedModels)}`);
   }
+  const model = parsed?.model ?? parent.model as ReturnType<ModelRuntime["getModel"]>;
+  const written = call || role ? parsed?.thinkingLevel : undefined;
+  const pinned = model
+    ? scopedThinkingLevel({ model, level: written, source }, parent.scopedModels)
+    : undefined;
+  const thinkingLevel = pinned ?? written ?? profile.thinking ?? parsed?.thinkingLevel ?? parent.agent.state?.thinkingLevel;
+  return { model, thinkingLevel };
 }
 
 function parentContextText(parent: HostSession): string {
@@ -447,9 +466,6 @@ export function createSubagentController(
     const parent = dependencies.getSession(parentSessionId);
     if (!parent?.isAlive()) throw new Error("Parent session is no longer available");
     if (!parent.sessionFile) throw new Error("Parent session must be persisted before starting a subagent");
-    // Refused before a worktree or child session exists; the child runs within the same scope.
-    const callScopeThinking = scopedThinkingLevel(request.model, parent.inner.scopedModels);
-
     let isolatedWorktree: { path: string; branch: string } | undefined;
     const repo = request.repo === undefined ? undefined : await subagentRepo(request.repo);
     // The child works in `repo`, or cuts its worktree from it; the parent's cwd otherwise.
@@ -457,15 +473,26 @@ export function createSubagentController(
     try {
       const profile = resolveSubagentProfile(parent.cwd, request.profile);
       if (!profile) throw new Error(`Unknown or disabled subagent profile: ${request.profile}`);
+      const role = request.role === undefined ? undefined : findSubagentRole(profile.name, profile.roles, request.role);
 
       const runInBackground = request.runInBackground ?? profile.runInBackground;
       const isolation = profile.isolation === "off" ? undefined : request.isolation ?? profile.isolation;
       const parentModelRuntime = (parent.inner as unknown as { modelRuntime: ModelRuntime }).modelRuntime;
+      const resolveModel = () => resolveSubagentModel(parentModelRuntime, request.model, role, profile, parent.inner);
+      // A model outside the parent's scope is refused here, before a worktree or child session
+      // exists; every scoped model is one the parent's runtime knows. Without a scope this early
+      // lookup only sizes `input_files` (#1199) and never fails: the model is resolved for real,
+      // and a bad reference refused, once the child's services have refreshed the shared runtime
+      // from models.json and registered its extensions' providers.
+      let expected: ReturnType<typeof resolveModel> | undefined;
+      try {
+        expected = resolveModel();
+      } catch (error) {
+        if (parent.inner.scopedModels.length > 0) throw error;
+      }
       // Sized by the window of the model expected to read the copy, and refused before a worktree
       // or child session exists.
-      const inputFiles = loadSubagentInputFiles(parent.cwd, request.inputFiles ?? [], subagentInputLimits(
-        expectedSubagentModel(parentModelRuntime, request.model, profile.model, parent.inner.model),
-      ));
+      const inputFiles = loadSubagentInputFiles(parent.cwd, request.inputFiles ?? [], subagentInputLimits(expected?.model));
       if (isolation === "worktree") {
         isolatedWorktree = await addWorktree(baseCwd, `pi-web-agent-${randomUUID()}`);
       }
@@ -485,7 +512,7 @@ export function createSubagentController(
         loadSkills: profile.loadSkills,
         loadExtensions: profile.loadExtensions,
         promptMode: profile.promptMode,
-        task: appendSubagentInputFiles(request.task, inputFiles),
+        task: appendSubagentInputFiles(role ? withRoleReading(role, request.task) : request.task, inputFiles),
         inheritedParentContext,
       });
       const parentCodemodeEnabled = parent.inner.getActiveToolNames().includes("codemode");
@@ -582,21 +609,10 @@ export function createSubagentController(
       mcpScope.tools = activeTools;
       mcpScope.allExtensionTools = allExtensionTools;
 
-      // A `:level` suffix travels with its model. As with pi's `--thinking` over `--model x:level`,
-      // the profile's own `thinking` beats a suffix on the profile's model, while a call naming
-      // a model with a suffix chose both for this run.
-      const callModel = parseSubagentModel(parentModelRuntime, request.model);
-      const profileModel = callModel ? undefined : parseSubagentModel(parentModelRuntime, profile.model);
-      const thinking = callModel?.thinkingLevel
-        ?? callScopeThinking
-        ?? profile.thinking
-        ?? profileModel?.thinkingLevel
-        ?? parent.inner.agent.state?.thinkingLevel;
+      const { model: childModel, thinkingLevel: thinking } = resolveModel();
       if (thinking && !THINKING_LEVELS.has(thinking as ThinkingLevel)) {
         throw new Error(`Invalid subagent thinking level: ${thinking}`);
       }
-      const parentModel = parent.inner.model as ReturnType<ModelRuntime["getModel"]>;
-      const childModel = (callModel ?? profileModel)?.model ?? parentModel;
 
       const sessionManager = SessionManager.create(childCwd, undefined, { parentSession: parent.sessionFile });
       const createdAt = new Date().toISOString();

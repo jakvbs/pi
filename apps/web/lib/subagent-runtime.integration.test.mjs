@@ -66,7 +66,7 @@ async function withRuntime(check, configureChild, options = {}) {
     }
     const faux = fauxProvider({ models: [
       { id: "faux-model", reasoning: true }, { id: "tuned:high", reasoning: true }, { id: "small-window", contextWindow: 8_000 },
-      { id: "pinned", reasoning: true },
+      { id: "pinned", reasoning: true }, { id: "reviewer", reasoning: true }, { id: "tuned", reasoning: true },
     ] });
     const modelRuntime = await ModelRuntime.create({
       authPath: join(dir, "auth.json"), modelsPath: options.modelsFile ? join(dir, "models.json") : null, refreshOnCreate: false,
@@ -793,9 +793,14 @@ test("a profile model from a provider only the child's extensions register still
   });
 });
 
-test("a parent's scoped models bound the call's model and pass to the child", async () => {
-  const scopedModels = (faux) => [{ model: faux.getModel("faux-model") }, { model: faux.getModel("pinned"), thinkingLevel: "high" }];
-  await withRuntime(async ({ runtime, request, faux, sessions }) => {
+test("a parent's scoped models bound the child's model, whatever chose it, and pass to the child", async () => {
+  const scopedModels = (faux) => [
+    { model: faux.getModel("faux-model") }, { model: faux.getModel("pinned"), thinkingLevel: "high" },
+    { model: faux.getModel("reviewer") }, { model: faux.getModel("tuned") },
+  ];
+  const ALLOWED = "Allowed: faux/faux-model, faux/pinned:high, faux/reviewer, faux/tuned.";
+  await withRuntime(async ({ runtime, request, faux, sessions, dir }) => {
+    await writeRolesFixture(dir);
     const parent = sessions.get(request.parentContext.sessionManager.getSessionId()).inner;
     const run = async (options) => {
       faux.setResponses([answer("SCOPED_RESULT")]);
@@ -803,22 +808,111 @@ test("a parent's scoped models bound the call's model and pass to the child", as
       assert.equal((await execution.completion).status, "completed");
       return sessions.get(execution.run.sessionId).inner;
     };
-    const refused = async (model) => {
+    // Refused before a worktree or child session exists: the scope is checked ahead of both.
+    const refused = async (options, message) => {
       const before = sessions.size;
-      await assert.rejects(runtime.start({ ...request, model }), (error) =>
-        error.message === `Subagent model ${model} is not allowed by enabledModels. Allowed: faux/faux-model, faux/pinned:high.`);
-      assert.equal(sessions.size, before, `${model} must not start a child.`);
+      await assert.rejects(runtime.start({ ...request, isolation: "worktree", ...options }), (error) => error.message === message);
+      assert.equal(sessions.size, before, `${message} must not start a child.`);
+      assert.equal(existsSync(`${await realpath(dir)}-worktrees`), false, `${message} must leave no worktree.`);
+      assert.equal(execFileSync("git", ["-C", dir, "worktree", "list"], { encoding: "utf8" }).trim().split("\n").length, 1);
     };
 
-    await refused("openai/gpt-4o");
-    await refused("faux/pinned:low");
+    await refused({ model: "openai/gpt-4o" }, `Subagent model openai/gpt-4o from the call is not allowed by enabledModels. ${ALLOWED}`);
+    await refused({ model: "faux/missing" }, `Subagent model not found: faux/missing (from the call). ${ALLOWED}`);
+    await refused({ model: "faux/pinned:low" }, `Subagent model faux/pinned:low from the call is not allowed by enabledModels. ${ALLOWED}`);
+    // `faux/tuned` is in scope; the model named `tuned:high` is another model, never `tuned` at `high`.
+    await refused({ model: "faux/tuned:high" }, `Subagent model faux/tuned:high from the call is not allowed by enabledModels. ${ALLOWED}`);
+    await refused({ profile: "fixture-roles", role: "stray" }, `Subagent model faux/small-window:low from role stray is not allowed by enabledModels. ${ALLOWED}`);
+    await refused({ profile: "fixture-out-of-scope" }, `Subagent model faux/small-window from profile fixture-out-of-scope is not allowed by enabledModels. ${ALLOWED}`);
+
     const leveled = await run({ model: "faux/faux-model:high" });
     assert.equal(leveled.thinkingLevel, "high");
     assert.deepEqual(leveled.scopedModels, parent.scopedModels);
     // Without a level, a pinned model runs at its pin, over the profile's `thinking: low`.
     assert.equal((await run({ model: "faux/pinned" })).thinkingLevel, "high");
+    assert.equal((await run({ model: "faux/tuned" })).model.id, "tuned");
     assert.equal((await run({})).model.id, "faux-model");
-  }, undefined, { scopedModels });
+  }, undefined, { scopedModels, repo: true });
+});
+
+test("a parent model outside the scope is refused for a child that names no model", async () => {
+  await withRuntime(async ({ runtime, request, sessions }) => {
+    await assert.rejects(runtime.start(request), (error) =>
+      error.message === "Subagent model faux/faux-model from the parent is not allowed by enabledModels. Allowed: faux/reviewer.");
+    assert.equal(sessions.size, 1);
+  }, undefined, { scopedModels: (faux) => [{ model: faux.getModel("reviewer") }] });
+});
+
+async function writeRolesFixture(dir) {
+  await writeFile(join(dir, "agents", "roles.json"), JSON.stringify({
+    review: { model: "faux/reviewer:high", reading: ["~/.repos/legible/skills/scout-mode/SKILL.md", "spec/review-guide.md"] },
+    stray: { model: "faux/small-window:low", reading: [] },
+  }));
+  await writeFile(join(dir, "agents", "fixture-roles.md"), [
+    "---", "description: Exercise roles from a roles file.", "tools: read", "load_skills: false", "load_extensions: false",
+    "model: faux/faux-model", "thinking: low", "roles: roles.json", "---", "Complete the assigned task.",
+  ].join("\n"));
+  await writeFile(join(dir, "agents", "fixture-out-of-scope.md"), [
+    "---", "description: Exercise a profile model outside the scope.", "tools: read", "load_skills: false", "load_extensions: false",
+    "model: faux/small-window", "---", "Complete the assigned task.",
+  ].join("\n"));
+}
+
+test("a role gives the child its model, level and required reading, and a call's model overrides it", async () => {
+  await withRuntime(async ({ runtime, request, faux, sessions, dir }) => {
+    await writeRolesFixture(dir);
+    const run = async (options) => {
+      faux.setResponses([answer("ROLE_RESULT")]);
+      const execution = await runtime.start({ ...request, profile: "fixture-roles", ...options });
+      assert.equal((await execution.completion).status, "completed");
+      return sessions.get(execution.run.sessionId).inner;
+    };
+    const task = (child) => child.sessionManager.buildSessionContext().messages.find((message) => message.role === "user")
+      .content.map((block) => block.text ?? "").join("");
+
+    const reviewer = await run({ role: "review" });
+    assert.equal(reviewer.model.id, "reviewer");
+    assert.equal(reviewer.thinkingLevel, "high");
+    assert.equal(task(reviewer), [
+      "Role: review. Required reading, in full, before any work:",
+      "- ~/.repos/legible/skills/scout-mode/SKILL.md", "- spec/review-guide.md", "", request.task,
+    ].join("\n"));
+
+    const overridden = await run({ role: "review", model: "faux/pinned:minimal" });
+    assert.equal(overridden.model.id, "pinned");
+    assert.equal(overridden.thinkingLevel, "minimal");
+    assert.match(task(overridden), /^Role: review\. Required reading/);
+
+    // No role: the profile's model and thinking, and the task as given.
+    const plain = await run({});
+    assert.equal(plain.model.id, "faux-model");
+    assert.equal(plain.thinkingLevel, "low");
+    assert.equal(task(plain), request.task);
+
+    const before = sessions.size;
+    await assert.rejects(runtime.start({ ...request, profile: "fixture-roles", role: "worker" }),
+      { message: "Unknown role worker for subagent fixture-roles. Roles: review, stray." });
+    await assert.rejects(runtime.start({ ...request, role: "review" }),
+      { message: "Subagent profile fixture has no roles; omit role." });
+    await writeFile(join(dir, "agents", "roles.json"), "{ not json");
+    await assert.rejects(runtime.start({ ...request, profile: "fixture-roles", role: "review" }),
+      /^Error: Subagent profile fixture-roles has no usable roles: cannot read roles file roles\.json: /);
+    assert.equal(sessions.size, before);
+  });
+});
+
+test("Agent answers a refused start with an error result that names the reason", async () => {
+  await withRuntime(async ({ runtime, request, sessions }) => {
+    const tools = new Map();
+    await createSubagentExtension(runtime, () => []).factory({ on() {}, registerTool(tool) { tools.set(tool.name, tool); } });
+    const result = await tools.get("Agent").execute("refused-call", {
+      subagent_type: "fixture", prompt: "Inspect", description: "Refused", model: "faux/small-window",
+    }, undefined, undefined, request.parentContext);
+    assert.equal(result.isError, true);
+    assert.deepEqual(result.content, [{ type: "text", text:
+      "Subagent model faux/small-window from the call is not allowed by enabledModels. Allowed: faux/faux-model." }]);
+    assert.equal(sessions.size, 1);
+  }, undefined, { scopedModels: (faux) => [{ model: faux.getModel("faux-model") }] });
 });
 
 test("a model reference may carry pi's :level suffix, which sets the child's thinking", async (t) => {

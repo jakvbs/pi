@@ -10,6 +10,9 @@ const LEVELS_TEXT = [...THINKING_LEVELS].join(", ");
 const scopedModelName = ({ model, thinkingLevel }: ScopedModel): string =>
   `${model.provider}/${model.id}${thinkingLevel === undefined ? "" : `:${thinkingLevel}`}`;
 
+/** The scope as a refusal names it: `Allowed: a, b:high.` */
+export const allowedModelsText = (scope: readonly ScopedModel[]): string => `Allowed: ${scope.map(scopedModelName).join(", ")}.`;
+
 /** The `model` parameter's description: the scoped models when the session has a scope. */
 export function agentModelDescription(scope: readonly ScopedModel[]): string {
   if (scope.length === 0) {
@@ -18,30 +21,25 @@ export function agentModelDescription(scope: readonly ScopedModel[]): string {
   return `Optional model override, one of: ${scope.map(scopedModelName).join(", ")}. Any other model is refused. A model listed without a level takes ":<level>" (${LEVELS_TEXT}) to also set the thinking level for this run, e.g. "provider/model:high"; a listed level is the only one that model runs at.`;
 }
 
-/** Whether a reference names the model as `findSubagentModel` reads it: `provider/modelId`, or a bare id. */
-function names(reference: string, { model }: ScopedModel): boolean {
-  const slash = reference.indexOf("/");
-  return slash > 0
-    ? model.provider === reference.slice(0, slash) && model.id === reference.slice(slash + 1)
-    : model.id === reference;
+/** The model a child would run and who chose it: the call, a role, the profile or the parent. */
+export interface SubagentModelChoice {
+  model: { provider: string; id: string };
+  /** The level the call or the role wrote with the model; a pinned model must match it. */
+  level?: ThinkingLevel;
+  /** Who chose the model, named in a refusal: "the call", "role review", "profile scout-agent", "the parent". */
+  source: string;
 }
 
 /**
- * The thinking level a call's model reference runs at under the scope: its `:level`, else the
- * scope's pinned level for that model. Throws a refusal listing the scope when the reference names
- * no scoped model, or a level other than the pinned one. An empty scope admits any model. As
- * `parseSubagentModel` reads a reference, the whole value is tried before a `:level` suffix.
+ * The level a pinned scoped model forces on the child, decided on the model the reference resolved
+ * to (so a model whose id ends in `:high` is never read as another model at `high`). Throws a
+ * refusal listing the scope when the model is outside it, or the call or role wrote a level other
+ * than its pin. An empty scope admits any model.
  */
-export function scopedThinkingLevel(value: string | undefined, scope: readonly ScopedModel[]): ThinkingLevel | undefined {
-  const reference = value?.trim();
-  if (!reference || scope.length === 0) return undefined;
-  const whole = scope.find((entry) => names(reference, entry));
-  if (whole) return whole.thinkingLevel;
-  const colon = reference.lastIndexOf(":");
-  const level = reference.slice(colon + 1) as ThinkingLevel;
-  if (colon > 0 && THINKING_LEVELS.has(level)) {
-    const base = scope.find((entry) => names(reference.slice(0, colon), entry));
-    if (base && (base.thinkingLevel === undefined || base.thinkingLevel === level)) return level;
-  }
-  throw new Error(`Subagent model ${reference} is not allowed by enabledModels. Allowed: ${scope.map(scopedModelName).join(", ")}.`);
+export function scopedThinkingLevel({ model, level, source }: SubagentModelChoice, scope: readonly ScopedModel[]): ThinkingLevel | undefined {
+  if (scope.length === 0) return undefined;
+  const entry = scope.find((scoped) => scoped.model.provider === model.provider && scoped.model.id === model.id);
+  if (entry && (entry.thinkingLevel === undefined || level === undefined || level === entry.thinkingLevel)) return entry.thinkingLevel;
+  const name = `${model.provider}/${model.id}${level === undefined ? "" : `:${level}`}`;
+  throw new Error(`Subagent model ${name} from ${source} is not allowed by enabledModels. ${allowedModelsText(scope)}`);
 }
