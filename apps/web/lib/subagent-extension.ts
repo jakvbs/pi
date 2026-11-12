@@ -1,3 +1,4 @@
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import {
   defineTool,
@@ -12,7 +13,7 @@ import {
   type SubagentRunInfo,
 } from "./subagents";
 import { MAX_SUBAGENT_INPUT_BYTES, MAX_SUBAGENT_INPUT_FILES } from "./subagent-input";
-import { agentModelDescription } from "./subagent-model-scope";
+import { agentModelDescription, LEVELS_TEXT, parseThinkingLevel, referenceInScope } from "./subagent-model-scope";
 import { subagentRolesText } from "./subagent-roles";
 import { worktreeHasUncommittedFiles } from "./worktree";
 
@@ -157,6 +158,8 @@ export interface StartSubagentRequest {
   runInBackground?: boolean;
   /** A role of the profile's roles file: its model and level unless `model` overrides them, and its required reading. */
   role?: string;
+  /** The run's thinking level, over the role's and the profile's; `model`'s own `:level` must agree with it. */
+  thinking?: ThinkingLevel;
   model?: string;
   isolation?: "worktree";
   ticket?: string;
@@ -196,14 +199,14 @@ export interface SubagentExtensionRuntime {
 export type SubagentProfileProvider = () => readonly SubagentProfile[];
 export type SubagentEnabledProvider = () => boolean;
 
-function agentTypeDescription(profiles: readonly SubagentProfile[]): string {
+function agentTypeDescription(profiles: readonly SubagentProfile[], inScope: (model: string) => boolean): string {
   const available = profiles.filter((profile) => profile.enabled);
   if (available.length === 0) return "No subagent profiles are currently enabled.";
   return available.map((profile) => {
     const details = [`Tools: ${profile.tools.length > 0 ? profile.tools.join(", ") : "none"}`];
     if (profile.model) details.push(`Model: ${profile.model}`);
     if (profile.thinking) details.push(`Thinking: ${profile.thinking}`);
-    if (profile.roles) details.push(subagentRolesText(profile.roles));
+    if (profile.roles) details.push(subagentRolesText(profile.roles, inScope));
     return `- ${profile.name}: ${profile.description} (${details.join("; ")})`;
   }).join("\n");
 }
@@ -300,12 +303,14 @@ export function createSubagentExtension(
       const profileNames = profiles.map((profile) => profile.name);
       const availableTypes = profileNames.length > 0 ? profileNames.join(", ") : "none";
       // The scope exists only once the session does, and can change while it runs, so each run
-      // registers the declaration again when the scope's description of `model` changed.
+      // registers the declaration again when what it says about the scope (`model`'s list, roles
+      // whose model the scope refuses) changed.
       let modelDescription = agentModelDescription([]);
+      let typeDescription = agentTypeDescription(profiles, () => true);
       const registerAgent = () => pi.registerTool(defineTool({
         name: "Agent",
         label: "Agent",
-        description: `Delegate a focused task to a configured subagent. Each subagent runs as a full, inspectable Pi session. Use background mode for independent work and foreground mode when the result is needed immediately. Foreground completion waits default to 30 minutes; set wait_timeout (seconds) for longer tasks. If the wait budget is exhausted, the child keeps running and reports its completion automatically.\n\nAvailable agent types:\n${agentTypeDescription(profiles)}`,
+        description: `Delegate a focused task to a configured subagent. Each subagent runs as a full, inspectable Pi session. Use background mode for independent work and foreground mode when the result is needed immediately. Foreground completion waits default to 30 minutes; set wait_timeout (seconds) for longer tasks. If the wait budget is exhausted, the child keeps running and reports its completion automatically.\n\nAvailable agent types:\n${typeDescription}`,
         promptSnippet: "Delegate a focused task to an inspectable subagent session",
         exposure: SUBAGENT_TOOL_EXPOSURE,
         promptGuidelines: [
@@ -317,9 +322,7 @@ export function createSubagentExtension(
         parameters: Type.Object({
           subagent_type: Type.Optional(Type.String({ description: `Configured agent profile. Available types: ${availableTypes}. Default: general-purpose.` })),
           prompt: Type.String({ description: "The complete task for the subagent." }),
-          ...(profiles.some((profile) => profile.roles) ? {
-            role: Type.Optional(Type.String({ description: "Role for an agent type that lists roles above. The subagent starts on the role's model and thinking level and is given the role's required reading; model in this call overrides the role's model and level." })),
-          } : {}),
+          role: Type.Optional(Type.String({ description: "Role, for an agent type that lists roles above. The subagent starts on the role's model and thinking level and is given the role's required reading. model in this call replaces the role's model and keeps its level unless it names one; thinking sets the level alone." })),
           resume: Type.Optional(Type.String({ description: "Existing session ID to continue with its current profile, model, thinking, and context. Omit new-session options." })),
           input_files: Type.Optional(Type.Array(Type.String(), {
             description: `UTF-8 text files under the session cwd to include with the task. Together they may fill about a tenth of the subagent model's context window, at most ${MAX_SUBAGENT_INPUT_BYTES / 1024} KB. Pass fewer or smaller files, or name the paths in prompt if the subagent can read them.`,
@@ -329,6 +332,7 @@ export function createSubagentExtension(
           run_in_background: Type.Optional(Type.Boolean({ description: "Return immediately and notify this session when complete." })),
           wait_timeout: waitTimeoutParameter(),
           model: Type.Optional(Type.String({ description: modelDescription })),
+          thinking: Type.Optional(Type.String({ description: `Thinking level for this run, one of: ${LEVELS_TEXT}. Overrides the role's and the profile's level without changing the model. A model pinned to a level in the model list runs only at that level.` })),
           isolation: Type.Optional(Type.String({ description: 'Set to "worktree" to run the subagent in an isolated git worktree.' })),
           ticket: Type.Optional(Type.String({ description: "Factory ticket this work belongs to, as its feature id (e.g. F046). Kept with the subagent session and shown on the board." })),
           repo: Type.Optional(Type.String({ description: 'Absolute path of another Git repository to work in. With isolation "worktree" the worktree and its branch are cut from that repository. Default: this session\'s cwd.' })),
@@ -363,11 +367,14 @@ export function createSubagentExtension(
             const timeoutMs = waitTimeoutMs(params.wait_timeout);
             const ticket = subagentTicket(params.ticket);
             const resume = params.resume?.trim();
-            // Declared only while an agent type lists roles, so the schema's static type cannot name it.
-            const role = (params as { role?: string }).role?.trim();
+            const role = params.role?.trim();
+            const thinkingText = params.thinking?.trim();
+            const thinking = thinkingText ? parseThinkingLevel(thinkingText) : undefined;
+            if (thinkingText && !thinking) throw new Error(`thinking must be one of: ${LEVELS_TEXT}, not ${JSON.stringify(thinkingText)}`);
             if (resume) {
               const creationOptions = [
                 role && "role",
+                thinking && "thinking",
                 params.model?.trim() && "model",
                 params.input_files?.length && "input_files",
                 params.isolation?.trim() && "isolation",
@@ -398,6 +405,7 @@ export function createSubagentExtension(
               description: params.description,
               ...(params.run_in_background !== undefined ? { runInBackground: params.run_in_background } : {}),
               ...(role ? { role } : {}),
+              ...(thinking ? { thinking } : {}),
               ...(params.model ? { model: params.model } : {}),
               ...(params.isolation === "worktree" ? { isolation: "worktree" as const } : {}),
               ...(ticket ? { ticket } : {}),
@@ -441,9 +449,12 @@ export function createSubagentExtension(
       }));
       registerAgent();
       pi.on("before_agent_start", (_event, ctx) => {
-        const description = agentModelDescription(ctx.scopedModels);
-        if (description === modelDescription) return;
-        modelDescription = description;
+        const models = { getModel: (provider: string, id: string) => ctx.modelRegistry.find(provider, id), getModels: () => ctx.modelRegistry.getAll() };
+        const nextModel = agentModelDescription(ctx.scopedModels);
+        const nextTypes = agentTypeDescription(profiles, (model) => referenceInScope(model, models, ctx.scopedModels));
+        if (nextModel === modelDescription && nextTypes === typeDescription) return;
+        modelDescription = nextModel;
+        typeDescription = nextTypes;
         registerAgent();
       });
 

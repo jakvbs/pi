@@ -831,6 +831,14 @@ test("a parent's scoped models bound the child's model, whatever chose it, and p
     // Without a level, a pinned model runs at its pin, over the profile's `thinking: low`.
     assert.equal((await run({ model: "faux/pinned" })).thinkingLevel, "high");
     assert.equal((await run({ model: "faux/tuned" })).model.id, "tuned");
+    // A pin wins over a level the role brings to another model, and refuses one the call wrote.
+    const pinnedRole = await run({ profile: "fixture-roles", role: "light", model: "faux/pinned" });
+    assert.equal(pinnedRole.model.id, "pinned");
+    assert.equal(pinnedRole.thinkingLevel, "high");
+    await refused({ model: "faux/pinned", thinking: "low" }, `Subagent model faux/pinned:low from the call is not allowed by enabledModels. ${ALLOWED}`);
+    await refused({ thinking: "low", profile: "fixture-pinned" },
+      `Subagent model faux/pinned:low from profile fixture-pinned with the call's thinking is not allowed by enabledModels. ${ALLOWED}`);
+    assert.equal((await run({ profile: "fixture-pinned" })).thinkingLevel, "high");
     assert.equal((await run({})).model.id, "faux-model");
   }, undefined, { scopedModels, repo: true });
 });
@@ -847,10 +855,15 @@ async function writeRolesFixture(dir) {
   await writeFile(join(dir, "agents", "roles.json"), JSON.stringify({
     review: { model: "faux/reviewer:high", reading: ["~/.repos/legible/skills/scout-mode/SKILL.md", "spec/review-guide.md"] },
     stray: { model: "faux/small-window:low", reading: [] },
+    light: { model: "faux/reviewer:low", reading: [] },
   }));
   await writeFile(join(dir, "agents", "fixture-roles.md"), [
     "---", "description: Exercise roles from a roles file.", "tools: read", "load_skills: false", "load_extensions: false",
     "model: faux/faux-model", "thinking: low", "roles: roles.json", "---", "Complete the assigned task.",
+  ].join("\n"));
+  await writeFile(join(dir, "agents", "fixture-pinned.md"), [
+    "---", "description: Exercise a profile model pinned in the scope.", "tools: read", "load_skills: false", "load_extensions: false",
+    "model: faux/pinned", "thinking: low", "---", "Complete the assigned task.",
   ].join("\n"));
   await writeFile(join(dir, "agents", "fixture-out-of-scope.md"), [
     "---", "description: Exercise a profile model outside the scope.", "tools: read", "load_skills: false", "load_extensions: false",
@@ -883,6 +896,18 @@ test("a role gives the child its model, level and required reading, and a call's
     assert.equal(overridden.thinkingLevel, "minimal");
     assert.match(task(overridden), /^Role: review\. Required reading/);
 
+    // A call's model without a level keeps the role's level, over the profile's `thinking: low`.
+    const keptLevel = await run({ role: "review", model: "faux/pinned" });
+    assert.equal(keptLevel.model.id, "pinned");
+    assert.equal(keptLevel.thinkingLevel, "high");
+    // `thinking` alone changes the level and keeps the role's model.
+    const thought = await run({ role: "review", thinking: "minimal" });
+    assert.equal(thought.model.id, "reviewer");
+    assert.equal(thought.thinkingLevel, "minimal");
+    const profileThought = await run({ thinking: "medium" });
+    assert.equal(profileThought.model.id, "faux-model");
+    assert.equal(profileThought.thinkingLevel, "medium");
+
     // No role: the profile's model and thinking, and the task as given.
     const plain = await run({});
     assert.equal(plain.model.id, "faux-model");
@@ -891,9 +916,11 @@ test("a role gives the child its model, level and required reading, and a call's
 
     const before = sessions.size;
     await assert.rejects(runtime.start({ ...request, profile: "fixture-roles", role: "worker" }),
-      { message: "Unknown role worker for subagent fixture-roles. Roles: review, stray." });
+      { message: "Unknown role worker for subagent fixture-roles. Roles: review, stray, light." });
     await assert.rejects(runtime.start({ ...request, role: "review" }),
       { message: "Subagent profile fixture has no roles; omit role." });
+    await assert.rejects(runtime.start({ ...request, model: "faux/faux-model:high", thinking: "low" }),
+      { message: "Subagent model faux/faux-model:high and thinking low name different levels; give the level once." });
     await writeFile(join(dir, "agents", "roles.json"), "{ not json");
     await assert.rejects(runtime.start({ ...request, profile: "fixture-roles", role: "review" }),
       /^Error: Subagent profile fixture-roles has no usable roles: cannot read roles file roles\.json: /);

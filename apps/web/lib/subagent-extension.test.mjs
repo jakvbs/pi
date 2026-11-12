@@ -747,18 +747,24 @@ test("Agent lists each role with its model and level, passes a call's role, and 
   const { tools } = await loadTools(runtime, () => [scout]);
   const agent = tools.get("Agent");
   assert.match(agent.description, /- scout-agent: The only subagent type \(Tools: read; Model: pi-sub-anthropic\/claude-opus-5-5; Thinking: medium; Roles: worker \(pi-sub-anthropic\/claude-opus-5-5:medium\), review \(pi-sub-anthropic\/claude-sonnet-5-5:high\)\)/);
-  assert.match(agent.parameters.properties.role.description, /model in this call overrides the role's model and level/);
+  assert.match(agent.parameters.properties.role.description, /model in this call replaces the role's model and keeps its level unless it names one; thinking sets the level alone/);
 
   await agent.execute("call-1", { subagent_type: "scout-agent", role: " review ", prompt: "Do it", description: "Work" });
   await agent.execute("call-2", { subagent_type: "scout-agent", role: "", prompt: "Do it", description: "Work" });
   assert.equal(requests[0].role, "review");
   assert.equal("role" in requests[1], false);
+  await agent.execute("call-4", { subagent_type: "scout-agent", thinking: " high ", prompt: "Do it", description: "Work" });
+  await agent.execute("call-5", { subagent_type: "scout-agent", thinking: "", prompt: "Do it", description: "Work" });
+  assert.equal(requests[2].thinking, "high");
+  assert.equal("thinking" in requests[3], false);
+  const loud = await agent.execute("call-6", { subagent_type: "scout-agent", thinking: "loud", prompt: "Do it", description: "Work" });
+  assert.equal(loud.isError, true);
+  assert.equal(loud.content[0].text, 'thinking must be one of: off, minimal, low, medium, high, xhigh, max, not "loud"');
+  assert.equal(requests.length, 4);
   const resumed = await agent.execute("call-3", { prompt: "Again", description: "Work", resume: "child-session", role: "review" });
   assert.equal(resumed.isError, true);
   assert.match(resumed.content[0].text, /^role only apply to new subagents/);
 
   const broken = await loadTools(runtime, () => [{ ...scout, roles: { kind: "invalid", path: "r.json", error: "cannot read roles file r.json: ENOENT" } }]);
   assert.match(broken.tools.get("Agent").description, /Roles unavailable: cannot read roles file r\.json: ENOENT\)/);
-  const plain = await loadTools(runtime, () => [{ ...scout, roles: undefined }]);
-  assert.equal(plain.tools.get("Agent").parameters.properties.role, undefined);
 });

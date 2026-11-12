@@ -43,7 +43,7 @@ test("a missing or malformed roles file is reported, not ignored", async () => {
       const roles = readSubagentRoles("roles.json", profile);
       assert.equal(roles.kind, "invalid", content);
       assert.match(roles.error, error, content);
-      assert.match(subagentRolesText(roles), /^Roles unavailable: /);
+      assert.match(subagentRolesText(roles, () => true), /^Roles unavailable: /);
     };
     assert.match(readSubagentRoles("absent.json", profile).error, /^cannot read roles file absent\.json: ENOENT/);
     assert.equal(readSubagentRoles(["roles.json"], profile).error, "roles must be the path of a roles file");
@@ -63,5 +63,7 @@ test("a role is found by name, and refused with the list of roles otherwise", ()
   assert.throws(() => findSubagentRole("explore", undefined, "judge"), { message: "Subagent profile explore has no roles; omit role." });
   assert.throws(() => findSubagentRole("scout-agent", { kind: "invalid", path: "r.json", error: "boom" }, "judge"),
     { message: "Subagent profile scout-agent has no usable roles: boom" });
-  assert.equal(subagentRolesText(roles), "Roles: worker (pi-sub-anthropic/claude-opus-5-5:medium), judge (pi-sub-anthropic/claude-fable-5-2:high)");
+  assert.equal(subagentRolesText(roles, () => true), "Roles: worker (pi-sub-anthropic/claude-opus-5-5:medium), judge (pi-sub-anthropic/claude-fable-5-2:high)");
+  assert.equal(subagentRolesText(roles, (model) => model.startsWith("pi-sub-anthropic/claude-opus")),
+    "Roles: worker (pi-sub-anthropic/claude-opus-5-5:medium), judge (pi-sub-anthropic/claude-fable-5-2:high, outside enabledModels)");
 });

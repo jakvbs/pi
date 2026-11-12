@@ -39,10 +39,10 @@ export function readSubagentRoles(value: unknown, profileFile: string): Subagent
   }
   const roles: SubagentRole[] = [];
   for (const [name, entry] of Object.entries(data)) {
-    const { model, reading } = (typeof entry === "object" && entry !== null ? entry : {}) as Record<string, unknown>;
-    if (typeof model !== "string" || !model.trim() || !Array.isArray(reading) || !reading.every((item) => typeof item === "string")) {
-      return { kind: "invalid", path, error: `roles file ${path}: role ${name} needs a model string and a reading list of paths` };
-    }
+    const invalid: SubagentRoles = { kind: "invalid", path, error: `roles file ${path}: role ${name} needs a model string and a reading list of paths` };
+    if (typeof entry !== "object" || entry === null || !("model" in entry) || !("reading" in entry)) return invalid;
+    const { model, reading } = entry;
+    if (typeof model !== "string" || !model.trim() || !Array.isArray(reading) || !reading.every((item) => typeof item === "string")) return invalid;
     roles.push({ name, model: model.trim(), reading });
   }
   return { kind: "loaded", path, roles };
@@ -57,10 +57,13 @@ export function findSubagentRole(profileName: string, roles: SubagentRoles | und
   return role;
 }
 
-/** The roles as the `Agent` declaration lists them: each with its model and level. */
-export function subagentRolesText(roles: SubagentRoles): string {
+/**
+ * The roles as the `Agent` declaration lists them: each with its model and level, marked when
+ * `inScope` says the session's `enabledModels` would refuse that model.
+ */
+export function subagentRolesText(roles: SubagentRoles, inScope: (model: string) => boolean): string {
   if (roles.kind === "invalid") return `Roles unavailable: ${roles.error}`;
-  return `Roles: ${roles.roles.map((role) => `${role.name} (${role.model})`).join(", ")}`;
+  return `Roles: ${roles.roles.map((role) => `${role.name} (${role.model}${inScope(role.model) ? "" : ", outside enabledModels"})`).join(", ")}`;
 }
 
 /** The delegated task with the role named and its required reading listed first. */

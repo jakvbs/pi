@@ -47,7 +47,13 @@ import { createSubagentMcpPolicyExtension } from "./mcp-read-only-policy";
 import { resolveShellTools } from "./powershell-settings";
 import { isBuiltInSubagentsEnabled, readSubagentSettings } from "./subagent-settings";
 import { SubagentQueue } from "./subagent-queue";
-import { allowedModelsText, scopedThinkingLevel, THINKING_LEVELS } from "./subagent-model-scope";
+import {
+  allowedModelsText,
+  modelReferenceLevel,
+  parseSubagentModel,
+  scopedThinkingLevel,
+  THINKING_LEVELS,
+} from "./subagent-model-scope";
 import { findSubagentRole, withRoleReading, type SubagentRole } from "./subagent-roles";
 import { addWorktree, getCheckoutRoot, removeWorktree } from "./worktree";
 import { randomUUID } from "node:crypto";
@@ -320,48 +326,23 @@ export function getLiveSubagentStatus(sessionId: string): SubagentRunInfo["statu
   return getSubagentRuns().get(sessionId)?.run.status;
 }
 
-function findSubagentModel(runtime: ModelRuntime, reference: string) {
-  const slash = reference.indexOf("/");
-  if (slash > 0) return runtime.getModel(reference.slice(0, slash), reference.slice(slash + 1));
-  const matches = runtime.getModels().filter((model) => model.id === reference);
-  if (matches.length > 1) throw new Error(`Subagent model is ambiguous; use provider/modelId: ${reference}`);
-  return matches[0];
-}
-
-/**
- * Reads a model reference as pi's `--model` does: `provider/modelId` or a bare id, optionally
- * followed by `:<thinking level>`. The whole reference is tried first, so an id that itself
- * contains a colon (`qwen3:8b`) still matches; a suffix that is no thinking level never matches.
- */
-function parseSubagentModel(runtime: ModelRuntime, value: string | undefined) {
-  if (!value?.trim()) return undefined;
-  const requested = value.trim();
-  const exact = findSubagentModel(runtime, requested);
-  if (exact) return { model: exact };
-  const colon = requested.lastIndexOf(":");
-  const level = requested.slice(colon + 1) as ThinkingLevel;
-  if (colon > 0 && THINKING_LEVELS.has(level)) {
-    const model = findSubagentModel(runtime, requested.slice(0, colon));
-    if (model) return { model, thinkingLevel: level };
-  }
-  throw new Error(`Subagent model not found: ${requested}`);
-}
-
 /**
  * The child's model and thinking level. The model is the call's, else the role's, else the
- * profile's, else the parent's; a level written with the call's or the role's model travels with
- * it. Otherwise the profile's `thinking`, the level on the profile's own model (as pi's
- * `--thinking` beats `--model x:level`), then the parent's. The parent's scope decides on the
- * resolved model whatever chose it, and a pinned model runs at its pin.
+ * profile's, else the parent's. The level is the call's (its `thinking`, or a level on its
+ * `model`), else the role's (also when the call replaced the role's model), else the profile's
+ * `thinking`, else the level on the profile's own model (as pi's `--thinking` beats
+ * `--model x:level`), else the parent's. The parent's scope decides on the resolved model whatever
+ * chose it: a pinned model refuses another level the call wrote, or the role wrote with its own
+ * model, and otherwise runs at its pin.
  */
 function resolveSubagentModel(
   runtime: ModelRuntime,
-  callModel: string | undefined,
+  request: Pick<StartSubagentRequest, "model" | "thinking">,
   role: SubagentRole | undefined,
   profile: SubagentProfile,
   parent: AgentSessionLike,
 ) {
-  const call = callModel?.trim();
+  const call = request.model?.trim();
   const [source, reference] = call
     ? ["the call", call]
     : role
@@ -369,19 +350,33 @@ function resolveSubagentModel(
       : profile.model
         ? [`profile ${profile.name}`, profile.model]
         : ["the parent", undefined];
-  let parsed: ReturnType<typeof parseSubagentModel>;
-  try {
-    parsed = parseSubagentModel(runtime, reference);
-  } catch (error) {
-    if (parent.scopedModels.length === 0) throw error;
-    throw new Error(`${error instanceof Error ? error.message : String(error)} (from ${source}). ${allowedModelsText(parent.scopedModels)}`);
-  }
+  const parse = () => {
+    try {
+      return parseSubagentModel(runtime, reference);
+    } catch (error) {
+      if (parent.scopedModels.length === 0) throw error;
+      throw new Error(`${error instanceof Error ? error.message : String(error)} (from ${source}). ${allowedModelsText(parent.scopedModels)}`);
+    }
+  };
+  const parsed = parse();
   const model = parsed?.model ?? parent.model as ReturnType<ModelRuntime["getModel"]>;
-  const written = call || role ? parsed?.thinkingLevel : undefined;
+  const modelLevel = call ? parsed?.thinkingLevel : undefined;
+  if (request.thinking && modelLevel && request.thinking !== modelLevel) {
+    throw new Error(`Subagent model ${call} and thinking ${request.thinking} name different levels; give the level once.`);
+  }
+  const callLevel = request.thinking ?? modelLevel;
+  // A role's level is a default for whatever model the child runs; written with its own model, it
+  // is that model's level, which a pin must match.
+  const roleLevel = role && (call ? modelReferenceLevel(role.model) : parsed?.thinkingLevel);
+  const written = callLevel ?? (call ? undefined : roleLevel);
   const pinned = model
-    ? scopedThinkingLevel({ model, level: written, source }, parent.scopedModels)
+    ? scopedThinkingLevel({
+        model,
+        level: written,
+        source: request.thinking && !call ? `${source} with the call's thinking` : source,
+      }, parent.scopedModels)
     : undefined;
-  const thinkingLevel = pinned ?? written ?? profile.thinking ?? parsed?.thinkingLevel ?? parent.agent.state?.thinkingLevel;
+  const thinkingLevel = pinned ?? written ?? roleLevel ?? profile.thinking ?? parsed?.thinkingLevel ?? parent.agent.state?.thinkingLevel;
   return { model, thinkingLevel };
 }
 
@@ -478,7 +473,7 @@ export function createSubagentController(
       const runInBackground = request.runInBackground ?? profile.runInBackground;
       const isolation = profile.isolation === "off" ? undefined : request.isolation ?? profile.isolation;
       const parentModelRuntime = (parent.inner as unknown as { modelRuntime: ModelRuntime }).modelRuntime;
-      const resolveModel = () => resolveSubagentModel(parentModelRuntime, request.model, role, profile, parent.inner);
+      const resolveModel = () => resolveSubagentModel(parentModelRuntime, request, role, profile, parent.inner);
       // A model outside the parent's scope is refused here, before a worktree or child session
       // exists; every scoped model is one the parent's runtime knows. Without a scope this early
       // lookup only sizes `input_files` (#1199) and never fails: the model is resolved for real,

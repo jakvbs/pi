@@ -2,10 +2,63 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ScopedModel } from "@earendil-works/pi-coding-agent";
 
-/** The thinking levels a `:level` suffix on a subagent model reference may name. */
-export const THINKING_LEVELS: ReadonlySet<string> = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+const THINKING_LEVEL_LIST: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
-const LEVELS_TEXT = [...THINKING_LEVELS].join(", ");
+/** The thinking levels a `:level` suffix on a subagent model reference, or `Agent`'s `thinking`, may name. */
+export const THINKING_LEVELS: ReadonlySet<string> = new Set(THINKING_LEVEL_LIST);
+
+/** The thinking level `value` names, if it names one. */
+export function parseThinkingLevel(value: string): ThinkingLevel | undefined {
+  return THINKING_LEVEL_LIST.find((level) => level === value);
+}
+
+/** The levels as a message lists them: `off, minimal, …, max`. */
+export const LEVELS_TEXT = THINKING_LEVEL_LIST.join(", ");
+
+/** The models a reference is looked up among: pi's `ModelRuntime`, or a session's registry adapted to it. */
+export interface ModelLookup<M extends { provider: string; id: string }> {
+  getModel(provider: string, modelId: string): M | undefined;
+  getModels(): readonly M[];
+}
+
+function findSubagentModel<M extends { provider: string; id: string }>(models: ModelLookup<M>, reference: string): M | undefined {
+  const slash = reference.indexOf("/");
+  if (slash > 0) return models.getModel(reference.slice(0, slash), reference.slice(slash + 1));
+  const matches = models.getModels().filter((model) => model.id === reference);
+  if (matches.length > 1) throw new Error(`Subagent model is ambiguous; use provider/modelId: ${reference}`);
+  return matches[0];
+}
+
+/** A reference's `:level` suffix, read from the text alone: the reference without it and the level. */
+function splitLevel(reference: string): { base: string; level: ThinkingLevel } | undefined {
+  const colon = reference.lastIndexOf(":");
+  const level = colon > 0 ? parseThinkingLevel(reference.slice(colon + 1)) : undefined;
+  return level ? { base: reference.slice(0, colon), level } : undefined;
+}
+
+/** The level a model reference ends in, read from its text; for a role's level when the call replaced its model. */
+export function modelReferenceLevel(reference: string): ThinkingLevel | undefined {
+  return splitLevel(reference.trim())?.level;
+}
+
+/**
+ * Reads a model reference as pi's `--model` does: `provider/modelId` or a bare id, optionally
+ * followed by `:<thinking level>`. The whole reference is tried first, so an id that itself
+ * contains a colon (`qwen3:8b`) still matches; a suffix that is no thinking level never matches.
+ */
+export function parseSubagentModel<M extends { provider: string; id: string }>(
+  models: ModelLookup<M>,
+  value: string | undefined,
+): { model: M; thinkingLevel?: ThinkingLevel } | undefined {
+  if (!value?.trim()) return undefined;
+  const requested = value.trim();
+  const exact = findSubagentModel(models, requested);
+  if (exact) return { model: exact };
+  const split = splitLevel(requested);
+  const model = split && findSubagentModel(models, split.base);
+  if (split && model) return { model, thinkingLevel: split.level };
+  throw new Error(`Subagent model not found: ${requested}`);
+}
 
 const scopedModelName = ({ model, thinkingLevel }: ScopedModel): string =>
   `${model.provider}/${model.id}${thinkingLevel === undefined ? "" : `:${thinkingLevel}`}`;
@@ -42,4 +95,24 @@ export function scopedThinkingLevel({ model, level, source }: SubagentModelChoic
   if (entry && (entry.thinkingLevel === undefined || level === undefined || level === entry.thinkingLevel)) return entry.thinkingLevel;
   const name = `${model.provider}/${model.id}${level === undefined ? "" : `:${level}`}`;
   throw new Error(`Subagent model ${name} from ${source} is not allowed by enabledModels. ${allowedModelsText(scope)}`);
+}
+
+/**
+ * Whether a role's model reference starts a child under the scope, for the declaration: resolved as
+ * `parseSubagentModel` resolves it, then judged as `scopedThinkingLevel` judges it.
+ */
+export function referenceInScope<M extends { provider: string; id: string }>(
+  reference: string,
+  models: ModelLookup<M>,
+  scope: readonly ScopedModel[],
+): boolean {
+  if (scope.length === 0) return true;
+  try {
+    const parsed = parseSubagentModel(models, reference);
+    if (!parsed) return false;
+    scopedThinkingLevel({ model: parsed.model, level: parsed.thinkingLevel, source: "the role" }, scope);
+    return true;
+  } catch {
+    return false;
+  }
 }

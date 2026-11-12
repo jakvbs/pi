@@ -217,6 +217,7 @@ test("Agent resume rejects the remaining creation overrides before dispatch", as
     // rather than silently switching the model under the resumed session.
     for (const override of [
       { model: "different-provider/different-model" }, { input_files: ["fact.txt"] }, { isolation: "worktree" },
+      { role: "review" }, { thinking: "high" },
     ]) {
       const rejected = await invoke(override);
       const name = Object.keys(override)[0];
@@ -228,8 +229,8 @@ test("Agent resume rejects the remaining creation overrides before dispatch", as
     // Empty defaults stay compatible, and so do the keys the tool no longer offers: a call written
     // against the old schema still validates, and the resumed child keeps its own settings.
     const result = await invoke({
-      model: "", input_files: [], isolation: "", run_in_background: false,
-      thinking: "low", max_turns: 8, inherit_context: true,
+      model: "", input_files: [], isolation: "", role: "", thinking: "", run_in_background: false,
+      max_turns: 8, inherit_context: true,
     });
     assert.equal(result?.isError, false);
     assert.match(textOf(result), /Subagent child-session completed/);
@@ -249,7 +250,7 @@ test("Agent exposes only the parameters the model can choose correctly", async (
     session = await createSession(dir, faux, [createSubagentExtension(runtime, () => [])]);
     const agent = session.getAllTools().find((tool) => tool.name === "Agent");
     assert.deepEqual(Object.keys(agent.parameters.properties).sort(), [
-      "description", "input_files", "isolation", "model", "prompt", "repo", "resume", "run_in_background", "subagent_type", "ticket", "wait_timeout",
+      "description", "input_files", "isolation", "model", "prompt", "repo", "resume", "role", "run_in_background", "subagent_type", "thinking", "ticket", "wait_timeout",
     ]);
     const resultTool = session.getAllTools().find((tool) => tool.name === "get_subagent_result");
     for (const tool of [agent, resultTool]) {
@@ -258,7 +259,7 @@ test("Agent exposes only the parameters the model can choose correctly", async (
       assert.ok(!tool.parameters.required.includes("wait_timeout"));
     }
     // The profile owns these; a model that guessed one used to win over the configured value.
-    for (const removed of ["thinking", "max_turns", "inherit_context"]) {
+    for (const removed of ["max_turns", "inherit_context"]) {
       assert.equal(agent.parameters.properties[removed], undefined, `${removed} must not be offered.`);
     }
     // A string, not a "worktree" literal: a model that fills every optional field with "" must still
@@ -298,6 +299,88 @@ test("Agent's model declaration lists the session's scoped models in every reque
     assert.equal(listed(await declaredModel()), "faux/faux-model, faux/pinned:high, faux/later");
     session.setScopedModels([]);
     assert.match(await declaredModel(), /^Optional provider\/modelId override\./);
+  } finally {
+    session?.dispose();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+const SCOUT_PROFILE = {
+  name: "scout-agent", displayName: "scout-agent", description: "The only subagent type", systemPrompt: "Delegate",
+  tools: ["read"], roles: { kind: "loaded", path: "roles.json", roles: [
+    { name: "worker", model: "faux/faux-model:medium", reading: [] },
+    { name: "review", model: "faux/reviewer:high", reading: [] },
+    // Its own model, not `pinned` at `high`: the declaration resolves it as the runtime does.
+    { name: "stray", model: "faux/pinned:high", reading: [] },
+  ] },
+  inheritContext: false, runInBackground: true, enabled: true, scope: "package",
+};
+
+// The coordinator should not learn only at call time that a role's model is refused.
+test("Agent's declaration marks a role whose model the session's scope refuses", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-subagent-role-scope-"));
+  let session;
+  try {
+    const faux = fauxProvider({ models: [{ id: "faux-model" }, { id: "reviewer" }, { id: "pinned" }, { id: "pinned:high" }] });
+    const { runtime } = recordingRuntime();
+    session = await createSession(dir, faux, [createSubagentExtension(runtime, () => [SCOUT_PROFILE])], (models) => [
+      { model: models.getModel("faux-model") }, { model: models.getModel("pinned") },
+    ]);
+    const declaredRoles = async () => {
+      let description;
+      faux.setResponses([(context) => {
+        description = getCurrentTools(context.messages).find((tool) => tool.name === "Agent")?.description;
+        return fauxAssistantMessage([fauxText("done")]);
+      }]);
+      await session.prompt("Which roles may a subagent take?");
+      return /Roles: (.*)\)$/m.exec(description)?.[1];
+    };
+
+    assert.equal(await declaredRoles(),
+      "worker (faux/faux-model:medium), review (faux/reviewer:high, outside enabledModels), stray (faux/pinned:high, outside enabledModels)");
+    session.setScopedModels([...session.scopedModels, { model: faux.getModel("reviewer") }]);
+    assert.equal(await declaredRoles(),
+      "worker (faux/faux-model:medium), review (faux/reviewer:high), stray (faux/pinned:high, outside enabledModels)");
+    session.setScopedModels([]);
+    assert.equal(await declaredRoles(), "worker (faux/faux-model:medium), review (faux/reviewer:high), stray (faux/pinned:high)");
+  } finally {
+    session?.dispose();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// `role` is declared even where no profile has roles, so pi's validator types it: before, a number
+// passed the validator as an undeclared key and crashed the tool on `.trim()`.
+test("Agent's role is declared on every session, so pi validates its type", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-subagent-role-type-"));
+  let session;
+  try {
+    const faux = fauxProvider({ models: [{ id: "faux-model" }] });
+    const { calls, runtime } = recordingRuntime();
+    const roles = [];
+    runtime.start = async (request) => {
+      roles.push(request.role);
+      throw new Error(`Unknown role ${request.role}`);
+    };
+    session = await createSession(dir, faux, [createSubagentExtension(runtime, () => [])]);
+    const invoke = async (role) => {
+      faux.setResponses([
+        fauxAssistantMessage([fauxToolCall("Agent", { prompt: "Inspect", description: "Typed role", role })], { stopReason: "toolUse" }),
+        fauxAssistantMessage([fauxText("done")]),
+      ]);
+      await session.prompt("Start a subagent.");
+      return session.agent.state.messages.findLast((message) => message.role === "toolResult" && message.toolName === "Agent");
+    };
+
+    const shaped = await invoke({ name: "review" });
+    assert.equal(shaped.isError, true);
+    assert.match(textOf(shaped), /^Validation failed for tool "Agent":\n {2}- role: /);
+    assert.deepEqual(roles, []);
+    // pi's validator coerces a number to the declared string, so the tool reads "5", never 5.
+    const numbered = await invoke(5);
+    assert.equal(textOf(numbered), "Unknown role 5");
+    assert.deepEqual(roles, ["5"]);
+    assert.deepEqual(calls, []);
   } finally {
     session?.dispose();
     await rm(dir, { recursive: true, force: true });
