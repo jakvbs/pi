@@ -158,7 +158,7 @@ export interface McpSignInPrompt {
 
 export interface McpSignInOptions {
   serverUrl: string;
-  /** Sign-in refreshes stored tokens under its refresh lock. */
+  /** Sign-in refreshes stored tokens under the store's refresh lock first (pi 1.5.1). */
   store: McpOAuthServerStore;
   settings: McpOAuthSettings;
   challenge?: McpOAuthChallenge;
