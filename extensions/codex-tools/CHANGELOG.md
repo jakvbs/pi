@@ -9,6 +9,11 @@ This project follows the spirit of [Keep a Changelog](https://keepachangelog.com
 ### Fixed
 
 - Re-check `apply_patch` after `/tree` navigation and similar branch switches. Restoring a branch's tool loadout re-activated `apply_patch` for models without grammar-tool support, so they called it and got an error.
+
+## [0.4.2] - 2026-11-12
+
+### Fixed
+
 - Show the configured expand key in long `apply_patch` previews. The hint now uses Pi's render-context `keyHint`, so it no longer renders without the key when the package resolves its own copy of Pi.
 - Keep the line endings of untouched lines when `apply_patch` updates a file with mixed LF/CRLF endings; previously any CRLF made the whole file CRLF. Added lines take the ending of their surrounding context, and a missing trailing newline is kept while the last line is untouched.
 
