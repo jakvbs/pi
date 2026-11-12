@@ -103,8 +103,9 @@ export async function DELETE(req: Request) {
     const denied = await checkCwdAllowed(body.cwd);
     if (denied) return denied;
 
-    await removeWorktree(body.cwd, body.path, body.force === true);
-    return NextResponse.json({ success: true });
+    // A moved copy it could not delete is named; the next removal deletes it.
+    const { leftover } = await removeWorktree(body.cwd, body.path, body.force === true);
+    return NextResponse.json({ success: true, ...(leftover ? { leftover } : {}) });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     // Git refuses some worktree removals without --force, including worktrees

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -403,29 +403,116 @@ test("a read-only folder in ignored node_modules leaves the worktree's path gone
   await chmod(path.join(worktree, "node_modules", "pkg-1"), 0o555);
   // After hooks run in order, so this one would come after the temp folder's removal.
   const restore = () => execFileAsync("chmod", ["-R", "u+w", path.dirname(worktree)]);
-  const { removeWorktree } = await loadSubject();
+  const { addWorktree, removeWorktree } = await loadSubject();
 
+  let removal;
   try {
-    await removeWorktree(repo, worktree);
+    removal = await removeWorktree(repo, worktree);
   } finally {
     await restore();
   }
   assert.equal(assertWholeOrGone(worktree, files), "gone");
-  // The undeletable copy stays beside it, out of git's list; the branch is untouched.
-  assert.equal((await trashBeside(worktree)).length, 1);
+  // The undeletable copy stays beside it, out of git's list, and is reported; the branch is untouched.
+  const trash = await trashBeside(worktree);
+  assert.equal(trash.length, 1);
+  assert.equal(removal.leftover?.path, path.join(path.dirname(worktree), trash[0]));
+  assert.match(removal.leftover?.reason ?? "", /EACCES|permission denied/i);
   assert.doesNotMatch(await gitOut(repo, ["worktree", "list", "--porcelain"]), /agent/);
   assert.equal(await gitOut(repo, ["rev-parse", "--verify", "--quiet", "refs/heads/agent"]), await gitOut(repo, ["rev-parse", "HEAD"]));
+
+  // The next removal in the repository deletes it.
+  const next = await addWorktree(repo, "next");
+  assert.deepEqual(await removeWorktree(repo, next.path), {});
+  assert.deepEqual(await trashBeside(worktree), []);
+});
+
+test("a large checkout is removed when clean and refused as dirty with many untracked files (F107)", { timeout: 120_000 }, async (t) => {
+  // git() buffers 1 MiB of output; the index of these 12k files and the status of 15k untracked ones are larger.
+  const { repo } = await linkedWorktree(t, "pi-web-worktree-large-");
+  const name = (prefix, i) => `${prefix}-${String(i).padStart(6, "0")}-${"x".repeat(60)}.txt`;
+  await Promise.all(Array.from({ length: 12_000 }, (_, i) => writeFile(path.join(repo, name("tracked", i)), "")));
+  await git(repo, ["add", "."]);
+  await git(repo, ["commit", "-qm", "many files"]);
+  assert.ok((await execFileAsync("git", ["-C", repo, "ls-files", "--stage", "-z"], { maxBuffer: 64 * 1024 * 1024 })).stdout.length > 1024 * 1024);
+  const { addWorktree, removeWorktree, worktreeRemovalRequiresForce } = await loadSubject();
+
+  const clean = await addWorktree(repo, "clean");
+  await removeWorktree(repo, clean.path);
+  assert.equal(existsSync(clean.path), false);
+
+  const dirty = await addWorktree(repo, "dirty");
+  await Promise.all(Array.from({ length: 15_000 }, (_, i) => writeFile(path.join(dirty.path, name("untracked", i)), "")));
+  // The route answers 409 dirty, so the UI offers force.
+  await assert.rejects(removeWorktree(repo, dirty.path), (error) => worktreeRemovalRequiresForce(error.message));
+  assert.equal(existsSync(path.join(dirty.path, name("tracked", 0))), true);
+  await removeWorktree(repo, dirty.path, true);
+  assert.equal(existsSync(dirty.path), false);
+});
+
+test("removing a worktree leaves the entries of siblings whose folders are away for now (F107)", async (t) => {
+  const { tempRoot, repo } = await linkedWorktree(t, "pi-web-worktree-siblings-");
+  const { addWorktree, removeWorktree } = await loadSubject();
+  const [doomed, staged, detached] = [await addWorktree(repo, "doomed"), await addWorktree(repo, "staged"), await addWorktree(repo, "detached")];
+  await writeFile(path.join(staged.path, "new.txt"), "staged\n");
+  await git(staged.path, ["add", "new.txt"]);
+  await git(detached.path, ["checkout", "-q", "--detach"]);
+  await writeFile(path.join(detached.path, "work.txt"), "work\n");
+  await git(detached.path, ["add", "work.txt"]);
+  await git(detached.path, ["commit", "-qm", "detached work"]);
+  const detachedHead = await gitOut(detached.path, ["rev-parse", "HEAD"]);
+  // An unmounted drive, or a folder moved for a while.
+  const away = path.join(tempRoot, "away");
+  await mkdir(away);
+  for (const worktree of [staged, detached]) await rename(worktree.path, path.join(away, path.basename(worktree.path)));
+
+  await removeWorktree(repo, doomed.path);
+  for (const worktree of [staged, detached]) await rename(path.join(away, path.basename(worktree.path)), worktree.path);
+
+  assert.equal(existsSync(doomed.path), false);
+  assert.equal(await gitOut(staged.path, ["diff", "--cached", "--name-only"]), "new.txt");
+  assert.equal(await gitOut(detached.path, ["rev-parse", "HEAD"]), detachedHead);
+  assert.match(await gitOut(detached.path, ["reflog", "-1", "--format=%gs"]), /detached work/);
+  assert.equal((await gitOut(repo, ["worktree", "list"])).split("\n").length, 4);
+});
+
+test("a removal whose git entry cannot be deleted still deletes the moved checkout, and says so (F107)", { skip: process.platform === "win32" || process.getuid?.() === 0 }, async (t) => {
+  const { repo, worktree } = await checkoutWithNodeModules(t, "pi-web-worktree-admin-");
+  const admin = path.join(repo, ".git", "worktrees");
+  await chmod(admin, 0o555);
+  const { removeWorktree } = await loadSubject();
+  try {
+    await assert.rejects(removeWorktree(repo, worktree), /its entry in git could not be deleted/);
+  } finally {
+    await chmod(admin, 0o755);
+  }
+  assert.equal(existsSync(worktree), false);
+  assert.deepEqual(await trashBeside(worktree), []);
+});
+
+test("the main worktree is never removed, from itself or from a linked one (F107)", async (t) => {
+  const { repo, linked } = await linkedWorktree(t, "pi-web-worktree-main-");
+  const { removeWorktree } = await loadSubject();
+  for (const cwd of [repo, linked]) {
+    await assert.rejects(removeWorktree(cwd, repo), { message: "Cannot remove the main worktree" });
+    await assert.rejects(removeWorktree(cwd, repo, true), { message: "Cannot remove the main worktree" });
+  }
+  assert.equal(existsSync(path.join(repo, "README.md")), true);
+  assert.deepEqual(await readdir(path.dirname(repo)).then((names) => names.filter((n) => n.includes(".removing-"))), []);
+});
+
+test("a worktree removes itself when the caller's cwd is that worktree (F107)", async (t) => {
+  const { repo, linked } = await linkedWorktree(t, "pi-web-worktree-self-");
+  const { removeWorktree } = await loadSubject();
+  await removeWorktree(linked, linked);
+  assert.equal(existsSync(linked), false);
+  assert.doesNotMatch(await gitOut(repo, ["worktree", "list", "--porcelain"]), /linked/);
 });
 
 test("a worktree with modified or untracked files, a lock or a submodule is refused and left exactly as it was (F107)", async (t) => {
   const { repo, worktree, files } = await checkoutWithNodeModules(t, "pi-web-worktree-refused-");
-  const { removeWorktree, worktreeHasUncommittedFiles, worktreeRemovalRefused } = await loadSubject();
+  const { removeWorktree, worktreeHasUncommittedFiles } = await loadSubject();
   const refused = async (pattern) => {
-    await assert.rejects(removeWorktree(repo, worktree), (error) => {
-      assert.match(error.message, pattern);
-      assert.equal(worktreeRemovalRefused(error.message), true);
-      return true;
-    });
+    await assert.rejects(removeWorktree(repo, worktree), pattern);
     assert.equal(assertWholeOrGone(worktree, files), "whole");
     assert.deepEqual(await trashBeside(worktree), []);
   };
@@ -441,6 +528,11 @@ test("a worktree with modified or untracked files, a lock or a submodule is refu
   await git(repo, ["worktree", "lock", worktree]);
   await refused(/locked working tree/);
   await git(repo, ["worktree", "unlock", worktree]);
+
+  // A gitlink staged without its submodule checked out is a change git's own check sees.
+  await execFileAsync("git", ["-C", worktree, "update-index", "--add", "--cacheinfo", `160000,${await gitOut(repo, ["rev-parse", "HEAD"])},pinned`]);
+  await refused(/contains modified or untracked files/);
+  await git(worktree, ["rm", "-q", "--cached", "pinned"]);
 
   const library = path.join(path.dirname(repo), "library");
   await execFileAsync("git", ["init", library]);

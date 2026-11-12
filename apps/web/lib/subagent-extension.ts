@@ -15,7 +15,7 @@ import {
 import { MAX_SUBAGENT_INPUT_BYTES, MAX_SUBAGENT_INPUT_FILES } from "./subagent-input";
 import { agentModelDescription, LEVELS_TEXT, parseThinkingLevel, referenceInScope } from "./subagent-model-scope";
 import { subagentRolesText } from "./subagent-roles";
-import { worktreeHasUncommittedFiles, worktreeRemovalRefused } from "./worktree";
+import { worktreeHasUncommittedFiles } from "./worktree";
 
 export const HOST_SUBAGENT_EXTENSION_NAME = "pi-web-subagents";
 const HOST_SUBAGENT_EXTENSION_PATH = `<inline:${HOST_SUBAGENT_EXTENSION_NAME}>`;
@@ -246,18 +246,27 @@ export function subagentToolDetails(run: SubagentRunInfo): SubagentToolDetails {
  * Where an isolated run's worktree is, as its result was recorded: the model reads only `content`,
  * never `details` (#1202). Git keeps the branch, with any commits, when it removes the checkout,
  * and refuses to remove one that still has changes. Only this run's own refusal gives a reason, and
- * never in git's words, which end in "use --force to delete it". A removal that failed rather than
- * being refused may have been cut short mid-delete (by a removal before F107), so that checkout is
- * reported as possibly damaged. A result recorded without `worktreeExists` (before #1202) says nothing.
+ * never in git's words, which end in "use --force to delete it". Any other failure is named: the
+ * removal fails only before it moves the checkout (F107), so the checkout was not touched. A moved
+ * copy that could not be deleted is named too. A result recorded without `worktreeExists` (before
+ * #1202) says nothing.
  */
 function worktreeOutcomeText(run: SubagentRunInfo): string | undefined {
   if (!run.worktreePath || !run.worktreeBranch || run.worktreeExists === undefined) return undefined;
-  if (!run.worktreeExists) return `Its worktree was removed; branch ${run.worktreeBranch} keeps any commits it made.`;
+  if (!run.worktreeExists) {
+    const removed = `Its worktree was removed; branch ${run.worktreeBranch} keeps any commits it made.`;
+    const leftover = run.worktreeLeftover;
+    return leftover
+      ? `${removed} Its moved-aside copy ${leftover.path} could not be deleted (${leftover.reason}); the next worktree removal in this repository deletes it.`
+      : removed;
+  }
   const where = `${run.worktreePath} (branch ${run.worktreeBranch})`;
-  if (!run.worktreeCleanupError) return `Its worktree is still at ${where}.`;
-  if (worktreeHasUncommittedFiles(run.worktreeCleanupError)) return `Its worktree was kept at ${where} because it still has uncommitted or untracked files.`;
-  if (worktreeRemovalRefused(run.worktreeCleanupError)) return `Its worktree is still at ${where}.`;
-  return `Its worktree is still at ${where}, but removing it failed, so the checkout may be damaged; check git status there before relying on it. The branch keeps any commits it made.`;
+  const error = run.worktreeCleanupError;
+  if (!error) return `Its worktree is still at ${where}.`;
+  if (worktreeHasUncommittedFiles(error)) return `Its worktree was kept at ${where} because it still has uncommitted or untracked files.`;
+  const prefix = `Worktree retained at ${run.worktreePath}: `;
+  const reason = error.startsWith(prefix) ? error.slice(prefix.length) : error;
+  return `Its worktree is still at ${where}, not touched: removing it failed: ${reason}`;
 }
 
 export function subagentFinalText(run: SubagentRunInfo): string {

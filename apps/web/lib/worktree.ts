@@ -1,10 +1,11 @@
-import { execFile } from "child_process";
+import { execFile, spawn } from "child_process";
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync } from "fs";
-import { rename, rm } from "fs/promises";
+import { readdir, readFile, rename, rm } from "fs/promises";
 import { basename, dirname, join, resolve } from "path";
 import { promisify } from "util";
 import { allowFileRoot } from "./allowed-roots";
+import { serializeByKey } from "./key-serializer";
 import { samePath, toNativePath } from "./paths";
 
 const execFileAsync = promisify(execFile);
@@ -395,56 +396,151 @@ export async function addWorktree(cwd: string, branch: string): Promise<{ path: 
   return { path: worktreePath, branch: trimmed };
 }
 
+/** A removal that moved the checkout away but could not delete the moved copy; the next removal beside it tries again. */
+export interface WorktreeLeftover {
+  path: string;
+  reason: string;
+}
+
+const WORKTREE_REMOVALS = Symbol.for("pi-web.worktree-removals");
+
 /**
  * Removes a linked worktree; its branch stays. `git worktree remove` deletes in place, so a kill
  * (a timeout, a stopped server) or a failed unlink (a read-only folder in `node_modules`) left a
  * half-deleted checkout at the path, which git had already unregistered or then refused as dirty
- * (F107). Here the checks git makes come first and touch nothing; then one rename on the same
- * filesystem moves the checkout aside, `git worktree prune` drops its entry, and the moved copy
- * is deleted. The path therefore holds the whole checkout or nothing; an interruption after the
- * rename leaves at most the hidden trash folder beside it. Without `force`, a checkout with
- * modified or untracked files (ignored ones are fine) or initialized submodules is refused, in
- * git's words; a locked one always is.
+ * (F107). Here git's own checks come first and touch nothing; then one rename on the same
+ * filesystem moves the checkout to a hidden `.<name>.removing-<uuid>` beside it, its own entry
+ * under `.git/worktrees/` is deleted (never `git worktree prune`, which would also drop the entry
+ * of a sibling whose folder is only away for now), and the moved copy is deleted. The path
+ * therefore holds the whole checkout or nothing. A moved copy that cannot be deleted is returned,
+ * and the next removal in the repository deletes the copies left beside its worktrees. Without
+ * `force`, a checkout with modified or untracked files (ignored ones are fine) or initialized
+ * submodules is refused, in git's words; a locked one always is. Removals in one repository run
+ * one at a time.
  */
-export async function removeWorktree(cwd: string, worktreePath: string, force = false): Promise<void> {
-  const worktrees = (await listRegisteredWorktrees(cwd)).filter((worktree) => !worktree.missing);
+export async function removeWorktree(cwd: string, worktreePath: string, force = false): Promise<{ leftover?: WorktreeLeftover }> {
+  const repoRoot = await getRepoRoot(cwd);
+  return serializeByKey(WORKTREE_REMOVALS, repoRoot, () => removeLinkedWorktree(repoRoot, worktreePath, force));
+}
+
+async function removeLinkedWorktree(repoRoot: string, worktreePath: string, force: boolean): Promise<{ leftover?: WorktreeLeftover }> {
+  const registered = await listRegisteredWorktrees(repoRoot);
   // Git reports worktrees by their real path; the caller's may run through a link
   // (macOS's /var and /tmp are links to /private/...).
   const realTarget = realPathOrSelf(worktreePath);
-  const target = worktrees.find((worktree) => samePath(worktree.path, realTarget));
+  const target = registered.find((worktree) => !worktree.missing && samePath(worktree.path, realTarget));
   if (!target) throw new Error(`Not a worktree of this repository: ${worktreePath}`);
-  if (target === worktrees[0]) throw new Error("Cannot remove the main worktree");
+  if (target === registered[0]) throw new Error("Cannot remove the main worktree");
   if (target.locked) throw new Error(`cannot remove a locked working tree: ${target.path}; unlock it first`);
 
+  let adminDir: string;
   try {
-    if (!force) {
-      if (await containsSubmodules(target.path)) throw new Error("working trees containing submodules cannot be moved or removed");
-      // git's own check before `worktree remove`: ignored files do not count.
-      if (await git(target.path, ["status", "--porcelain", "--ignore-submodules=none"], WORKTREE_TIMEOUT)) {
-        throw new Error(`'${target.path}' contains modified or untracked files, use --force to delete it`);
-      }
-    }
-    const trash = join(dirname(target.path), `.${basename(target.path)}.removing-${randomUUID()}`);
-    await rename(target.path, trash);
-    invalidateProjectCache();
-    // From the main worktree: the caller's cwd may have been the moved checkout.
-    await git(worktrees[0].path, ["worktree", "prune"], WORKTREE_TIMEOUT);
-    try {
-      await rm(trash, { recursive: true, force: true });
-    } catch (error) {
-      console.error(`[pi-web] removeWorktree: ${target.path} is removed, but its moved copy ${trash} could not be deleted: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    adminDir = toNativePath(await git(target.path, ["rev-parse", "--absolute-git-dir"]));
+    if (!force) await refuseUnremovable(target.path, adminDir);
   } catch (error) {
     throw new Error(extractGitError(error));
   }
+
+  await deleteMovedCheckouts(new Set(registered.slice(1).map((worktree) => dirname(worktree.path))));
+  const trash = join(dirname(target.path), `.${basename(target.path)}.removing-${randomUUID()}`);
+  await rename(target.path, trash);
+  invalidateProjectCache();
+  // Past the rename the path is gone: every step is tried, and failures reported after.
+  let adminError: string | undefined;
+  try {
+    await deleteOwnAdminDir(trash, adminDir);
+  } catch (error) {
+    adminError = extractGitError(error);
+  }
+  let leftover: WorktreeLeftover | undefined;
+  try {
+    await rm(trash, { recursive: true, force: true });
+  } catch (error) {
+    leftover = { path: trash, reason: extractGitError(error) };
+  }
+  if (adminError) throw new Error(`${target.path} was moved to ${trash}, but its entry in git could not be deleted: ${adminError}`);
+  return leftover ? { leftover } : {};
 }
 
-/** git's submodule check before removing a worktree: its own `modules` folder, or a checked-out gitlink. */
-async function containsSubmodules(worktreePath: string): Promise<boolean> {
-  const gitDir = toNativePath(await git(worktreePath, ["rev-parse", "--absolute-git-dir"]));
-  if (existsSync(join(gitDir, "modules"))) return true;
-  const entries = (await git(worktreePath, ["ls-files", "--stage", "-z"], WORKTREE_TIMEOUT)).split("\0");
-  return entries.some((entry) => entry.startsWith("160000 ") && existsSync(join(worktreePath, entry.slice(entry.indexOf("\t") + 1), ".git")));
+/** git's checks before `worktree remove` without `--force`, streamed so a large checkout cannot overflow a buffer. */
+async function refuseUnremovable(worktreePath: string, adminDir: string): Promise<void> {
+  const populatedGitlink = (entry: string) => entry.startsWith("160000 ")
+    && existsSync(join(worktreePath, entry.slice(entry.indexOf("\t") + 1), ".git"));
+  if (existsSync(join(adminDir, "modules")) || await gitFinds(worktreePath, ["ls-files", "--stage", "-z"], populatedGitlink)) {
+    throw new Error("working trees containing submodules cannot be moved or removed");
+  }
+  // Ignored files do not count; a gitlink staged without its submodule checked out does.
+  if (await gitFinds(worktreePath, ["status", "--porcelain", "-z", "--ignore-submodules=none"], () => true)) {
+    throw new Error(`'${worktreePath}' contains modified or untracked files, use --force to delete it`);
+  }
+}
+
+/**
+ * Whether git prints a NUL-separated record `match` accepts; git is stopped at the first. Read as
+ * a stream: `git()` buffers 1 MiB, which the index of a repository of about 11k files outgrows.
+ */
+function gitFinds(cwd: string, args: string[], match: (record: string) => boolean): Promise<boolean> {
+  return new Promise((resolveFound, reject) => {
+    const child = spawn("git", ["-C", cwd, ...args], {
+      env: { ...process.env, LC_ALL: "C" },
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: WORKTREE_TIMEOUT,
+    });
+    let pending = "";
+    let stderr = "";
+    let found = false;
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      if (found) return;
+      const records = (pending + chunk).split("\0");
+      pending = records.pop() ?? "";
+      if (!records.some(match)) return;
+      found = true;
+      child.kill();
+      resolveFound(true);
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      if (found) return;
+      if (code === 0) resolveFound(pending !== "" && match(pending));
+      else reject(Object.assign(new Error(`git ${args[0]} failed (${signal ?? code})`), { stderr }));
+    });
+  });
+}
+
+/**
+ * Deletes the entry under `.git/worktrees/` the moved checkout's `.git` file names, which must be
+ * the one git named for it before the move, as `git worktree remove` would.
+ */
+async function deleteOwnAdminDir(movedCheckout: string, adminDir: string): Promise<void> {
+  const match = /^gitdir:\s*(.+?)\s*$/m.exec(await readFile(join(movedCheckout, ".git"), "utf8"));
+  if (!match) throw new Error(`${join(movedCheckout, ".git")} names no gitdir`);
+  const named = resolve(movedCheckout, match[1]);
+  if (!samePath(realPathOrSelf(named), realPathOrSelf(adminDir))) throw new Error(`${join(movedCheckout, ".git")} names ${named}, not ${adminDir}`);
+  await rm(adminDir, { recursive: true, force: true });
+}
+
+const MOVED_CHECKOUT = /^\..+\.removing-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** Deletes the moved copies an earlier removal could not, from the folders holding the linked worktrees. */
+async function deleteMovedCheckouts(folders: ReadonlySet<string>): Promise<void> {
+  for (const folder of folders) {
+    let names: string[];
+    try {
+      names = await readdir(folder);
+    } catch {
+      continue; // The folder is gone with its worktrees.
+    }
+    for (const name of names.filter((entry) => MOVED_CHECKOUT.test(entry))) {
+      try {
+        await rm(join(folder, name), { recursive: true, force: true });
+      } catch (error) {
+        console.error(`[pi-web] removeWorktree: ${join(folder, name)}, a moved copy of a removed worktree, could not be deleted: ${extractGitError(error)}`);
+      }
+    }
+  }
 }
 
 /**
@@ -454,11 +550,6 @@ async function containsSubmodules(worktreePath: string): Promise<boolean> {
  */
 export function worktreeRemovalRequiresForce(message: string): boolean {
   return worktreeHasUncommittedFiles(message) || /containing submodules/i.test(message);
-}
-
-/** `removeWorktree()` refused before touching the checkout: files, submodules or a lock. */
-export function worktreeRemovalRefused(message: string): boolean {
-  return worktreeRemovalRequiresForce(message) || /locked working tree/i.test(message);
 }
 
 /** The refusal is about modified or untracked files, not initialized submodules. */

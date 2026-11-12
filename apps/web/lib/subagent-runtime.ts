@@ -417,16 +417,17 @@ async function subagentRepo(path: string): Promise<string> {
   }
 }
 
+/** Removes an isolated run's worktree; what went wrong, as the run's result records it. */
 async function cleanupWorktree(
   repoCwd: string,
   worktree: { path: string; branch: string } | undefined,
-): Promise<string | undefined> {
-  if (!worktree) return undefined;
+): Promise<Pick<SubagentRunInfo, "worktreeCleanupError" | "worktreeLeftover">> {
+  if (!worktree) return {};
   try {
-    await removeWorktree(repoCwd, worktree.path);
-    return undefined;
+    const { leftover } = await removeWorktree(repoCwd, worktree.path);
+    return leftover ? { worktreeLeftover: leftover } : {};
   } catch (error) {
-    return `Worktree retained at ${worktree.path}: ${error instanceof Error ? error.message : String(error)}`;
+    return { worktreeCleanupError: `Worktree retained at ${worktree.path}: ${error instanceof Error ? error.message : String(error)}` };
   }
 }
 
@@ -446,6 +447,7 @@ function recordResult(sessionManager: SessionManager, run: SubagentRunInfo): Sub
     ...(recorded.error ? { error: recorded.error } : {}),
     ...(recorded.worktreeCleanupError ? { worktreeCleanupError: recorded.worktreeCleanupError } : {}),
     ...(recorded.worktreeExists !== undefined ? { worktreeExists: recorded.worktreeExists } : {}),
+    ...(recorded.worktreeLeftover ? { worktreeLeftover: recorded.worktreeLeftover } : {}),
   };
   sessionManager.appendCustomEntry(SUBAGENT_RESULT_TYPE, entry);
   return recorded;
@@ -704,12 +706,12 @@ export function createSubagentController(
         // Reached only when the abort fires while the run is being queued, before `cancelQueued`
         // is set; a run aborted later in the queue ends in `finishQueuedAbort`.
         if (stored.abortRequested) {
-          const cleanupError = await cleanupWorktree(baseCwd, isolatedWorktree);
+          const cleanup = await cleanupWorktree(baseCwd, isolatedWorktree);
           const result = recordResult(sessionManager, {
             ...initialRun,
             status: "aborted",
             completedAt: new Date().toISOString(),
-            ...(cleanupError ? { worktreeCleanupError: cleanupError } : {}),
+            ...cleanup,
           });
           stored.run = result;
           request.onUpdate?.(result);
@@ -798,9 +800,7 @@ export function createSubagentController(
           request.signal?.removeEventListener("abort", handleParentAbort);
         }
 
-        const cleanupError = await cleanupWorktree(baseCwd, isolatedWorktree);
-        if (cleanupError) result = { ...result, worktreeCleanupError: cleanupError };
-        result = recordResult(sessionManager, result);
+        result = recordResult(sessionManager, { ...result, ...await cleanupWorktree(baseCwd, isolatedWorktree) });
         stored.run = result;
         request.onUpdate?.(result);
         getSubagentRuns().delete(initialRun.sessionId);
@@ -819,8 +819,7 @@ export function createSubagentController(
         if (stored.run.status !== "queued") return;
         try {
           const result: SubagentRunInfo = { ...initialRun, status: "aborted", completedAt: new Date().toISOString() };
-          const cleanupError = await cleanupWorktree(baseCwd, isolatedWorktree);
-          const finalResult = recordResult(sessionManager, cleanupError ? { ...result, worktreeCleanupError: cleanupError } : result);
+          const finalResult = recordResult(sessionManager, { ...result, ...await cleanupWorktree(baseCwd, isolatedWorktree) });
           stored.run = finalResult;
           request.onUpdate?.(finalResult);
           getSubagentRuns().delete(initialRun.sessionId);
@@ -903,6 +902,7 @@ export function createSubagentController(
       // Resume removes no worktree: this run's result says only whether it is still there.
       worktreeCleanupError: undefined,
       worktreeExists: undefined,
+      worktreeLeftover: undefined,
       resumed: true,
     };
     const manager = wrapper.inner.sessionManager;

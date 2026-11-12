@@ -355,27 +355,28 @@ test("an isolated run's result says where its worktree was as the result was rec
     subagentFinalText(isolated({ worktreeCleanupError: retained("Not a worktree of this repository: /repo-worktrees/pi-web-agent-1") })),
     `Subagent child-session completed.\n\n${removed}\n\nParser is in lib/parser.ts`,
   );
-  // Still there without this run's refusal for files (a resumed run removes nothing), or for a submodule or a lock.
-  for (const worktreeCleanupError of [
-    undefined,
-    retained("fatal: working trees containing submodules cannot be moved or removed"),
-    retained("fatal: cannot remove a locked working tree;\nuse 'remove -f -f' to override or unlock first"),
+  // Still there without a removal (a resumed run removes nothing).
+  assert.equal(
+    subagentFinalText(isolated({ worktreeExists: true })),
+    `Subagent child-session completed.\n\n${stillThere}\n\nParser is in lib/parser.ts`,
+  );
+  // Any other failure comes before the checkout is moved (F107), so it was not touched; the reason is named.
+  for (const reason of [
+    "fatal: working trees containing submodules cannot be moved or removed",
+    "cannot remove a locked working tree: /repo-worktrees/pi-web-agent-1; unlock it first",
+    "EACCES: permission denied, rename '/repo-worktrees/pi-web-agent-1' -> '/repo-worktrees/.pi-web-agent-1.removing-x'",
   ]) {
     assert.equal(
-      subagentFinalText(isolated({ worktreeExists: true, worktreeCleanupError })),
-      `Subagent child-session completed.\n\n${stillThere}\n\nParser is in lib/parser.ts`,
+      subagentFinalText(isolated({ worktreeExists: true, worktreeCleanupError: retained(reason) })),
+      `Subagent child-session completed.\n\nIts worktree is still at /repo-worktrees/pi-web-agent-1 (branch pi-web-agent-1), not touched: removing it failed: ${reason}\n\nParser is in lib/parser.ts`,
     );
   }
-  // A removal that failed or was cut short, rather than refused, may have left a half-deleted checkout (F107).
-  const mayBeDamaged = "Its worktree is still at /repo-worktrees/pi-web-agent-1 (branch pi-web-agent-1), but removing it failed, so the checkout may be damaged; check git status there before relying on it. The branch keeps any commits it made.";
-  for (const reason of [
-    "Command failed: git -C /repo worktree remove /repo-worktrees/pi-web-agent-1",
-    "error: failed to delete '/repo-worktrees/pi-web-agent-1': Permission denied",
-  ]) {
-    const text = subagentFinalText(isolated({ worktreeExists: true, worktreeCleanupError: retained(reason) }));
-    assert.equal(text, `Subagent child-session completed.\n\n${mayBeDamaged}\n\nParser is in lib/parser.ts`);
-    assert.doesNotMatch(text, /Command failed|Permission denied/);
-  }
+  // A moved copy that could not be deleted is named after the removal.
+  const leftover = { path: "/repo-worktrees/.pi-web-agent-1.removing-x", reason: "EACCES: permission denied, unlink 'x'" };
+  assert.equal(
+    subagentFinalText(isolated({ worktreeLeftover: leftover })),
+    `Subagent child-session completed.\n\n${removed} Its moved-aside copy ${leftover.path} could not be deleted (${leftover.reason}); the next worktree removal in this repository deletes it.\n\nParser is in lib/parser.ts`,
+  );
   assert.equal(subagentFinalText(isolated({ result: undefined })), `Subagent child-session completed without text output.\n\n${removed}`);
   assert.equal(
     subagentFinalText(isolated({ status: "failed", error: "provider down", result: "half" })),

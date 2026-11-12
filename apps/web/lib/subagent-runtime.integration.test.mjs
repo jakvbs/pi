@@ -1027,6 +1027,34 @@ test("an isolated run's result says where its worktree went, live and read back 
     }, undefined, { repo: true });
   });
 
+  await t.test("a moved copy that cannot be deleted is named, live and read back (F107)", { skip: process.platform === "win32" || process.getuid?.() === 0 }, async () => {
+    await withRuntime(async ({ runtime, request, faux, dir }) => {
+      await writeFile(join(dir, ".gitignore"), "node_modules/\n");
+      await exec("git", ["-C", dir, "add", ".gitignore"]);
+      await exec("git", ["-C", dir, "commit", "-qm", "ignore node_modules"]);
+      let worktreePath;
+      faux.setResponses([async () => {
+        await mkdir(join(worktreePath, "node_modules", "pkg"), { recursive: true });
+        await writeFile(join(worktreePath, "node_modules", "pkg", "index.js"), "export {};\n");
+        await exec("chmod", ["555", join(worktreePath, "node_modules", "pkg")]);
+        return answer("STUCK");
+      }]);
+      let result;
+      try {
+        result = await (await runtime.start({
+          ...request, isolation: "worktree", onUpdate: (run) => { worktreePath ??= run.worktreePath; },
+        })).completion;
+      } finally {
+        await exec("chmod", ["-R", "u+w", dirname(worktreePath)]);
+      }
+      assert.equal(existsSync(result.worktreePath), false);
+      assert.match(result.worktreeLeftover?.path ?? "", /\.removing-/);
+      const text = subagentFinalText(result);
+      assert.equal(text, `Subagent ${result.sessionId} completed.\n\n${removed(result)} Its moved-aside copy ${result.worktreeLeftover.path} could not be deleted (${result.worktreeLeftover.reason}); the next worktree removal in this repository deletes it.\n\nSTUCK`);
+      assert.equal(subagentFinalText(readBack(result)), text);
+    }, undefined, { repo: true });
+  });
+
   await t.test("a checkout removed during the run is reported removed, though git's removal then fails", async () => {
     await withRuntime(async ({ runtime, request, faux, dir }) => {
       let worktreePath;

@@ -12,6 +12,7 @@ import { readSubagentRoles, type SubagentRoles } from "./subagent-roles";
 import { disabledBuiltInSubagents } from "./subagent-settings";
 import { PRESET_READ_ONLY } from "./tool-presets";
 import type { SessionEntry, SubagentSessionStatus } from "./types";
+import type { WorktreeLeftover } from "./worktree";
 
 export const SUBAGENT_META_TYPE = "pi-web:subagent";
 export const SUBAGENT_STATUS_TYPE = "pi-web:subagent-status";
@@ -118,6 +119,8 @@ export interface SubagentResultMetadata {
   worktreeCleanupError?: string;
   /** Whether an isolated run's worktree path still existed when this entry was written (#1202). */
   worktreeExists?: boolean;
+  /** The moved copy of the removed worktree that could not be deleted (F107). */
+  worktreeLeftover?: WorktreeLeftover;
 }
 
 export interface SubagentStatusMetadata {
@@ -149,6 +152,8 @@ export interface SubagentRunInfo {
   worktreeCleanupError?: string;
   /** Set once the run's result is recorded, as `SubagentResultMetadata.worktreeExists`. */
   worktreeExists?: boolean;
+  /** As `SubagentResultMetadata.worktreeLeftover`. */
+  worktreeLeftover?: WorktreeLeftover;
   /** Set on a run started by `resume`, which reuses the session ID of an earlier run. Not persisted. */
   resumed?: boolean;
 }
@@ -1061,5 +1066,8 @@ export function readSubagentRun(entries: readonly SessionEntry[], sessionId: str
     ...(typeof data.worktreeBranch === "string" ? { worktreeBranch: data.worktreeBranch } : {}),
     ...(result && typeof result.worktreeCleanupError === "string" ? { worktreeCleanupError: result.worktreeCleanupError } : {}),
     ...(result && typeof result.worktreeExists === "boolean" ? { worktreeExists: result.worktreeExists } : {}),
+    ...(result && isRecord(result.worktreeLeftover) && typeof result.worktreeLeftover.path === "string" && typeof result.worktreeLeftover.reason === "string"
+      ? { worktreeLeftover: { path: result.worktreeLeftover.path, reason: result.worktreeLeftover.reason } }
+      : {}),
   };
 }
