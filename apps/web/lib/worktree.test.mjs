@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -412,22 +412,27 @@ test("a read-only folder in ignored node_modules leaves the worktree's path gone
     await restore();
   }
   assert.equal(assertWholeOrGone(worktree, files), "gone");
-  // The undeletable copy stays beside it, out of git's list, and is reported; the branch is untouched.
+  // The undeletable copy stays beside it, still listed by git, and is reported; the branch is untouched.
   const trash = await trashBeside(worktree);
   assert.equal(trash.length, 1);
-  assert.equal(removal.leftover?.path, path.join(path.dirname(worktree), trash[0]));
+  const moved = path.join(path.dirname(worktree), trash[0]);
+  assert.equal(removal.leftover?.path, moved);
   assert.match(removal.leftover?.reason ?? "", /EACCES|permission denied/i);
-  assert.doesNotMatch(await gitOut(repo, ["worktree", "list", "--porcelain"]), /agent/);
+  assert.ok((await gitOut(repo, ["worktree", "list", "--porcelain"])).includes(`worktree ${moved}\n`));
   assert.equal(await gitOut(repo, ["rev-parse", "--verify", "--quiet", "refs/heads/agent"]), await gitOut(repo, ["rev-parse", "HEAD"]));
 
-  // The next removal in the repository deletes it.
+  // The next removal in the repository removes it through git; a folder git does not list is not its to touch.
+  const user = path.join(path.dirname(worktree), ".notes.removing-11111111-2222-3333-4444-555555555555");
+  await mkdir(user);
   const next = await addWorktree(repo, "next");
   assert.deepEqual(await removeWorktree(repo, next.path), {});
   assert.deepEqual(await trashBeside(worktree), []);
+  assert.doesNotMatch(await gitOut(repo, ["worktree", "list", "--porcelain"]), /removing-/);
+  assert.equal(existsSync(user), true);
 });
 
 test("a large checkout is removed when clean and refused as dirty with many untracked files (F107)", { timeout: 120_000 }, async (t) => {
-  // git() buffers 1 MiB of output; the index of these 12k files and the status of 15k untracked ones are larger.
+  // git() buffers 1 MiB of output; the status of 15k untracked files is larger.
   const { repo } = await linkedWorktree(t, "pi-web-worktree-large-");
   const name = (prefix, i) => `${prefix}-${String(i).padStart(6, "0")}-${"x".repeat(60)}.txt`;
   await Promise.all(Array.from({ length: 12_000 }, (_, i) => writeFile(path.join(repo, name("tracked", i)), "")));
@@ -475,18 +480,99 @@ test("removing a worktree leaves the entries of siblings whose folders are away 
   assert.equal((await gitOut(repo, ["worktree", "list"])).split("\n").length, 4);
 });
 
-test("a removal whose git entry cannot be deleted still deletes the moved checkout, and says so (F107)", { skip: process.platform === "win32" || process.getuid?.() === 0 }, async (t) => {
+test("a moved checkout whose git entry cannot be dropped is still deleted, and reported (F107)", { skip: process.platform === "win32" || process.getuid?.() === 0 }, async (t) => {
   const { repo, worktree } = await checkoutWithNodeModules(t, "pi-web-worktree-admin-");
   const admin = path.join(repo, ".git", "worktrees");
+  const { addWorktree, removeWorktree } = await loadSubject();
+  const next = await addWorktree(repo, "next");
   await chmod(admin, 0o555);
-  const { removeWorktree } = await loadSubject();
+  let removal;
   try {
-    await assert.rejects(removeWorktree(repo, worktree), /its entry in git could not be deleted/);
+    removal = await removeWorktree(repo, worktree);
   } finally {
     await chmod(admin, 0o755);
   }
   assert.equal(existsSync(worktree), false);
   assert.deepEqual(await trashBeside(worktree), []);
+  assert.match(removal.leftover?.path ?? "", /\.agent\.removing-/);
+  assert.match(removal.leftover?.reason ?? "", /Permission denied|EACCES/i);
+
+  // git emptied the entry before it failed: it lists nothing, and the branch can be checked out again.
+  assert.deepEqual(await removeWorktree(repo, next.path), {});
+  assert.doesNotMatch(await gitOut(repo, ["worktree", "list", "--porcelain"]), /removing-|agent/);
+  assert.equal((await addWorktree(repo, "agent")).branch, "agent");
+});
+
+test("a worktree whose .git git would not validate is refused with every repository and checkout intact (F107)", async (t) => {
+  const { tempRoot, repo } = await linkedWorktree(t, "pi-web-worktree-invalid-");
+  const { addWorktree, removeWorktree } = await loadSubject();
+  const sibling = await addWorktree(repo, "sibling");
+  await writeFile(path.join(sibling.path, "staged.txt"), "staged\n");
+  await git(sibling.path, ["add", "staged.txt"]);
+  const siblingAdmin = (await readFile(path.join(sibling.path, ".git"), "utf8")).replace(/^gitdir:\s*/, "").trim();
+  const intact = async () => {
+    assert.equal(await gitOut(repo, ["rev-parse", "--verify", "HEAD"]).then(Boolean), true);
+    assert.equal(await gitOut(sibling.path, ["diff", "--cached", "--name-only"]), "staged.txt");
+  };
+  const corruptions = [
+    ["names the main repository's .git", (wt) => writeFile(path.join(wt, ".git"), `gitdir: ${path.join(repo, ".git")}\n`)],
+    ["names a sibling's entry", (wt) => writeFile(path.join(wt, ".git"), `gitdir: ${siblingAdmin}\n`)],
+    ["is a link to a sibling's .git", async (wt) => { await rm(path.join(wt, ".git")); await symlink(path.join(sibling.path, ".git"), path.join(wt, ".git")); }],
+  ];
+  for (const [label, corrupt] of corruptions) {
+    for (const force of [false, true]) {
+      const doomed = await addWorktree(repo, `doomed-${corruptions.findIndex(([l]) => l === label)}-${force}`);
+      await corrupt(doomed.path);
+      await assert.rejects(removeWorktree(repo, doomed.path, force), undefined, `${label}, force ${force}`);
+      assert.equal(existsSync(path.join(doomed.path, "README.md")), true, label);
+      assert.deepEqual(await trashBeside(doomed.path), [], label);
+      await intact();
+    }
+  }
+  // A standalone clone with a commit of its own now stands at a registered worktree's path.
+  for (const force of [false, true]) {
+    const replaced = await addWorktree(repo, `replaced-${force}`);
+    await rm(replaced.path, { recursive: true, force: true });
+    await git(tempRoot, ["clone", "-q", repo, replaced.path]);
+    await writeFile(path.join(replaced.path, "precious.txt"), "precious\n");
+    await git(replaced.path, ["add", "precious.txt"]);
+    await git(replaced.path, ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "local only"]);
+    await assert.rejects(removeWorktree(repo, replaced.path, force), /validation failed|not a \.git file/);
+    assert.equal(await gitOut(replaced.path, ["log", "-1", "--format=%s"]), "local only");
+    assert.equal(existsSync(path.join(replaced.path, "precious.txt")), true);
+    await intact();
+  }
+});
+
+test("a git status that fails is no clean answer: the checkout is refused, not moved (F107)", async (t) => {
+  const { repo, linked } = await linkedWorktree(t, "pi-web-worktree-status-fails-");
+  // Breaks `git status` only; `git worktree move` would still succeed.
+  await git(repo, ["config", "status.showUntrackedFiles", "bogus"]);
+  const { removeWorktree } = await loadSubject();
+  await assert.rejects(removeWorktree(repo, linked), /untracked files mode/i);
+  assert.equal(existsSync(path.join(linked, "README.md")), true);
+});
+
+test("removals in one repository run one at a time (F107)", async (t) => {
+  const { repo, worktree } = await checkoutWithNodeModules(t, "pi-web-worktree-serial-", { packages: 40, filesPerPackage: 100 });
+  const { removeWorktree } = await loadSubject();
+  let largeDone = false;
+  const large = removeWorktree(repo, worktree).then((result) => { largeDone = true; return result; });
+  while (existsSync(worktree)) await new Promise((resolve) => setTimeout(resolve, 1));
+  // The large checkout is moved and being deleted; even a removal that fails at once waits its turn.
+  await assert.rejects(removeWorktree(repo, path.join(path.dirname(worktree), "absent")), /Not a worktree/);
+  assert.equal(largeDone, true);
+  assert.deepEqual(await large, {});
+});
+
+test("a removed worktree's path is no longer answered from the project cache (F107)", async (t) => {
+  const { repo } = await linkedWorktree(t, "pi-web-worktree-cache-");
+  const { addWorktree, removeWorktree, resolveProject } = await loadSubject();
+  // The folder's name differs from its branch, so the cached answer and the inferred one differ.
+  const created = await addWorktree(repo, "feature/cache");
+  assert.equal((await resolveProject(created.path)).branch, "feature/cache");
+  await removeWorktree(repo, created.path);
+  assert.equal((await resolveProject(created.path)).branch, "feature-cache");
 });
 
 test("the main worktree is never removed, from itself or from a linked one (F107)", async (t) => {

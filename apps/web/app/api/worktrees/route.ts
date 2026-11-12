@@ -103,7 +103,7 @@ export async function DELETE(req: Request) {
     const denied = await checkCwdAllowed(body.cwd);
     if (denied) return denied;
 
-    // A moved copy it could not delete is named; the next removal deletes it.
+    // A moved copy git could not fully remove is named; the next removal removes it.
     const { leftover } = await removeWorktree(body.cwd, body.path, body.force === true);
     return NextResponse.json({ success: true, ...(leftover ? { leftover } : {}) });
   } catch (error) {

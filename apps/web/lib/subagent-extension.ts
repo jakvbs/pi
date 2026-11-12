@@ -248,7 +248,7 @@ export function subagentToolDetails(run: SubagentRunInfo): SubagentToolDetails {
  * and refuses to remove one that still has changes. Only this run's own refusal gives a reason, and
  * never in git's words, which end in "use --force to delete it". Any other failure is named: the
  * removal fails only before it moves the checkout (F107), so the checkout was not touched. A moved
- * copy that could not be deleted is named too. A result recorded without `worktreeExists` (before
+ * copy git could not fully remove is named too. A result recorded without `worktreeExists` (before
  * #1202) says nothing.
  */
 function worktreeOutcomeText(run: SubagentRunInfo): string | undefined {
@@ -257,7 +257,7 @@ function worktreeOutcomeText(run: SubagentRunInfo): string | undefined {
     const removed = `Its worktree was removed; branch ${run.worktreeBranch} keeps any commits it made.`;
     const leftover = run.worktreeLeftover;
     return leftover
-      ? `${removed} Its moved-aside copy ${leftover.path} could not be deleted (${leftover.reason}); the next worktree removal in this repository deletes it.`
+      ? `${removed} Its moved-aside copy ${leftover.path} was not fully removed and git may still list it (${leftover.reason}); the next worktree removal in this repository removes it.`
       : removed;
   }
   const where = `${run.worktreePath} (branch ${run.worktreeBranch})`;

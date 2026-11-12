@@ -1050,7 +1050,7 @@ test("an isolated run's result says where its worktree went, live and read back 
       assert.equal(existsSync(result.worktreePath), false);
       assert.match(result.worktreeLeftover?.path ?? "", /\.removing-/);
       const text = subagentFinalText(result);
-      assert.equal(text, `Subagent ${result.sessionId} completed.\n\n${removed(result)} Its moved-aside copy ${result.worktreeLeftover.path} could not be deleted (${result.worktreeLeftover.reason}); the next worktree removal in this repository deletes it.\n\nSTUCK`);
+      assert.equal(text, `Subagent ${result.sessionId} completed.\n\n${removed(result)} Its moved-aside copy ${result.worktreeLeftover.path} was not fully removed and git may still list it (${result.worktreeLeftover.reason}); the next worktree removal in this repository removes it.\n\nSTUCK`);
       assert.equal(subagentFinalText(readBack(result)), text);
     }, undefined, { repo: true });
   });

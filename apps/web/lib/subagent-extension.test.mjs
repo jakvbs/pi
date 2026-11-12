@@ -375,7 +375,7 @@ test("an isolated run's result says where its worktree was as the result was rec
   const leftover = { path: "/repo-worktrees/.pi-web-agent-1.removing-x", reason: "EACCES: permission denied, unlink 'x'" };
   assert.equal(
     subagentFinalText(isolated({ worktreeLeftover: leftover })),
-    `Subagent child-session completed.\n\n${removed} Its moved-aside copy ${leftover.path} could not be deleted (${leftover.reason}); the next worktree removal in this repository deletes it.\n\nParser is in lib/parser.ts`,
+    `Subagent child-session completed.\n\n${removed} Its moved-aside copy ${leftover.path} was not fully removed and git may still list it (${leftover.reason}); the next worktree removal in this repository removes it.\n\nParser is in lib/parser.ts`,
   );
   assert.equal(subagentFinalText(isolated({ result: undefined })), `Subagent child-session completed without text output.\n\n${removed}`);
   assert.equal(

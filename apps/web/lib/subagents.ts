@@ -119,7 +119,7 @@ export interface SubagentResultMetadata {
   worktreeCleanupError?: string;
   /** Whether an isolated run's worktree path still existed when this entry was written (#1202). */
   worktreeExists?: boolean;
-  /** The moved copy of the removed worktree that could not be deleted (F107). */
+  /** The moved copy of the removed worktree that git could not fully remove (F107). */
   worktreeLeftover?: WorktreeLeftover;
 }
 
