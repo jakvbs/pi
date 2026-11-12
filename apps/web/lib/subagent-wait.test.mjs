@@ -31,7 +31,7 @@ async function flush() {
 async function toolsFor(runtime) {
   const tools = new Map();
   await createSubagentExtension(runtime, () => []).factory({
-    registerTool(tool) { tools.set(tool.name, tool); },
+    on() {}, registerTool(tool) { tools.set(tool.name, tool); },
   });
   return tools;
 }

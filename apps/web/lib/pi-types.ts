@@ -1,6 +1,7 @@
 import type {
   AgentSessionEvent,
   BashOperations,
+  ScopedModel,
   SessionManager,
   SettingsManager,
   SlashCommandInfo,
@@ -151,6 +152,8 @@ export interface AgentSessionLike {
   readonly autoCompactionEnabled: boolean;
   readonly autoRetryEnabled: boolean;
   readonly model: ModelLike | undefined;
+  /** The models pi's `enabledModels` resolved to for this session; empty when nothing limits them. */
+  readonly scopedModels: readonly ScopedModel[];
   readonly modelRuntime: {
     getModel: (provider: string, modelId: string) => ModelLike | undefined;
     refresh: (options?: { allowNetwork?: boolean; providers?: string[]; signal?: AbortSignal }) => Promise<unknown>;

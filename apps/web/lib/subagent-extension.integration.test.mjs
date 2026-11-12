@@ -99,7 +99,7 @@ function nestedCallerExtension(outcomes) {
   };
 }
 
-async function createSession(dir, faux, extensionFactories) {
+async function createSession(dir, faux, extensionFactories, scopedModels) {
   const modelRuntime = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
     modelsPath: null,
@@ -123,6 +123,7 @@ async function createSession(dir, faux, extensionFactories) {
     services,
     sessionManager: SessionManager.inMemory(dir),
     model: faux.getModel("faux-model"),
+    ...(scopedModels ? { scopedModels: scopedModels(faux) } : {}),
   });
   return session;
 }
@@ -263,6 +264,40 @@ test("Agent exposes only the parameters the model can choose correctly", async (
     // A string, not a "worktree" literal: a model that fills every optional field with "" must still
     // be able to start a subagent.
     assert.equal(agent.parameters.properties.isolation.type, "string");
+  } finally {
+    session?.dispose();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// The scope is the session's, and pi can change it while the session runs (a new default model
+// joins it), so the declaration each request carries must follow it.
+test("Agent's model declaration lists the session's scoped models in every request", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-subagent-scope-"));
+  let session;
+  try {
+    const faux = fauxProvider({ models: [{ id: "faux-model" }, { id: "pinned" }, { id: "later" }] });
+    const { runtime } = recordingRuntime();
+    session = await createSession(dir, faux, [createSubagentExtension(runtime, () => [])], (models) => [
+      { model: models.getModel("faux-model") }, { model: models.getModel("pinned"), thinkingLevel: "high" },
+    ]);
+    const declaredModel = async () => {
+      let description;
+      faux.setResponses([(context) => {
+        description = getCurrentTools(context.messages).find((tool) => tool.name === "Agent")
+          ?.parameters.properties.model.description;
+        return fauxAssistantMessage([fauxText("done")]);
+      }]);
+      await session.prompt("Which models may a subagent use?");
+      return description;
+    };
+    const listed = (description) => /one of: (.*?)\. Any other model is refused\./.exec(description)?.[1];
+
+    assert.equal(listed(await declaredModel()), "faux/faux-model, faux/pinned:high");
+    session.setScopedModels([...session.scopedModels, { model: faux.getModel("later") }]);
+    assert.equal(listed(await declaredModel()), "faux/faux-model, faux/pinned:high, faux/later");
+    session.setScopedModels([]);
+    assert.match(await declaredModel(), /^Optional provider\/modelId override\./);
   } finally {
     session?.dispose();
     await rm(dir, { recursive: true, force: true });

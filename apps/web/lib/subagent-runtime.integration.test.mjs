@@ -66,6 +66,7 @@ async function withRuntime(check, configureChild, options = {}) {
     }
     const faux = fauxProvider({ models: [
       { id: "faux-model", reasoning: true }, { id: "tuned:high", reasoning: true }, { id: "small-window", contextWindow: 8_000 },
+      { id: "pinned", reasoning: true },
     ] });
     const modelRuntime = await ModelRuntime.create({
       authPath: join(dir, "auth.json"), modelsPath: options.modelsFile ? join(dir, "models.json") : null, refreshOnCreate: false,
@@ -79,6 +80,7 @@ async function withRuntime(check, configureChild, options = {}) {
     });
     const { session: parent } = await createAgentSessionFromServices({
       services, sessionManager: SessionManager.create(dir, join(dir, "sessions")), model: faux.getModel("faux-model"),
+      ...(options.scopedModels ? { scopedModels: options.scopedModels(faux) } : {}),
     });
     const registerSession = (inner) => {
       if (inner !== parent) configureChild?.(inner);
@@ -542,7 +544,7 @@ for (const resume of [false, true]) {
             ...runtime,
             async start(value) { execution = await runtime.start(value); return execution; },
             async resume(value) { execution = await runtime.resume(value); return execution; },
-          }, () => []).factory({ registerTool(tool) { tools.set(tool.name, tool); } });
+          }, () => []).factory({ on() {}, registerTool(tool) { tools.set(tool.name, tool); } });
           const result = await tools.get("Agent").execute("setup-stop-call", {
             subagent_type: "fixture", prompt: "Inspect", description: "Setup Stop fixture", run_in_background: false,
             ...(resume ? { resume: previous.sessionId } : {}),
@@ -596,7 +598,7 @@ for (const resume of [false, true]) {
         ...runtime,
         async start(value) { execution = await runtime.start(value); return execution; },
         async resume(value) { execution = await runtime.resume(value); return execution; },
-      }, () => []).factory({ registerTool(tool) { tools.set(tool.name, tool); } });
+      }, () => []).factory({ on() {}, registerTool(tool) { tools.set(tool.name, tool); } });
       const parentAbort = new AbortController();
       t.mock.timers.enable({ apis: ["setTimeout"] });
       const result = tools.get("Agent").execute("wait-limit-call", {
@@ -789,6 +791,34 @@ test("a profile model from a provider only the child's extensions register still
       delete globalThis.__subagentFixtureStream;
     }
   });
+});
+
+test("a parent's scoped models bound the call's model and pass to the child", async () => {
+  const scopedModels = (faux) => [{ model: faux.getModel("faux-model") }, { model: faux.getModel("pinned"), thinkingLevel: "high" }];
+  await withRuntime(async ({ runtime, request, faux, sessions }) => {
+    const parent = sessions.get(request.parentContext.sessionManager.getSessionId()).inner;
+    const run = async (options) => {
+      faux.setResponses([answer("SCOPED_RESULT")]);
+      const execution = await runtime.start({ ...request, profile: "fixture-profile-options", ...options });
+      assert.equal((await execution.completion).status, "completed");
+      return sessions.get(execution.run.sessionId).inner;
+    };
+    const refused = async (model) => {
+      const before = sessions.size;
+      await assert.rejects(runtime.start({ ...request, model }), (error) =>
+        error.message === `Subagent model ${model} is not allowed by enabledModels. Allowed: faux/faux-model, faux/pinned:high.`);
+      assert.equal(sessions.size, before, `${model} must not start a child.`);
+    };
+
+    await refused("openai/gpt-4o");
+    await refused("faux/pinned:low");
+    const leveled = await run({ model: "faux/faux-model:high" });
+    assert.equal(leveled.thinkingLevel, "high");
+    assert.deepEqual(leveled.scopedModels, parent.scopedModels);
+    // Without a level, a pinned model runs at its pin, over the profile's `thinking: low`.
+    assert.equal((await run({ model: "faux/pinned" })).thinkingLevel, "high");
+    assert.equal((await run({})).model.id, "faux-model");
+  }, undefined, { scopedModels });
 });
 
 test("a model reference may carry pi's :level suffix, which sets the child's thinking", async (t) => {
@@ -1002,7 +1032,7 @@ test("Agent's repo puts the child in another repository, its own worktree with i
 test("steer_subagent with stop ends the parent's own child, and get_subagent_result reports it stopped with its partial output (F057)", { timeout: 30_000 }, async (t) => {
   async function controlTools(runtime) {
     const tools = new Map();
-    await createSubagentExtension(runtime, () => []).factory({ registerTool(tool) { tools.set(tool.name, tool); } });
+    await createSubagentExtension(runtime, () => []).factory({ on() {}, registerTool(tool) { tools.set(tool.name, tool); } });
     return tools;
   }
 

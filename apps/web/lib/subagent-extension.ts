@@ -12,6 +12,7 @@ import {
   type SubagentRunInfo,
 } from "./subagents";
 import { MAX_SUBAGENT_INPUT_BYTES, MAX_SUBAGENT_INPUT_FILES } from "./subagent-input";
+import { agentModelDescription } from "./subagent-model-scope";
 import { worktreeHasUncommittedFiles } from "./worktree";
 
 export const HOST_SUBAGENT_EXTENSION_NAME = "pi-web-subagents";
@@ -294,7 +295,10 @@ export function createSubagentExtension(
       const profiles = getProfiles().filter((profile) => profile.enabled);
       const profileNames = profiles.map((profile) => profile.name);
       const availableTypes = profileNames.length > 0 ? profileNames.join(", ") : "none";
-      pi.registerTool(defineTool({
+      // The scope exists only once the session does, and can change while it runs, so each run
+      // registers the declaration again when the scope's description of `model` changed.
+      let modelDescription = agentModelDescription([]);
+      const registerAgent = () => pi.registerTool(defineTool({
         name: "Agent",
         label: "Agent",
         description: `Delegate a focused task to a configured subagent. Each subagent runs as a full, inspectable Pi session. Use background mode for independent work and foreground mode when the result is needed immediately. Foreground completion waits default to 30 minutes; set wait_timeout (seconds) for longer tasks. If the wait budget is exhausted, the child keeps running and reports its completion automatically.\n\nAvailable agent types:\n${agentTypeDescription(profiles)}`,
@@ -317,7 +321,7 @@ export function createSubagentExtension(
           description: Type.String({ description: "Short activity label shown in the UI." }),
           run_in_background: Type.Optional(Type.Boolean({ description: "Return immediately and notify this session when complete." })),
           wait_timeout: waitTimeoutParameter(),
-          model: Type.Optional(Type.String({ description: 'Optional provider/modelId override. Append ":<level>" (off, minimal, low, medium, high, xhigh, max) to also set the thinking level for this run, e.g. "provider/model:high".' })),
+          model: Type.Optional(Type.String({ description: modelDescription })),
           isolation: Type.Optional(Type.String({ description: 'Set to "worktree" to run the subagent in an isolated git worktree.' })),
           ticket: Type.Optional(Type.String({ description: "Factory ticket this work belongs to, as its feature id (e.g. F046). Kept with the subagent session and shown on the board." })),
           repo: Type.Optional(Type.String({ description: 'Absolute path of another Git repository to work in. With isolation "worktree" the worktree and its branch are cut from that repository. Default: this session\'s cwd.' })),
@@ -424,6 +428,13 @@ export function createSubagentExtension(
           }
         },
       }));
+      registerAgent();
+      pi.on("before_agent_start", (_event, ctx) => {
+        const description = agentModelDescription(ctx.scopedModels);
+        if (description === modelDescription) return;
+        modelDescription = description;
+        registerAgent();
+      });
 
       pi.registerTool(defineTool({
         name: "get_subagent_result",

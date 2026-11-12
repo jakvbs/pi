@@ -15,7 +15,7 @@ async function loadTools(runtime, getProfiles = () => [], isEnabled = () => true
   const sent = [];
   const extension = createSubagentExtension(runtime, getProfiles, isEnabled);
   await extension.factory({
-    registerTool(tool) { tools.set(tool.name, tool); },
+    on() {}, registerTool(tool) { tools.set(tool.name, tool); },
     sendMessage(message, options) { sent.push({ message, options }); },
   });
   return { tools, sent };
@@ -68,7 +68,7 @@ test("integrated extension exposes the legacy-compatible tool names", async () =
     async notifyParent() {},
   }, () => []);
   await extension.factory({
-    registerTool(tool) { tools.set(tool.name, tool); },
+    on() {}, registerTool(tool) { tools.set(tool.name, tool); },
     sendMessage() {},
   });
 
@@ -122,12 +122,12 @@ test("integrated extension registers no tools while its feature is disabled", as
   };
   const extension = createSubagentExtension(runtime, () => [], () => enabled);
   const disabledTools = new Map();
-  await extension.factory({ registerTool(tool) { disabledTools.set(tool.name, tool); } });
+  await extension.factory({ on() {}, registerTool(tool) { disabledTools.set(tool.name, tool); } });
   assert.deepEqual([...disabledTools], []);
 
   enabled = true;
   const enabledTools = new Map();
-  await extension.factory({ registerTool(tool) { enabledTools.set(tool.name, tool); } });
+  await extension.factory({ on() {}, registerTool(tool) { enabledTools.set(tool.name, tool); } });
   assert.deepEqual([...enabledTools.keys()], ["Agent", "get_subagent_result", "steer_subagent"]);
 });
 
@@ -166,7 +166,7 @@ test("Agent tool description lists enabled effective profiles and refreshes when
   const extension = createSubagentExtension(runtime, () => profiles);
 
   const firstTools = new Map();
-  await extension.factory({ registerTool(tool) { firstTools.set(tool.name, tool); }, sendMessage() {} });
+  await extension.factory({ on() {}, registerTool(tool) { firstTools.set(tool.name, tool); }, sendMessage() {} });
   const first = firstTools.get("Agent");
   assert.match(first.description, /- explore: Inspect the codebase \(Tools: read, grep\)/);
   assert.doesNotMatch(first.description, /disabled-agent|Must stay hidden/);
@@ -186,7 +186,7 @@ test("Agent tool description lists enabled effective profiles and refreshes when
     scope: "project",
   }];
   const reloadedTools = new Map();
-  await extension.factory({ registerTool(tool) { reloadedTools.set(tool.name, tool); }, sendMessage() {} });
+  await extension.factory({ on() {}, registerTool(tool) { reloadedTools.set(tool.name, tool); }, sendMessage() {} });
   const reloaded = reloadedTools.get("Agent");
   assert.match(reloaded.description, /- reviewer: Review a change \(Tools: none; Model: provider\/review-model; Thinking: high\)/);
   assert.doesNotMatch(reloaded.description, /explore/);

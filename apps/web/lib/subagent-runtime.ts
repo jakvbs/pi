@@ -46,6 +46,7 @@ import { createSubagentMcpPolicyExtension } from "./mcp-read-only-policy";
 import { resolveShellTools } from "./powershell-settings";
 import { isBuiltInSubagentsEnabled, readSubagentSettings } from "./subagent-settings";
 import { SubagentQueue } from "./subagent-queue";
+import { scopedThinkingLevel, THINKING_LEVELS } from "./subagent-model-scope";
 import { addWorktree, getCheckoutRoot, removeWorktree } from "./worktree";
 import { randomUUID } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
@@ -113,7 +114,6 @@ declare global {
 }
 const SUBAGENT_CONTEXT_LIMIT = 50_000;
 const PARENT_IDLE_POLL_MS = 200;
-const THINKING_LEVELS = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 const TURN_LIMIT_INSTRUCTION = "You have reached your turn limit. Wrap up immediately and provide your final answer now.";
 
@@ -447,6 +447,8 @@ export function createSubagentController(
     const parent = dependencies.getSession(parentSessionId);
     if (!parent?.isAlive()) throw new Error("Parent session is no longer available");
     if (!parent.sessionFile) throw new Error("Parent session must be persisted before starting a subagent");
+    // Refused before a worktree or child session exists; the child runs within the same scope.
+    const callScopeThinking = scopedThinkingLevel(request.model, parent.inner.scopedModels);
 
     let isolatedWorktree: { path: string; branch: string } | undefined;
     const repo = request.repo === undefined ? undefined : await subagentRepo(request.repo);
@@ -586,6 +588,7 @@ export function createSubagentController(
       const callModel = parseSubagentModel(parentModelRuntime, request.model);
       const profileModel = callModel ? undefined : parseSubagentModel(parentModelRuntime, profile.model);
       const thinking = callModel?.thinkingLevel
+        ?? callScopeThinking
         ?? profile.thinking
         ?? profileModel?.thinkingLevel
         ?? parent.inner.agent.state?.thinkingLevel;
@@ -633,6 +636,7 @@ export function createSubagentController(
         sessionManager,
         model: childModel,
         ...(thinking ? { thinkingLevel: thinking as ThinkingLevel } : {}),
+        scopedModels: [...parent.inner.scopedModels],
         ...subagentToolOptions({ tools: activeTools, allExtensionTools, mcp: mcpEnabled }),
       });
       persistChildSession(sessionManager);
