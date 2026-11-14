@@ -540,9 +540,14 @@ export function listSubagentProfileSources(cwd: string): SubagentProfile[] {
 }
 
 export function listSubagentProfiles(cwd: string): SubagentProfile[] {
+  // A project or workspace profile is the project's own system prompt and tool
+  // grant for a child, so it loads only in a trusted folder, as pi loads
+  // `.pi/SYSTEM.md`, skills and prompts.
+  const projectTrusted = getProjectTrustStatus(cwd, getAgentDir()).trusted;
   // A same-name file replaces the built-in outright, its own `enabled` included.
   const byName = new Map(builtInProfiles().map((profile) => [profile.name.toLowerCase(), profile]));
   for (const [dir, scope] of profileDirectories(cwd)) {
+    if ((scope === "workspace" || scope === "project") && !projectTrusted) continue;
     for (const profile of readProfileDirectory(dir, scope, cwd)) byName.set(profile.name.toLowerCase(), profile);
   }
   return [...byName.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
