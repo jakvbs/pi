@@ -20,7 +20,7 @@ lockfile of its own: typecheck and tests use the monorepo root `node_modules`
 and the fork's `packages/*/src`. It is `private`, is not published, and no CI
 runs it. pi loads it by path from `settings.json` `packages`. `UPSTREAM` (git
 config format) records the last imported upstream commit; newer upstream commits
-are imported on top of it with `git am -3 --directory=extensions/sub-anthropic`.
+are imported as a single squash commit with `node extensions/upstream.mjs import sub-anthropic`.
 
 Docs are split by audience: `README.md` is user-facing only (install, use, env
 vars, troubleshooting), `docs/internals.md` holds the design rationale and the

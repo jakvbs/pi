@@ -14,7 +14,7 @@ root) and resolve `@earendil-works/*` to the fork's `packages/*/src` through the
 `packages/coding-agent/examples/tsconfig.json` (`@earendil-works/pi-ai` as the extension view pi gives
 extensions, see `../README.md`) and the `vitest.base.ts` aliases. It is `private`, is not published, and no CI runs it. pi loads it by path from
 `settings.json` `packages`. `UPSTREAM` (git config format) records the last imported upstream commit; newer
-upstream commits are imported on top of it with `git am -3 --directory=extensions/observational-memory`.
+upstream commits are imported as a single squash commit with `node extensions/upstream.mjs import observational-memory`.
 
 ## Model requests
 
