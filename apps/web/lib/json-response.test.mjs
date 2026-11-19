@@ -8,24 +8,16 @@ const jiti = createJiti(import.meta.url, {
 });
 const { jsonResponse } = await jiti.import("./json-response.ts");
 
-test("does not gzip a large JSON response when the client disables gzip", async () => {
+test("returns uncompressed UTF-8 JSON even when the client accepts gzip (Next.js compresses at the server layer)", async () => {
   const response = jsonResponse(
-    new Request("http://localhost/test", { headers: { "Accept-Encoding": "gzip;q=0, br" } }),
+    new Request("http://localhost/test", { headers: { "Accept-Encoding": "gzip, br" } }),
     { value: "large payload ".repeat(200) },
+    { headers: { "Cache-Control": "no-store" } },
   );
 
   assert.equal(response.headers.get("Content-Encoding"), null);
-  assert.match(response.headers.get("Vary") ?? "", /(?:^|,\s*)Accept-Encoding(?:\s*,|$)/i);
-  assert.equal((await response.json()).value, "large payload ".repeat(200));
-});
-
-test("does not gzip when the gzip quality value is invalid", async () => {
-  const response = jsonResponse(
-    new Request("http://localhost/test", { headers: { "Accept-Encoding": "gzip;q=invalid, *;q=1" } }),
-    { value: "large payload ".repeat(200) },
-  );
-
-  assert.equal(response.headers.get("Content-Encoding"), null);
+  assert.equal(response.headers.get("Content-Type"), "application/json; charset=utf-8");
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
   assert.equal((await response.json()).value, "large payload ".repeat(200));
 });
 
