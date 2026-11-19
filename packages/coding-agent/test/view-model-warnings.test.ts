@@ -14,7 +14,7 @@ vi.mock("../src/modes/index.ts", () => ({
 
 		constructor(runtime: AgentSessionRuntime, options: InteractiveModeOptions) {
 			this.runtime = runtime;
-			started(options);
+			started(options, [...runtime.diagnostics]);
 		}
 
 		async run() {
@@ -82,12 +82,19 @@ describe("view model warnings", () => {
 			);
 			const output = [...stderr.mock.calls, ...errors.mock.calls].flat().join("\n");
 			expect(started.mock.calls).toHaveLength(1);
+			const [options, diagnostics] = started.mock.calls[0];
+			const diagnosticMessages = diagnostics.map((d: { message: string }) => d.message).join("\n");
 			if (view) {
-				expect(output).not.toContain("No models match pattern");
 				expect(output).toBe("");
-				expect(started.mock.calls[0][0]).toMatchObject({ modelFallbackMessage: undefined });
+				expect(diagnosticMessages).not.toContain("No models match pattern");
+				expect(options).toMatchObject({ modelFallbackMessage: undefined });
 			} else {
-				expect(output).toContain('Warning: No models match pattern "pi-sub-anthropic/claude-opus-5-5"');
+				expect(diagnostics).toContainEqual(
+					expect.objectContaining({
+						type: "warning",
+						message: 'No models match pattern "pi-sub-anthropic/claude-opus-5-5"',
+					}),
+				);
 			}
 		} finally {
 			if (stdinTTY) Object.defineProperty(process.stdin, "isTTY", stdinTTY);
