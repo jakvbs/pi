@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Unsent bulk bytes above which unwindowed command output waits.
 const BULK_LIMIT: usize = 4 * 1024 * 1024;
@@ -18,8 +18,6 @@ struct Queues {
     control: VecDeque<Frame>,
     bulk: VecDeque<(Frame, Option<Arc<AtomicUsize>>)>,
     bulk_bytes: usize,
-    /// When the unsent bulk output last fell back to the limit, which lets waiting readers read again.
-    released_at: Option<Instant>,
     closed: bool,
 }
 
@@ -51,7 +49,7 @@ impl Output {
     }
 
     /// Wait while more than the bulk limit is unsent, unless `stop` is set.
-    pub fn wait_for_room(&self, stop: &AtomicBool) {
+    fn wait_for_room(&self, stop: &AtomicBool) {
         let mut queues = self.queues.lock().unwrap();
         while queues.bulk_bytes > BULK_LIMIT && !queues.closed && !stop.load(Ordering::SeqCst) {
             queues = self
@@ -60,16 +58,6 @@ impl Output {
                 .unwrap()
                 .0;
         }
-    }
-
-    /// Whether a reader may still be held back by this link: more than the bulk limit is unsent, or the link made room
-    /// less than `grace` ago. A command's grace after its exit counts silence of its pipes, which a held-back reader
-    /// does not read.
-    pub fn holds_readers(&self, grace: Duration) -> bool {
-        let queues = self.queues.lock().unwrap();
-        !queues.closed
-            && (queues.bulk_bytes > BULK_LIMIT
-                || queues.released_at.is_some_and(|at| at.elapsed() < grace))
     }
 
     pub fn close(&self) {
@@ -89,11 +77,7 @@ impl Output {
                         break (frame, None);
                     }
                     if let Some((frame, unsent)) = queues.bulk.pop_front() {
-                        let held = queues.bulk_bytes > BULK_LIMIT;
                         queues.bulk_bytes -= frame.payload.len();
-                        if held && queues.bulk_bytes <= BULK_LIMIT {
-                            queues.released_at = Some(Instant::now());
-                        }
                         break (frame, unsent);
                     }
                     if queues.closed {
@@ -112,5 +96,37 @@ impl Output {
                 return;
             }
         }
+    }
+}
+
+/// Backpressure for the readers of one command: like a full pipe, a reader that read a chunk waits for room before it
+/// reads the next. A reader counts as held while it hands a chunk over and waits, so the command can tell a reader the
+/// link holds up from a pipe that went silent.
+#[derive(Clone)]
+pub struct Gate {
+    output: Arc<Output>,
+    held: Arc<AtomicUsize>,
+}
+
+impl Gate {
+    pub fn new(output: &Arc<Output>) -> Gate {
+        Gate {
+            output: output.clone(),
+            held: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// Run `deliver` for a chunk just read, then wait for room unless `stop` is set; returns what `deliver` returned.
+    pub fn pass(&self, stop: &AtomicBool, deliver: impl FnOnce() -> bool) -> bool {
+        self.held.fetch_add(1, Ordering::SeqCst);
+        let delivered = deliver();
+        self.output.wait_for_room(stop);
+        self.held.fetch_sub(1, Ordering::SeqCst);
+        delivered
+    }
+
+    /// Whether a reader is handing over a chunk or waiting for room: its silence is not the end of the output.
+    pub fn held(&self) -> bool {
+        self.held.load(Ordering::SeqCst) > 0
     }
 }

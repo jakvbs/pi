@@ -315,7 +315,7 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
-	override render(width: number): string[] {
+	override render(width: number): readonly string[] {
 		if (this.argsPending) this.updateDisplay();
 		if (this.hideComponent) {
 			return [];
@@ -339,7 +339,8 @@ export class ToolExecutionComponent extends Container {
 			const lines: string[] = [];
 			if (contentLines.length > 0) {
 				lines.push("");
-				lines.push(...contentLines);
+				// Append in a loop: spreading hundreds of thousands of wrapped lines exceeds V8's argument limit.
+				for (const line of contentLines) lines.push(line);
 			}
 			for (let i = 0; i < this.imageComponents.length; i++) {
 				const spacer = this.imageSpacers[i];
@@ -537,19 +538,14 @@ export class ToolExecutionComponent extends Container {
  * while keeping consecutive rows of the run together. Children that render nothing do not break a run.
  */
 export class TranscriptContainer extends Container {
-	override render(width: number): string[] {
-		const lines: string[] = [];
-		const mouseChildren: Array<{ component: Component; height: number }> = [];
+	override render(width: number): readonly string[] {
 		let previousIsCompactRow = false;
 		for (const child of this.children) {
 			const isCompactRow = child instanceof ToolExecutionComponent && child.isCompactRow();
 			if (isCompactRow) child.setCompactGroupStart(!previousIsCompactRow);
 			const childLines = child.render(width);
-			mouseChildren.push({ component: child, height: childLines.length });
-			lines.push(...childLines);
 			if (childLines.length > 0) previousIsCompactRow = isCompactRow;
 		}
-		this.mouseLayout = { width, children: mouseChildren };
-		return lines;
+		return super.render(width);
 	}
 }

@@ -6,6 +6,8 @@
 
 - Removed the `max_output_tokens` field of the `// @options:` line and `CodemodeSourceOptions.maxOutputTokens`. `timeout_ms` is the only field; a script that still names `max_output_tokens` fails with `CodemodeSourceError`. Hosts limit script output with their tool output limit.
 
+## [1.5.2] - 2026-11-10
+
 ## [1.5.1] - 2026-11-09
 
 ### Added

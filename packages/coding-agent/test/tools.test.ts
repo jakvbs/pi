@@ -1,3 +1,5 @@
+import { stripVTControlCharacters } from "node:util";
+import type { TUI } from "@earendil-works/pi-tui";
 import { applyPatch } from "diff";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -21,6 +23,7 @@ import {
 import { createFindToolDefinition, type FindOperations } from "../src/core/tools/find.ts";
 import { createGrepToolDefinition } from "../src/core/tools/grep.ts";
 import { createLsToolDefinition } from "../src/core/tools/ls.ts";
+import { OutputAccumulator } from "../src/core/tools/output-accumulator.ts";
 import { createReadToolDefinition } from "../src/core/tools/read.ts";
 import { truncateHead } from "../src/core/tools/truncate.ts";
 import { createWriteToolDefinition } from "../src/core/tools/write.ts";
@@ -32,6 +35,8 @@ import {
 	createReadTool,
 	createWriteTool,
 } from "../src/index.ts";
+import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
+import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import * as shellModule from "../src/utils/shell.ts";
 
 const readTool = createReadTool(process.cwd());
@@ -228,6 +233,45 @@ describe("Coding Agent Tools", () => {
 				mimeType: "image/png",
 				note: getTextOutput(result),
 			});
+		});
+
+		it("should keep a text-only model's image warning out of what the model gets", async () => {
+			const png1x1Base64 =
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==";
+			const testFile = join(testDir, "text-model.png");
+			writeFileSync(testFile, Buffer.from(png1x1Base64, "base64"));
+			const ctx = { cwd: testDir, model: { id: "text-only", input: ["text"] } } as unknown as ExtensionToolContext;
+
+			const result = await createReadToolDefinition(testDir).execute(
+				"test-call-img-text-model",
+				{ path: testFile },
+				undefined,
+				undefined,
+				ctx,
+			);
+
+			// The result is replayed after a switch to a vision model, so it keeps the image and no
+			// note saying the model cannot see it; pi-ai replaces the image per request instead.
+			expect(getTextOutput(result)).toBe("Read image file [image/png]");
+			expect(result.content.some((c) => c.type === "image")).toBe(true);
+
+			// The user still sees the warning, collapsed and expanded.
+			initTheme("dark");
+			const component = new ToolExecutionComponent(
+				"read",
+				"test-call-img-text-model",
+				{ path: testFile },
+				{},
+				createReadToolDefinition(testDir),
+				// SAFETY: ToolExecutionComponent only calls ui.requestRender(), which this stub implements.
+				{ requestRender() {} } as TUI,
+				testDir,
+			);
+			component.updateResult({ ...result, isError: false });
+			const warning = "[text-only does not support images; it saw a placeholder instead]";
+			expect(stripVTControlCharacters(component.render(120).join("\n"))).toContain(warning);
+			component.setExpanded(true);
+			expect(stripVTControlCharacters(component.render(120).join("\n"))).toContain(warning);
 		});
 
 		it("should read BMP files from disk as PNG image attachments", async () => {
@@ -796,6 +840,33 @@ describe("Coding Agent Tools", () => {
 			expect(output).not.toContain("4001");
 		});
 
+		// #12062: a short line followed by one line far past the limit returned no output at all.
+		// The fork's bash tool keeps the start of output within toolOutputMaxTokens; OutputAccumulator keeps the tail fix.
+		it("should keep output when a short line is followed by an over-long line", async () => {
+			const longLine = `${"y".repeat(219_000)}END`;
+			const data = Buffer.from(`first line\n${longLine}\n`, "utf-8");
+			const operations: BashOperations = {
+				exec: async (_command, _cwd, { onData }) => {
+					for (let i = 0; i < data.length; i += 8192) onData(data.subarray(i, i + 8192));
+					return { exitCode: 0 };
+				},
+			};
+			const bash = createBashTool(testDir, { operations });
+
+			const result = await bash.execute("test-call-long-last-line", { command: "grep -n x bundle.min.js" });
+			const output = getTextOutput(result);
+
+			expect(result.details?.truncation?.truncated).toBe(true);
+			expect(output).toMatch(/^first line\n/);
+			expect(output).toContain("Full output:");
+
+			const accumulator = new OutputAccumulator();
+			for (let i = 0; i < data.length; i += 8192) accumulator.append(data.subarray(i, i + 8192));
+			const snapshot = accumulator.snapshot();
+			expect(snapshot.truncation.lastLinePartial).toBe(true);
+			expect(snapshot.truncation.content).toContain("yyyyEND");
+		});
+
 		it("should decode UTF-8 characters split across output chunks", async () => {
 			const euro = Buffer.from("€\n", "utf-8");
 			const operations: BashOperations = {
@@ -1202,6 +1273,22 @@ describe("Coding Agent Tools", () => {
 			});
 
 			expect(getTextOutput(result)).toContain("No files found matching pattern");
+		});
+
+		// #12020: fd matches nothing for a leading "./", so the tool drops it.
+		it("should ignore a leading ./ in the pattern", async () => {
+			mkdirSync(join(testDir, "src"));
+			writeFileSync(join(testDir, "src", "a.ts"), "a");
+			writeFileSync(join(testDir, "package.json"), "{}");
+
+			for (const pattern of ["./src/*.ts", "./src/**/*.ts", "././src/*.ts"]) {
+				const result = await findTool.execute("test-call-find-dot-slash", { pattern, path: testDir });
+				expect(getTextOutput(result)).toBe("src/a.ts");
+			}
+			// Without a "/" left, "./*.json" matches basenames at any depth, like "*.json".
+			writeFileSync(join(testDir, "src", "b.json"), "{}");
+			const json = await findTool.execute("test-call-find-dot-slash-json", { pattern: "./*.json", path: testDir });
+			expect(getTextOutput(json).split("\n").sort()).toEqual(["package.json", "src/b.json"]);
 		});
 
 		// #7121: exactly `limit` matches must not report that the limit was reached.
