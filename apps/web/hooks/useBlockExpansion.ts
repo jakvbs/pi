@@ -1,23 +1,22 @@
 import { useState } from "react";
 import { getBlockExpansion, setBlockExpansion } from "@/lib/block-expansion";
-import { resolveBlockExpanded, type CollapseBlockType } from "@/lib/collapse-policy";
+import type { CollapseBlockType } from "@/lib/collapse-policy";
 import { useCollapsePolicy } from "@/hooks/useCollapsePolicy";
 
 /**
  * A transcript block's open state and its toggle: the user's toggle for `key`
  * (kept across remounts), else how the collapse policy starts `type`, which
- * follows a policy change live. `type` null starts collapsed.
+ * follows a policy change live. A block without a key keeps its toggle here.
  */
-export function useBlockExpansion(type: CollapseBlockType | null, key: string | undefined): [boolean, () => void] {
+export function useBlockExpansion(type: CollapseBlockType, key: string | undefined): [boolean, () => void] {
   const policy = useCollapsePolicy();
-  const [choice, setChoice] = useState(() => ({ key, manual: getBlockExpansion(key) }));
-  // A reused block for another key (a list re-keyed by index) takes that key's toggle.
-  if (choice.key !== key) setChoice({ key, manual: getBlockExpansion(key) });
-  const manual = choice.key === key ? choice.manual : getBlockExpansion(key);
-  const expanded = resolveBlockExpanded(type, policy, manual);
+  // A new object per toggle, so the toggle always re-renders, also for a keyed block.
+  const [ownToggle, setOwnToggle] = useState<{ expanded: boolean }>();
+  const manual = key === undefined ? ownToggle?.expanded : getBlockExpansion(key);
+  const expanded = manual ?? (policy[type] === "expanded");
   const toggle = () => {
     setBlockExpansion(key, !expanded);
-    setChoice({ key, manual: !expanded });
+    setOwnToggle({ expanded: !expanded });
   };
   return [expanded, toggle];
 }

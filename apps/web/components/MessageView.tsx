@@ -18,7 +18,7 @@ import { editPreviewFile } from "@/lib/edit-preview";
 import { applyPatchPreviewToFiles, applyPatchResultHasFailures, extractApplyPatchPaths, getApplyPatchInputText, parseApplyPatchInput } from "@/lib/apply-patch";
 import { isApplyPatchToolName, isEditToolName, isWriteToolName } from "@/lib/tool-names";
 import { useBlockExpansion } from "@/hooks/useBlockExpansion";
-import { customMessageBlockType, toolCallBlockType, type CollapseBlockType } from "@/lib/collapse-policy";
+import { customMessageBlockType, toolCallBlockType } from "@/lib/collapse-policy";
 import { TurnWrittenFiles } from "./TurnWrittenFiles";
 import type { WrittenFile } from "@/lib/turn-written-files";
 import { skillExpansionContent, skillExpansionToCommand } from "@/lib/slash-display";
@@ -1222,11 +1222,9 @@ function ToolClockTime({ clock }: { clock: ToolClock }) {
 // what it offers acts on the result the reader is looking at.
 // `notRun`: the message ended aborted or in an error, so pi ran none of its
 // calls and no result will come (pi-agent-core's agent loop).
-// `blockType`: the collapse policy's type when the card stands for something else
-// than an agent's tool call (a `!` command); otherwise the tool's name decides.
-function ToolCallBlock({ block, result, notRun, duration, clock, onOpenSubagent, resultFooter, blockType }: { block: ToolCallContent; result?: ToolResultMessage; notRun?: boolean; duration?: number; clock?: ToolClock; onOpenSubagent?: (sessionId: string, label: string) => void; resultFooter?: ReactNode; blockType?: CollapseBlockType }) {
+function ToolCallBlock({ block, result, notRun, duration, clock, onOpenSubagent, resultFooter }: { block: ToolCallContent; result?: ToolResultMessage; notRun?: boolean; duration?: number; clock?: ToolClock; onOpenSubagent?: (sessionId: string, label: string) => void; resultFooter?: ReactNode }) {
   const { t } = useI18n();
-  const [expanded, toggleExpanded] = useBlockExpansion(blockType ?? toolCallBlockType(block.toolName), block.toolCallId);
+  const [expanded, toggleExpanded] = useBlockExpansion(toolCallBlockType(block.toolName), block.toolCallId);
   const writtenFileText = getWrittenFileText(block);
   const inputStr = writtenFileText ?? getToolCallInputText(block);
   const isStreamingInput = block.rawInput !== undefined;
@@ -2010,7 +2008,7 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
   // The collapse policy decides how it starts: an extension message expanded by
   // default, as pi's TUI draws it in full; a subagent's report collapsed.
   const [contentExpanded, toggleContentExpanded] = useBlockExpansion(
-    customMessageBlockType(message),
+    customMessageBlockType(message.customType),
     message.timestamp === undefined ? undefined : `custom:${message.customType}:${message.timestamp}`,
   );
   const [detailsExpanded, setDetailsExpanded] = useState(false);
@@ -2449,7 +2447,7 @@ function BashExecutionView({ message, sessionId }: { message: BashExecutionMessa
 
   return (
     <div style={{ margin: "6px 0" }}>
-      <ToolCallBlock block={block} result={result} resultFooter={fullOutputFooter} blockType="bash" />
+      <ToolCallBlock block={block} result={result} resultFooter={fullOutputFooter} />
     </div>
   );
 }

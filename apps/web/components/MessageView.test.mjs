@@ -871,6 +871,9 @@ test("a background subagent's report starts collapsed to its one-line preview un
   assert.match(header(renderMessage(report)), /aria-expanded="true"/);
   // Another extension's message keeps starting expanded.
   assert.match(header(renderMessage({ ...report, customType: "extension", timestamp: 1235 })), /aria-expanded="true"/);
+  // A collapse is a choice too, over a type that starts expanded.
+  setBlockExpansion("custom:extension:1235", false);
+  assert.match(header(renderMessage({ ...report, customType: "extension", timestamp: 1235 })), /aria-expanded="false"/);
 });
 
 test("renders custom-message images as buttons that open a larger preview", () => {

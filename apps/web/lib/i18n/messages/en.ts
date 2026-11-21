@@ -56,7 +56,6 @@ export const enLocale: LocalePlugin = {
     "settings.blockTypeSubagents": "Subagent results",
     "settings.blockTypeExtensionMessages": "Extension messages",
     "settings.blockTypeThinking": "Thinking",
-    "settings.blockTypeBash": "! commands",
     "settings.chat": "Chat",
     "settings.enterSendMode": "Send key",
     "settings.enterSendModeEnter": "Enter",

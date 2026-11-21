@@ -83,7 +83,6 @@ const BLOCK_TYPE_LABELS: Record<CollapseBlockType, string> = {
   subagents: "settings.blockTypeSubagents",
   extensionMessages: "settings.blockTypeExtensionMessages",
   thinking: "settings.blockTypeThinking",
-  bash: "settings.blockTypeBash",
 };
 
 const BLOCK_STARTS: readonly (readonly [BlockStart, string])[] = [

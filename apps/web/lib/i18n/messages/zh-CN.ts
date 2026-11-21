@@ -56,7 +56,6 @@ export const zhCNLocale: LocalePlugin = {
     "settings.blockTypeSubagents": "子代理结果",
     "settings.blockTypeExtensionMessages": "扩展消息",
     "settings.blockTypeThinking": "思考",
-    "settings.blockTypeBash": "! 命令",
     "settings.chat": "对话",
     "settings.enterSendMode": "发送按键",
     "settings.enterSendModeEnter": "Enter",
