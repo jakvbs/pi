@@ -73,7 +73,7 @@ test("a started wrapper's snapshot: its times, flags and the idle timer it armed
       compacting: false,
       retrying: false,
       queuedMessages: 0,
-      waitingForMcp: false,
+      waitingToStart: false,
       runningTools: 0,
       mutatingCommands: 0,
       replacement: null,
@@ -274,18 +274,6 @@ test("the last event and command are their types only", async (t) => {
   assert.doesNotMatch(JSON.stringify(snapshot), /secret/);
 });
 
-test("the MCP snapshot comes from the host, when it has one that can say", (t) => {
-  const host = { prepareForPrompt: async () => true, dispose() {} };
-  const state = { active: true, disposed: false, runActive: false, idleMs: 0, idleReleaseAt: null, servers: [], problems: 0 };
-  const withSnapshot = new AgentSessionWrapper(makeIdleInner(), { mcpHost: { ...host, debugSnapshot: () => state } });
-  const preReload = new AgentSessionWrapper(makeIdleInner(), { mcpHost: host });
-  const none = new AgentSessionWrapper(makeIdleInner());
-  t.after(() => [withSnapshot, preReload, none].forEach((wrapper) => wrapper.destroy()));
-  assert.equal(withSnapshot.getMcpDebugSnapshot(), state);
-  assert.equal(preReload.getMcpDebugSnapshot(), null);
-  assert.equal(none.getMcpDebugSnapshot(), null);
-});
-
 function swapGlobal(t, name, value) {
   const previous = globalThis[name];
   globalThis[name] = value;
@@ -311,7 +299,6 @@ test("lists every registered wrapper, a pre-reload or failing one as stale with 
   assert.equal(staleEntry.snapshot.state, "alive");
   assert.equal(staleEntry.snapshot.run.running, true);
   assert.equal(staleEntry.sessionFile, null);
-  assert.equal(staleEntry.readMcp(), null);
   // Same shape as a current wrapper's, so the panel needs no special case.
   const keys = (snapshot) => [Object.keys(snapshot), Object.keys(snapshot.run), Object.keys(snapshot.idle)];
   assert.deepEqual(keys(staleEntry.snapshot), keys(liveEntry.snapshot));

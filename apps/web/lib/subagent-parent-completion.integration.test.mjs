@@ -56,7 +56,7 @@ async function familyFixture(t) {
   await mkdir(join(dir, "agents"));
   await writeFile(join(dir, "agents", "fixture.md"), [
     "---", "description: Synthetic notification fixture.", "tools: read",
-    "load_skills: false", "load_extensions: false", "mcp: off", "codemode: off", "---", "Report the result.",
+    "load_skills: false", "load_extensions: false", "---", "Report the result.",
   ].join("\n"));
   const faux = fauxProvider({ models: [{ id: "family-fixture" }] });
   const modelRuntime = await ModelRuntime.create({

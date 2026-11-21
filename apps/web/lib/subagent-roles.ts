@@ -1,7 +1,7 @@
 // The roles a profile's `roles:` file defines: per role a default model (with its level) and required reading.
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
-import { jsonErrorMessage } from "./mcp-json-error";
+import { jsonErrorMessage } from "./json-error";
 import { PROJECT_SETTINGS_MAX_BYTES, readRegularFileText } from "./regular-file";
 import { isSubagentRoleModelReference, LEVELS_TEXT } from "./subagent-model-scope";
 

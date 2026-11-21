@@ -41,8 +41,7 @@ let lastBackpressureLogAt = 0;
 /**
  * How long `tool_execution_update` events wait to be coalesced. Each update
  * carries the tool's whole partial result, so only the latest one per tool call
- * matters: a codemode script publishes a snapshot of every call it made each
- * time one starts or ends, and bash streams its output tail per chunk. A burst
+ * matters: bash streams its output tail per chunk. A burst
  * inside the window reaches the client as one event per tool call.
  */
 export const TOOL_UPDATE_COALESCE_MS = 150;

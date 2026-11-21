@@ -18,7 +18,7 @@ export function itemsToSwitch<T>(
 /**
  * The page's trust status for a settings panel's folder, as one string that
  * changes whenever the decision does. Settings keeps every section it has shown
- * mounted, so trusting from Settings › MCP leaves Skills, Agents and Plugins
+ * mounted, so trusting from the trust dialog leaves Skills, Agents and Plugins
  * describing the folder as it was; each panel whose answer depends on trust
  * loads again, in place, when this changes. Empty without a status.
  */

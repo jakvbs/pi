@@ -2,7 +2,6 @@ import type {
   DebugClientSession,
   DebugEventConnectionSnapshot,
   DebugEventStreamState,
-  DebugMcpServer,
   DebugPageVisibility,
   DebugRunningPoll,
   DebugSessionDetail,
@@ -17,7 +16,6 @@ import { listTrackedEventSources, readHttpProtocol, readPageVisibility, readRunn
 import { projectNameOf } from "@/lib/session-tree";
 import type { SessionInfo, SubagentSessionStatus } from "@/lib/types";
 import { workspaceKeyOf } from "@/lib/workspace-memory";
-import { MCP_SESSION_STATE_KEYS } from "./mcp-config-helpers";
 
 /**
  * The debug panel's pure parts (components/DebugPanel.tsx): what it reads of the page each second,
@@ -252,13 +250,11 @@ function isDetail(value: unknown): boolean {
   if (!isObject(value) || typeof value.sessionId !== "string") return false;
   const wrapper = value.wrapper;
   const subagents = value.subagents;
-  const mcp = value.mcp;
   return (wrapper === null || (isObject(wrapper) && typeof wrapper.state === "string" && isObject(wrapper.run) && isObject(wrapper.idle)))
     && (value.lifecycle === null || isObject(value.lifecycle))
     && (value.providers === null || Array.isArray(value.providers))
     && Array.isArray(value.eventStreams)
-    && isObject(subagents) && Array.isArray(subagents.runs) && Array.isArray(subagents.notifications)
-    && (mcp === null || (isObject(mcp) && Array.isArray(mcp.servers)));
+    && isObject(subagents) && Array.isArray(subagents.runs) && Array.isArray(subagents.notifications);
 }
 
 function isServerGlobal(value: unknown): boolean {
@@ -593,16 +589,6 @@ export function freshnessTone(ageMs: number, staleAfterMs: number): "dim" | "war
   return ageMs >= staleAfterMs / 2 ? "warning" : "dim";
 }
 
-/** An MCP server's dot: filled for a settled state, a ring while it connects or after it was let go. */
-export function mcpServerTone(server: DebugMcpServer): { tone: DebugTone; filled: boolean } {
-  if (server.hasError || server.state === "failed" || server.state === "conflict") return { tone: "error", filled: true };
-  if (server.released) return { tone: "dim", filled: false };
-  if (server.state === "connected") return { tone: "ok", filled: true };
-  if (server.state === "connecting") return { tone: "warning", filled: false };
-  if (server.state === "needs-auth" || server.state === "not-trusted" || server.state === "disconnected") return { tone: "warning", filled: true };
-  return { tone: "muted", filled: false };
-}
-
 // ── This page's sources ──
 
 /** HTTP/1.1's connections per origin, for all of a browser's tabs (#1283). */
@@ -755,7 +741,7 @@ export function sparkStats(samples: readonly DebugSample[]): { count: number; me
 export interface DebugIssue {
   id:
     | "poll" | "reader" | "runningPoll" | "pool" | "source" | "stream" | "streamSilent" | "noServerStream"
-    | "dropped" | "lease" | "extensions" | "provider" | "mcp";
+    | "dropped" | "lease" | "extensions" | "provider";
   tone: "warning" | "error";
   text: string;
 }
@@ -886,11 +872,6 @@ export function debugIssues({ page, server, detail, t, titleOf }: DebugIssueInpu
   }
   for (const provider of detail?.providers ?? []) {
     if (provider.active === "error") add("provider", "error", [provider.name, t("debug.server.providerError")]);
-  }
-  for (const mcpServer of detail?.mcp?.servers ?? []) {
-    if (mcpServer.hasError || mcpServer.state === "failed" || mcpServer.state === "conflict") {
-      add("mcp", "error", [`MCP ${mcpServer.name}`, translateDebugCode(mcpServer.state, MCP_SESSION_STATE_KEYS, t)]);
-    }
   }
 
   // Array.prototype.sort is stable: each tone keeps the order above.

@@ -49,10 +49,8 @@ import type { TranslationParams } from "@/lib/i18n/types";
 import { AGENT_EVENT_HEARTBEAT_MS, isNestedToolExecutionEvent, isSystemMessageEvent, toolResultFromExecutionEnd } from "@/lib/agent-event-wire";
 import { runStatePhase } from "@/lib/chat-phase-label";
 import { getToolExecutionProgress } from "@/lib/tool-execution-progress";
-import { CODEMODE_TOOL_NAME, getCodemodeProgress } from "@/lib/codemode-view";
 import { updateExtensionWidgets } from "@/lib/extension-widgets";
 import { createShownNotices, extensionErrorMessage } from "@/lib/startup-issues";
-import { bareMcpOpensSettings } from "@/lib/mcp-command";
 import { copyText } from "@/lib/clipboard";
 import type { SettingsSection } from "@/lib/settings-navigation";
 import { withTranscriptNotices, type TranscriptNotice } from "@/lib/transcript-notices";
@@ -256,7 +254,7 @@ export interface UseAgentSessionOptions {
   /** Registers the debug panel's reader of this page's stream and lease: it reads refs only, never a request. */
   onDebugSnapshotReaderChange?: (reader: (() => DebugClientSession) | null) => void;
   onSessionStatsPanelOpen?: () => void;
-  /** Opens Settings on a section; a bare `/mcp` the built-in MCP extension owns opens Settings › MCP. */
+  /** Opens Settings on a section. */
   onOpenSettings?: (section: SettingsSection) => void;
   setToolPreset?: (preset: ToolPreset) => void;
   deferInitialScroll?: boolean;
@@ -461,7 +459,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const {
     session, newSessionCwd, newSessionDraftKey, onAgentEnd, onSessionEnded, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSideSession,
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
-    onOpenSettings, onDebugSnapshotReaderChange,
+    onDebugSnapshotReaderChange,
   } = opts;
 
   const isNew = session === null && newSessionCwd !== null;
@@ -598,7 +596,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
   // The command list as last loaded, and the get_commands request under way, if
-  // any. A bare /mcp reads them to tell whose /mcp it is (handleBuiltinSlashCommand).
+  // any.
   // The generation moves on with every request and every clear, and only a request
   // still current writes its answer: one that set_tools outdated (or a newer request)
   // would otherwise put back the list of a session that is no longer there.
@@ -1251,18 +1249,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [ensureNewSession, replaceSlashCommands, withSessionStartStream]);
 
   const loadSlashCommands = useCallback(async () => (await requestSlashCommands()) ?? [], [requestSlashCommands]);
-
-  // The list a bare /mcp is decided by: the request under way (the palette starts
-  // one as "/mcp" is typed, often still unanswered at Enter), else the list already
-  // loaded, else a new request. Null when it cannot be read: guessing would either
-  // swallow another extension's /mcp or send one Settings should have taken.
-  const slashCommandsForMcp = useCallback(async (): Promise<SlashCommandInfo[] | null> => {
-    const pending = slashCommandsLoadRef.current;
-    const known = slashCommandsRef.current;
-    if (!pending && known.length > 0) return known;
-    const loaded = await (pending ?? requestSlashCommands()).catch(() => null);
-    return loaded ?? (known.length > 0 ? known : null);
-  }, [requestSlashCommands]);
 
   const cancelEventStreamGrace = useCallback(() => {
     eventStreamGraceGenerationRef.current += 1;
@@ -2162,7 +2148,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
       }
       case "tool_execution_start": {
-        // A call a tool made itself (a codemode script's) belongs to its
+        // A call a tool made itself (through `ctx.executeTool`) belongs to its
         // parent's card; listed here it would show as a top-level running tool,
         // and a call cut off by its script can end after the parent did.
         if (isNestedToolExecutionEvent(event)) break;
@@ -2183,8 +2169,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         const name = event.toolName as string;
         const partialResult = event.partialResult as Partial<ToolResultMessage> | undefined;
         const content = partialResult?.content;
-        // Live output for shells; for codemode, the calls its script has made so far.
-        if ((name === "bash" || name === "powershell" || name === CODEMODE_TOOL_NAME) && Array.isArray(content)) {
+        // Live output for shells.
+        if ((name === "bash" || name === "powershell") && Array.isArray(content)) {
           setActiveToolResults((prev) => {
             const next = new Map(prev);
             next.set(id, {
@@ -2198,9 +2184,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             return next;
           });
         }
-        const progress = name === CODEMODE_TOOL_NAME
-          ? getCodemodeProgress(event.partialResult)
-          : getToolExecutionProgress(event.partialResult);
+        const progress = getToolExecutionProgress(event.partialResult);
         setAgentPhase((prev) => {
           const tools = prev?.kind === "running_tools" ? [...prev.tools] : [];
           const existing = tools.find((tool) => tool.id === id);
@@ -3022,20 +3006,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           return complete({ handled: true, action: "openSessionStats" });
         }
 
-        case "mcp": {
-          // Only a bare /mcp, and only when pi's built-in MCP extension owns it or
-          // nothing does (lib/mcp-command.ts): another extension's /mcp is sent as
-          // before, and so is every subcommand, since `/mcp login`, `logout` and
-          // `reconnect` act on this session's own connections. Returning before
-          // onSend leaves no "/mcp" bubble and no sidebar row for a new chat; a
-          // streaming run is not touched.
-          if (args || !onOpenSettings) return { handled: false };
-          const commands = await slashCommandsForMcp();
-          if (!commands || !bareMcpOpensSettings(commands)) return { handled: false };
-          onOpenSettings("mcp");
-          return complete({ handled: true, action: "openSettings" });
-        }
-
         case "copy": {
           if (!sid) return complete({ handled: true, error: "No active session" });
           const data = await sendAgentCommand<LastAssistantTextResponse>(sid, { type: "get_last_assistant_text" });
@@ -3081,7 +3051,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       return complete({ handled: true, error: e instanceof Error ? e.message : String(e) });
     }
-  }, [activeLeafId, addNotice, ensureNewSession, handleCompact, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, promoteNewSession, onOpenSettings, onSessionForked, onSessionStatsPanelOpen, opts.chatInputRef, sessionStats, slashCommandsForMcp, startSideChat, translate]);
+  }, [activeLeafId, addNotice, ensureNewSession, handleCompact, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, promoteNewSession, onSessionForked, onSessionStatsPanelOpen, opts.chatInputRef, sessionStats, startSideChat, translate]);
 
   // Let AgentSession.prompt decide atomically whether to queue against the
   // current run or start a new turn if it settled while the request was in

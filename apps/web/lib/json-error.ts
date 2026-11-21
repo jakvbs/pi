@@ -1,9 +1,6 @@
-// What `JSON.parse` said about an `mcp.json`, without the source text it
-// quotes. Settings › MCP shows a file's parse error (`lib/mcp-config-read.ts`),
-// the writer refuses with it (`lib/mcp-config-file.ts`), and the MCP host logs
-// what the SDK's `loadMcpConfig()` reports (`lib/mcp-host.ts`). The host cannot
-// import `mcp-config-read`, whose module chain leads back to it, so the rule
-// lives here, with no imports.
+// What `JSON.parse` said about a file, without the source text it quotes: a
+// roles file's parse error (`lib/subagent-roles.ts`) is shown and logged, and
+// the quoted text can be part of a literal secret. No imports.
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -71,22 +68,4 @@ export function jsonErrorMessage(error: unknown, text: string): string {
       : ` U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
   const position = unexpectedTokenPosition(text, token, quoted);
   return `Unexpected token${shown} in JSON${position === undefined ? "" : ` ${describePosition(text, position)}`}`;
-}
-
-/** How V8 ends a parse error that quotes the source (`... is not valid JSON`). */
-const QUOTES_SOURCE = /is not valid JSON$/;
-
-/**
- * One of `loadMcpConfig().errors`, safe to log. The SDK words a file it
- * cannot parse as `${path}: ${error.message}`, and V8's message for an
- * unexpected token quotes up to twenty characters around it, often part of a
- * literal secret; such a message is reworded by `jsonErrorMessage()`, keeping
- * the path. Everything else is kept as it is: the validator's messages name
- * servers and fields, never values, and a read error names the path and errno.
- * `paths` are the files the SDK read, which prefix its messages.
- */
-export function scrubMcpLoadError(message: string, paths: readonly string[]): string {
-  const prefix = paths.map((path) => `${path}: `).find((candidate) => message.startsWith(candidate)) ?? "";
-  const rest = message.slice(prefix.length);
-  return QUOTES_SOURCE.test(rest) ? `${prefix}${jsonErrorMessage(rest, "")}` : message;
 }

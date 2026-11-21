@@ -69,8 +69,8 @@ test("built-in profile IDs use lowercase kebab-case and read-only profiles canno
     const builtin = profiles.find((item) => item.name === name);
     assert.deepEqual(builtin.tools, ["read", "grep", "find", "ls"]);
     assert.equal(builtin.tools.includes("bash"), false);
-    assert.equal(builtin.codemode, "off");
-    assert.equal(builtin.mcp, "off");
+    assert.equal("codemode" in builtin, false);
+    assert.equal("mcp" in builtin, false);
   }
 });
 
@@ -499,61 +499,29 @@ test("persisted subagent metadata reconstructs the final run", () => {
   });
 });
 
-test("saved codemode values validate API input while disk booleans remain compatible", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "pi-web-subagents-codemode-"));
+test("legacy codemode and mcp keys in a profile file are carried through, not read", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-web-subagents-legacy-keys-"));
   try {
-    for (const value of [true, false, null, "unexpected", 1]) {
-      assert.throws(
-        () => saveProjectSubagentProfile(cwd, profile({ codemode: value })),
-        /codemode must be one of/,
-      );
-    }
-    await mkdir(join(cwd, ".pi", "agents"), { recursive: true });
-    const file = join(cwd, ".pi", "agents", "disk.md");
-    await writeFile(file, "---\ncodemode: true\n---\nPrompt");
-    assert.equal(resolveSubagentProfile(cwd, "disk").codemode, "on");
-    await writeFile(file, "---\ncodemode: false\n---\nPrompt");
-    assert.equal(resolveSubagentProfile(cwd, "disk").codemode, "off");
-    await writeFile(file, "---\n---\nPrompt");
-    assert.equal(resolveSubagentProfile(cwd, "disk").codemode, "off");
-    await writeFile(file, "---\ncodemode: unexpected\n---\nPrompt");
-    assert.equal(resolveSubagentProfile(cwd, "disk").codemode, "off");
-  } finally {
-    await rm(cwd, { recursive: true, force: true });
-  }
-});
-
-test("mcp: on is read from disk, and a save without it keeps the file's value", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "pi-web-subagents-mcp-"));
-  try {
-    for (const value of [true, false, null, "inherit", 1]) {
-      assert.throws(() => saveProjectSubagentProfile(cwd, profile({ mcp: value })), /mcp must be one of: on, off/);
-    }
     await mkdir(join(cwd, ".pi", "agents"), { recursive: true });
     const file = join(cwd, ".pi", "agents", "test-agent.md");
-    for (const [frontmatter, expected] of [["mcp: on", "on"], ["mcp: true", "on"], ["mcp: off", "off"], ["mcp: inherit", "off"], ["", "off"]]) {
-      await writeFile(file, `---\n${frontmatter}\n---\nPrompt`);
-      assert.equal(resolveSubagentProfile(cwd, "test-agent").mcp, expected, frontmatter);
-    }
-
-    // A save that names none (an older client) keeps the file's.
-    await writeFile(file, "---\nmcp: on\n---\nPrompt");
-    assert.equal(saveProjectSubagentProfile(cwd, profile()).mcp, "on");
-    assert.match(await readFile(file, "utf8"), /^mcp: 'on'$/m);
-    assert.equal(saveProjectSubagentProfile(cwd, profile({ mcp: "off" })).mcp, "off");
-    assert.match(await readFile(file, "utf8"), /^mcp: 'off'$/m);
-    // A duplicate carries what the profile says into its new file.
-    assert.equal(saveProjectSubagentProfile(cwd, profile({ name: "copy", mcp: "on" })).mcp, "on");
-    assert.match(await readFile(join(cwd, ".pi", "agents", "copy.md"), "utf8"), /^mcp: 'on'$/m);
-    // A profile that never used MCP gets no key.
+    await writeFile(file, "---\ncodemode: on\nmcp: on\n---\nPrompt");
+    const resolved = resolveSubagentProfile(cwd, "test-agent");
+    assert.equal("codemode" in resolved, false);
+    assert.equal("mcp" in resolved, false);
+    const saved = saveProjectSubagentProfile(cwd, profile({ codemode: "on", mcp: "on" }));
+    assert.equal("codemode" in saved, true, "an unknown field of the request is left as sent");
+    const text = await readFile(file, "utf8");
+    assert.match(text, /^codemode: 'on'$/m);
+    assert.match(text, /^mcp: 'on'$/m);
+    // A new profile gets neither key.
     saveProjectSubagentProfile(cwd, profile({ name: "fresh" }));
-    assert.doesNotMatch(await readFile(join(cwd, ".pi", "agents", "fresh.md"), "utf8"), /^mcp:/m);
+    assert.doesNotMatch(await readFile(join(cwd, ".pi", "agents", "fresh.md"), "utf8"), /^(codemode|mcp):/m);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test("snapshot validation keeps old third-party codemode names, powershell, and rejects corruption", () => {
+test("snapshot validation keeps old third-party codemode names, drops a legacy Code mode tool, and rejects corruption", () => {
   const entries = (snapshot) => [{ type: "custom", customType: SUBAGENT_META_TYPE, data: {
     version: 1, parentSessionId: "p", parentSessionPath: "/p", resourceSnapshot: snapshot,
   } }];
@@ -563,11 +531,12 @@ test("snapshot validation keeps old third-party codemode names, powershell, and 
     ...base, loadExtensions: true, tools: ["codemode", "third_party"],
   }));
   assert.deepEqual(legacyThirdParty.tools, ["codemode", "third_party"]);
-  assert.deepEqual(readSubagentSessionResources(entries({ ...base, tools: ["codemode"], codemode: true })).codemode, true);
+  // A child that had Code mode before its removal reopens without it.
+  const legacyCodemode = readSubagentSessionResources(entries({ ...base, tools: ["read", "codemode"], codemode: true }));
+  assert.deepEqual(legacyCodemode.tools, ["read"]);
+  assert.equal("codemode" in legacyCodemode, false);
   assert.equal(readSubagentSessionResources(entries({ ...base, tools: ["codemode"] })), null);
-  assert.equal(readSubagentSessionResources(entries({ ...base, tools: ["read"], mcp: true })).mcp, true);
-  assert.equal("mcp" in readSubagentSessionResources(entries({ ...base, tools: ["read"], mcp: false })), false);
-  assert.equal(readSubagentSessionResources(entries({ ...base, tools: ["read"], mcp: "yes" })), null);
+  assert.equal("mcp" in readSubagentSessionResources(entries({ ...base, tools: ["read"], mcp: true })), false);
   assert.equal(hasSubagentResourceSnapshot(entries({ ...base, tools: "read" })), true);
 });
 test("persisted subagent resources restore the exact isolated prompt and tools", () => {
@@ -753,7 +722,6 @@ test("an extension scope keeps named extensions, pi-web's inline ones, and their
     extension("/agent/extensions/dup.ts", { source: "auto", origin: "top-level" }),
     extension("/project/.pi/extensions/dup.ts", { source: "auto", origin: "top-level" }),
     extension("<inline:pi-web-subagent-skills>"),
-    extension("builtin:mcp"),
   ];
   const registration = (extensionPath) => ({ extensionPath });
   const base = {
@@ -767,13 +735,13 @@ test("an extension scope keeps named extensions, pi-web's inline ones, and their
   };
   // A name two sources claim keeps neither, as `ext:` selectors resolve it.
   const scoped = scopeSubagentExtensions(["CodeGraph", "adapter", "dup", "missing"])(base);
-  const want = ["/agent/extensions/codegraph/index.ts", "/agent/npm/node_modules/@team/adapter/dist/main.js", "<inline:pi-web-subagent-skills>", "builtin:mcp"];
+  const want = ["/agent/extensions/codegraph/index.ts", "/agent/npm/node_modules/@team/adapter/dist/main.js", "<inline:pi-web-subagent-skills>"];
   assert.deepEqual(scoped.extensions.map((item) => item.path), want);
   for (const queue of ["pendingProviderRegistrations", "pendingNativeProviderRegistrations", "pendingVirtualModelRegistrations"]) {
     assert.deepEqual(scoped.runtime[queue].map((item) => item.extensionPath), want, queue);
   }
-  assert.deepEqual(scopeSubagentExtensions(["@team/adapter"])(base).extensions.map((item) => item.path), [want[1], want[2], want[3]]);
-  assert.deepEqual(scopeSubagentExtensions([])(base).extensions.map((item) => item.path), [want[2], want[3]]);
+  assert.deepEqual(scopeSubagentExtensions(["@team/adapter"])(base).extensions.map((item) => item.path), [want[1], want[2]]);
+  assert.deepEqual(scopeSubagentExtensions([])(base).extensions.map((item) => item.path), [want[2]]);
 });
 
 test("the extension switch wins over a list and no list loads every extension", () => {
@@ -782,11 +750,6 @@ test("the extension switch wins over a list and no list loads every extension", 
   const scoped = subagentExtensionLoaderOptions({ loadExtensions: true, extensions: ["codegraph"] });
   assert.equal(scoped.noExtensions, false);
   assert.equal(typeof scoped.extensionsOverride, "function");
-  // `mcp: on` names pi's MCP built-ins, which load under `noExtensions` too.
-  assert.deepEqual(subagentExtensionLoaderOptions({ loadExtensions: false, mcp: true }), {
-    noExtensions: true,
-    additionalExtensionPaths: ["builtin:tool-search", "builtin:mcp"],
-  });
 });
 
 test("extension tools are merged while subagent control tools stay excluded", () => {
@@ -801,26 +764,14 @@ test("extension tools are merged while subagent control tools stay excluded", ()
 
 test("a child without ext: selectors gets no tool allowlist, so tools registered later are admitted (#883)", () => {
   const control = ["Agent", "get_subagent_result", "steer_subagent"];
-  const mcp = ["mcp__*", "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"];
-  assert.deepEqual(subagentToolOptions({ tools: ["read", "web_search"] }), { tools: ["read", "web_search"], excludeTools: [...control, ...mcp] });
-  // An allowlist naming an MCP tool already drops the others in the SDK.
-  assert.deepEqual(subagentToolOptions({ tools: ["read", "mcp__docs__search"] }), { tools: ["read", "mcp__docs__search"], excludeTools: control });
-  assert.deepEqual(subagentToolOptions({ tools: ["read", "grep", "web_search", "codemode"], allExtensionTools: true }), {
+  assert.deepEqual(subagentToolOptions({ tools: ["read", "web_search"] }), { tools: ["read", "web_search"], excludeTools: control });
+  assert.deepEqual(subagentToolOptions({ tools: ["read", "grep", "web_search"], allExtensionTools: true }), {
     noTools: "builtin",
-    tools: ["+read", "+grep", "+codemode"],
+    tools: ["+read", "+grep"],
     excludeTools: [...control, "bash", "powershell", "edit", "write", "find", "ls"],
   });
   // An empty `tools` would be an allowlist that switches every tool off.
   assert.equal("tools" in subagentToolOptions({ tools: [], allExtensionTools: true }), false);
-  // `mcp: on` admits MCP tools by name, and tool_search unless Code mode reaches the servers.
-  assert.deepEqual(subagentToolOptions({ tools: ["read", "web_search"], mcp: true }), {
-    tools: ["read", "web_search", "tool_search", ...mcp], excludeTools: control,
-  });
-  assert.deepEqual(subagentToolOptions({ tools: ["read", "codemode"], mcp: true }), { tools: ["read", "codemode", ...mcp], excludeTools: control });
-  assert.deepEqual(
-    subagentToolOptions({ tools: ["read", "codemode"], allExtensionTools: true, mcp: true }),
-    subagentToolOptions({ tools: ["read", "codemode"], allExtensionTools: true }),
-  );
 
   const entries = (loadExtensions) => [{ type: "custom", customType: SUBAGENT_META_TYPE, data: {
     version: 1, parentSessionId: "p", parentSessionPath: "/p", resourceSnapshot: {

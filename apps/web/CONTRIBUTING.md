@@ -6,7 +6,7 @@ Pi Web is a light web front end for the [pi coding agent](https://github.com/ear
 
 ## What Pi Web is for
 
-- **Doing in a browser what a terminal does less well.** Browse sessions by project. Read files, diffs and tool output. Configure models, skills, agents, plugins and MCP servers through forms instead of hand-edited JSON. Use pi from a phone or from another machine on your network.
+- **Doing in a browser what a terminal does less well.** Browse sessions by project. Read files, diffs and tool output. Configure models, skills, agents and plugins through forms instead of hand-edited JSON. Use pi from a phone or from another machine on your network.
 - **Behaving like pi.** A session behaves the same whether it runs in Pi Web or in the pi CLI. Extensions written for the CLI work in Pi Web unchanged, and pi's TUI (`@earendil-works/pi-tui`) shows what an extension's request means.
 
 ## Out of scope

@@ -27,7 +27,7 @@ function nonNegative(value: unknown): number | undefined {
  * The clocks after a tool event. A start counts from `now`, or from `now - elapsedMs` when the
  * server replays the start of a call already running (a reload, a reconnect); a call that has a
  * clock keeps it. An end keeps pi's `durationMs`, or drops the clock without one (a call refused
- * before it ran). Calls a tool made itself (a codemode script's) have none. Returns `clocks` itself
+ * before it ran). Calls a tool made itself (through `ctx.executeTool`) have none. Returns `clocks` itself
  * when nothing changes.
  */
 export function applyToolClockEvent(clocks: ToolClocks, event: ToolExecutionEventLike, now: number): ToolClocks {

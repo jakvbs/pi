@@ -84,7 +84,7 @@ interface Props {
   onDebugSnapshotReaderChange?: (reader: (() => DebugClientSession) | null) => void;
   onSessionStatsChange?: (stats: SessionStatsInfo | null) => void;
   onSessionStatsPanelOpen?: () => void;
-  /** Opens Settings on a section: a bare `/mcp` that pi's built-in MCP extension owns opens Settings › MCP. */
+  /** Opens Settings on a section. */
   onOpenSettings?: (section: SettingsSection) => void;
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
   onOpenFile?: (filePath: string, page?: number) => void;

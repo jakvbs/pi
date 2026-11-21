@@ -24,29 +24,6 @@ test("editor draft preserves named and empty selections independently of activat
   }
 });
 
-test("draft backfills MCP as off and keeps an explicit choice", () => {
-  const declaration = source.slice(source.indexOf("function editableProfile("), source.indexOf("function profileKey("));
-  const code = ts.transpileModule(declaration, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
-  const editable = vm.runInNewContext(`${code}; editableProfile`);
-  assert.equal(editable({ name: "legacy", tools: [], loadSkills: false, loadExtensions: false }).mcp, "off");
-  for (const mcp of ["on", "off"]) {
-    assert.equal(editable({ name: "reviewer", tools: [], loadSkills: false, loadExtensions: false, mcp }).mcp, mcp);
-  }
-});
-
-test("draft backfills code mode for legacy profiles and keeps an explicit choice", () => {
-  const declaration = source.slice(source.indexOf("function editableProfile("), source.indexOf("function profileKey("));
-  const code = ts.transpileModule(declaration, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
-  const editable = vm.runInNewContext(`${code}; editableProfile`);
-  // Profiles written before the setting existed have no value: code mode stays disabled.
-  assert.equal(editable({ name: "legacy", tools: [], loadSkills: false, loadExtensions: false }).codemode, "off");
-  // An explicit choice survives the draft, so duplicating a profile keeps it too.
-  for (const codemode of ["on", "off", "inherit"]) {
-    const draft = editable({ name: "reviewer", tools: [], loadSkills: false, loadExtensions: false, codemode });
-    assert.equal(draft.codemode, codemode);
-  }
-});
-
 test("a profile model's pi :level suffix names its base model; a listed colon id matches whole", () => {
   const constant = source.slice(source.indexOf("const THINKING_OPTIONS"), source.indexOf("\n", source.indexOf("const THINKING_OPTIONS")));
   const declaration = source.slice(source.indexOf("function profileModelBase("), source.indexOf("function profileKey("));

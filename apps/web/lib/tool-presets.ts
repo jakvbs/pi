@@ -2,7 +2,7 @@ export interface ToolEntry {
   name: string;
   description: string;
   active: boolean;
-  /** Active, but left out of requests: the model calls it only from codemode scripts. */
+  /** Active, but left out of requests (a `prepareLoadout` hook's `hiddenDeclarations`). */
   declarationHidden?: boolean;
   parameters?: Record<string, unknown>;
   promptGuidelines?: string[];

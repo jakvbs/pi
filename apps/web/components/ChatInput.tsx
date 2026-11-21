@@ -25,7 +25,6 @@ import {
 } from "@/lib/file-fuzzy";
 import { getMarkdownListContinuation } from "@/lib/markdown-list-continuation";
 import { quoteSeparator } from "@/lib/quoted-selection";
-import { isBareMcpCommand, isBuiltinMcpCommand } from "@/lib/mcp-command";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { ImagePreview } from "./ImagePreview";
 import { DismissButton } from "./DismissButton";
@@ -366,14 +365,9 @@ export function canRunBuiltinSlashCommandWhileStreaming(message: string): boolea
   return getBuiltinSlashCommand(message)?.availableWhileStreaming === true;
 }
 
-/**
- * Whether a message sent while a run streams goes to the built-in handler
- * first: a built-in that may run then, or a bare `/mcp`, which opens
- * Settings › MCP when pi's built-in MCP extension owns it (useAgentSession)
- * and is otherwise sent as before.
- */
+/** Whether a message sent while a run streams goes to the built-in handler first: a built-in that may run then. */
 export function offersBuiltinSlashCommandWhileStreaming(message: string): boolean {
-  return canRunBuiltinSlashCommandWhileStreaming(message) || isBareMcpCommand(message);
+  return canRunBuiltinSlashCommandWhileStreaming(message);
 }
 
 export function isExactSlashCommand(message: string, command: SlashCommandPaletteItem): boolean {
@@ -383,15 +377,14 @@ export function isExactSlashCommand(message: string, command: SlashCommandPalett
 /**
  * Whether Enter on the highlighted palette entry submits the message rather
  * than completing it to "/name ": a built-in typed in full (while a run
- * streams, only one that may run then), or a bare `/mcp` on pi's built-in
- * `/mcp`, which opens Settings › MCP at once, as it does before the command
- * list has loaded. Every other extension command still takes a second Enter.
+ * streams, only one that may run then). Every extension command still takes a
+ * second Enter.
  */
 export function submitsSlashCommandOnEnter(message: string, command: SlashCommandPaletteItem, isStreaming: boolean): boolean {
   if (command.source === "builtin") {
     return isExactSlashCommand(message, command) && (!isStreaming || command.availableWhileStreaming === true);
   }
-  return isBuiltinMcpCommand(command) && isBareMcpCommand(message);
+  return false;
 }
 
 export const RUN_END_CLICK_GUARD_MS = 600;
@@ -1484,14 +1477,6 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
     };
     if (!attachedImages.length && onBuiltinCommand && canRunBuiltinSlashCommandWhileStreaming(msg)) {
       void runBuiltinCommand(msg);
-      return;
-    }
-    if (!attachedImages.length && onBuiltinCommand && isBareMcpCommand(msg)) {
-      // Settings › MCP opens when pi's built-in MCP extension owns /mcp; another
-      // extension's /mcp is queued as before. The composer is disabled meanwhile.
-      void runBuiltinCommand(msg).then((handled) => {
-        if (!handled) queue();
-      }, () => queue());
       return;
     }
     queue();

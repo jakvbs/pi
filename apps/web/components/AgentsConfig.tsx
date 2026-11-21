@@ -54,8 +54,6 @@ const EMPTY_PROFILE: EditableProfile = {
   tools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
   loadSkills: false,
   loadExtensions: false,
-  codemode: "off",
-  mcp: "off",
   promptMode: "append",
   inheritContext: false,
   runInBackground: false,
@@ -91,8 +89,6 @@ function editableProfile(profile: SubagentProfile): EditableProfile {
     loadSkills: profile.loadSkills,
     ...(profile.skills !== undefined ? { skills: [...profile.skills] } : {}),
     loadExtensions: profile.loadExtensions,
-    codemode: profile.codemode ?? "off",
-    mcp: profile.mcp ?? "off",
     ...(profile.extensions !== undefined ? { extensions: [...profile.extensions] } : {}),
     promptMode: profile.promptMode,
     ...(profile.model ? { model: profile.model } : {}),
@@ -273,7 +269,7 @@ export function AgentsConfig({
   // The model list follows the folder's trust: GET /api/models leaves out an
   // untrusted project's extensions, which can register providers. Trust can
   // change while this section stays mounted (hidden) in Settings, by trusting
-  // from Settings › MCP; a new decision loads the list again in place, keeping
+  // from the trust dialog; a new decision loads the list again in place, keeping
   // any profile draft.
   const trustKey = projectTrustReloadKey(trust);
   useEffect(() => {
@@ -401,7 +397,6 @@ export function AgentsConfig({
     setDraft((current) => ({ ...current, [key]: value }));
   };
   // As `buildSubagentPromptPlan()` decides: no tools, skills or extensions.
-  const chatOnlyDraft = draft.tools.length === 0 && !draft.loadSkills && !draft.loadExtensions;
 
   const toggleEnabled = async (enabled: boolean) => {
     if (creating) {
@@ -627,8 +622,6 @@ export function AgentsConfig({
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 20px" }}>
                       <Toggle label={t("agents.loadSkills")} disabled={disabled} checked={draft.loadSkills} onChange={(checked) => update("loadSkills", checked)} />
                       <Toggle label={t("agents.loadExtensions")} disabled={disabled} checked={draft.loadExtensions} onChange={(checked) => update("loadExtensions", checked)} />
-                      {/* A chat-only child cannot start with MCP on; the switch still turns it off. */}
-                      <Toggle label={t("agents.mcp")} disabled={disabled || (chatOnlyDraft && draft.mcp !== "on")} checked={draft.mcp === "on"} onChange={(checked) => update("mcp", checked ? "on" : "off")} />
                     </div>
                     {/* `skills:` and `extensions:` lists are edited in the profile file; show what they load. */}
                     {draft.loadSkills && draft.skills !== undefined && (
@@ -645,34 +638,6 @@ export function AgentsConfig({
                           : t("agents.extensionsNone")}
                       </span>
                     )}
-                    {!disabled && chatOnlyDraft ? (
-                      <span style={{ color: "var(--text-dim)", fontSize: 11, lineHeight: 1.4 }}>
-                        {t("agents.mcpChatOnly")}
-                      </span>
-                    ) : draft.mcp === "on" && (
-                      <span style={{ color: "var(--text-dim)", fontSize: 11, lineHeight: 1.4 }}>
-                        {t("agents.mcpHint")}
-                      </span>
-                    )}
-                  </Field>
-
-                  <Field label={t("agents.codemode")}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      <select
-                        aria-label={t("agents.codemode")}
-                        value={draft.codemode ?? "off"}
-                        disabled={disabled}
-                        onChange={(event) => update("codemode", event.target.value as EditableProfile["codemode"])}
-                        style={{ ...controlStyle, width: "auto", minWidth: 180, alignSelf: "flex-start" }}
-                      >
-                        <option value="inherit">{t("agents.codemode.inherit")}</option>
-                        <option value="on">{t("agents.codemode.on")}</option>
-                        <option value="off">{t("agents.codemode.off")}</option>
-                      </select>
-                      <span style={{ color: "var(--text-dim)", fontSize: 11, lineHeight: 1.4 }}>
-                        {t("agents.codemodeHint")}
-                      </span>
-                    </div>
                   </Field>
 
                   <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1.5fr) minmax(120px, 0.75fr) minmax(100px, 0.5fr)", gap: 12 }}>

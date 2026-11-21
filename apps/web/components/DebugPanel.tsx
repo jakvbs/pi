@@ -6,7 +6,6 @@ import { copyText } from "@/lib/clipboard";
 import type { DebugClientSession, DebugEventConnectionSnapshot, DebugSessionDetail, DebugSessionSummary, DebugSnapshotResponse } from "@/lib/debug-types";
 import type { SessionInfo, SubagentSessionStatus } from "@/lib/types";
 import { StatusIcon } from "./AgentSessionPanel";
-import { MCP_SESSION_STATE_KEYS } from "./mcp-config-helpers";
 import { sessionRowTitle } from "./SessionTree";
 import { FolderIcon, SpinnerIcon } from "./SidebarIcons";
 import {
@@ -47,7 +46,6 @@ import {
   groupDebugSessions,
   holderGroupLabel,
   joinParts as join,
-  mcpServerTone,
   nextLeaseRenewalAt,
   pageAgentStreamCount,
   poolSlots,
@@ -1143,7 +1141,7 @@ function detailStatus(detail: DebugSessionDetail): DebugStatusState {
 
 /**
  * What the server holds for the chat beyond its row: its id and marks, the run's chips, its start
- * and last event and command, its subagents and MCP servers. The row above has its state, holders
+ * and last event and command, and its subagents. The row above has its state, holders
  * and reap countdown.
  */
 function SessionDetail({ detail, clock, ctx, unlisted = false }: { detail: DebugSessionDetail; clock: DebugServerClock; ctx: Ctx; unlisted?: boolean }) {
@@ -1178,7 +1176,6 @@ function SessionDetail({ detail, clock, ctx, unlisted = false }: { detail: Debug
         {activity && <span className="debug-line">{activity}</span>}
       </div>
       {live && <CardSubagents detail={detail} clock={clock} ctx={ctx} />}
-      {live && <CardMcp detail={detail} clock={clock} ctx={ctx} />}
     </div>
   );
 }
@@ -1266,7 +1263,7 @@ function RunChips({ detail, t }: { detail: DebugSessionDetail; t: Translate }) {
   const warnChips = [
     run.pendingPrompts > 0 && t("debug.run.pending", { count: run.pendingPrompts }),
     run.retrying && t("debug.run.retrying"),
-    run.waitingForMcp && t("debug.run.waitingForMcp"),
+    run.waitingToStart && t("debug.run.waitingToStart"),
     wrapper.awaitingInput && wrapper.pendingUiRequests > 0 && t("debug.server.uiRequests", { count: wrapper.pendingUiRequests }),
     wrapper.awaitingInput && wrapper.customUis > 0 && t("debug.server.customUis", { count: wrapper.customUis }),
   ].filter((chip): chip is string => Boolean(chip));
@@ -1319,7 +1316,7 @@ function CardSubagents({ detail, clock, ctx }: { detail: DebugSessionDetail; clo
             ])}
           </span>
           {run.abortRequested && <Chip tone="warning">{t("debug.server.abortRequested")}</Chip>}
-          {run.mcpWaiting && <Chip tone="warning">{t("debug.run.waitingForMcp")}</Chip>}
+          {run.waitingToStart && <Chip tone="warning">{t("debug.run.waitingToStart")}</Chip>}
         </div>
       ))}
       {subagents.notifications.map((notification, index) => (
@@ -1330,48 +1327,6 @@ function CardSubagents({ detail, clock, ctx }: { detail: DebugSessionDetail; clo
           ])}
         </div>
       ))}
-    </div>
-  );
-}
-
-function CardMcp({ detail, clock, ctx }: { detail: DebugSessionDetail; clock: DebugServerClock; ctx: Ctx }) {
-  const { t } = ctx;
-  const mcp = detail.mcp;
-  if (!mcp || (mcp.servers.length === 0 && mcp.problems === 0)) return null;
-  const release = mcp.idleReleaseAt !== null && mcp.idleMs > 0 ? clock.remaining(mcp.idleReleaseAt) : null;
-  return (
-    <div className="debug-block">
-      <div className="debug-pills">
-        <span className={`debug-subhead${mcp.active ? "" : " is-dim"}`}>MCP</span>
-        {mcp.servers.map((mcpServer, index) => {
-          const { tone, filled } = mcpServerTone(mcpServer);
-          const stateWord = translateDebugCode(mcpServer.state, MCP_SESSION_STATE_KEYS, t);
-          const label = join([
-            `${mcpServer.name} (${mcpServer.scope})`,
-            stateWord,
-            mcpServer.released && t("debug.server.mcpReleased"),
-            mcpServer.hasError && t("debug.server.mcpError"),
-          ]);
-          // Any state but connected also in words, and an error on a connected one: the dot's
-          // amber and red alone are a hue.
-          const word = mcpServer.state !== "connected" ? stateWord : mcpServer.hasError ? t("debug.server.mcpError") : null;
-          return (
-            <span key={`${mcpServer.scope}:${mcpServer.name}:${index}`} className="debug-pill" role="img" aria-label={label} title={label}>
-              <Dot tone={tone} ring={!filled} />
-              <span className={mcpServer.released ? "is-dim" : undefined}>{mcpServer.name}</span>
-              {word && <span className="debug-pill-state">{`· ${word}`}</span>}
-            </span>
-          );
-        })}
-        {mcp.problems > 0 && <Chip tone="warning">{t("debug.server.mcpProblems", { count: mcp.problems })}</Chip>}
-        {mcp.disposed && <Chip tone="dim">{t("debug.server.mcpDisposed")}</Chip>}
-      </div>
-      {release !== null && (
-        <div className="debug-idle-row">
-          <Bar fraction={barFraction(release, mcp.idleMs) ?? 0} tone="dim" width={80} />
-          <span className="debug-value is-muted">{t("debug.server.mcpRelease", { time: formatCountdown(release, t) })}</span>
-        </div>
-      )}
     </div>
   );
 }

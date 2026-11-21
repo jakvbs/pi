@@ -6,8 +6,6 @@ import test from "node:test";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
-  createCodemodeExtension,
-  createToolSearchExtension,
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
@@ -39,18 +37,39 @@ const lookupExtension = {
   },
 };
 
-// On reload it swaps the discovery tools, as the MCP extension does when exposures change.
+// Two extension tools that register with `defaultActive: false`.
+function inactiveTool(name) {
+  return {
+    name,
+    label: name,
+    description: `${name}, registered inactive`,
+    parameters: { type: "object", properties: {} },
+    defaultActive: false,
+    async execute() {
+      return { content: [{ type: "text", text: name }], details: undefined };
+    },
+  };
+}
+
+const inactiveExtension = {
+  name: "inactive",
+  factory: (pi) => {
+    pi.registerTool(inactiveTool("alpha"));
+    pi.registerTool(inactiveTool("beta"));
+  },
+};
+
+// On reload it swaps the two inactive tools.
 const reloadSwitchExtension = {
   name: "reload-switch",
   factory: (pi) => {
     pi.on("session_start", (event) => {
       if (event.reason !== "reload") return;
-      pi.setActiveTools([...pi.getActiveTools().filter((name) => name !== "tool_search"), "codemode"]);
+      pi.setActiveTools([...pi.getActiveTools().filter((name) => name !== "beta"), "alpha"]);
     });
   },
 };
 
-// pi's own codemode and tool_search, which register with `defaultActive: false`.
 async function createSession(dir, settings = {}, extensionFactories = []) {
   const faux = fauxProvider({ models: [{ id: "faux-tools" }] });
   const modelRuntime = await ModelRuntime.create({
@@ -64,7 +83,7 @@ async function createSession(dir, settings = {}, extensionFactories = []) {
     cwd: dir,
     agentDir: dir,
     settingsManager,
-    extensionFactories: [createCodemodeExtension(), createToolSearchExtension(), lookupExtension, ...extensionFactories],
+    extensionFactories: [inactiveExtension, lookupExtension, ...extensionFactories],
     noExtensions: true,
     noSkills: true,
     noPromptTemplates: true,
@@ -88,7 +107,7 @@ function sorted(names) {
   return [...names].sort();
 }
 
-test("a pinned preset neither activates codemode nor drops the one defaultTools adds", async () => {
+test("a pinned preset neither activates an inactive tool nor drops the one defaultTools adds", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-web-tool-activation-"));
   try {
     const plain = await createSession(dir);
@@ -100,14 +119,14 @@ test("a pinned preset neither activates codemode nor drops the one defaultTools 
     );
     plain.session.dispose();
 
-    const withCodemode = await createSession(dir, { defaultTools: ["+codemode"] });
-    const initialWithCodemode = withCodemode.session.getActiveToolNames();
-    assert.ok(initialWithCodemode.includes("codemode"));
+    const withAlpha = await createSession(dir, { defaultTools: ["+alpha"] });
+    const initialWithAlpha = withAlpha.session.getActiveToolNames();
+    assert.ok(initialWithAlpha.includes("alpha"));
     assert.deepEqual(
-      sorted(resolveActiveToolNames(withCodemode.session, READ_ONLY, initialWithCodemode)),
-      ["codemode", "find", "grep", "lookup", "ls", "read"],
+      sorted(resolveActiveToolNames(withAlpha.session, READ_ONLY, initialWithAlpha)),
+      ["alpha", "find", "grep", "lookup", "ls", "read"],
     );
-    withCodemode.session.dispose();
+    withAlpha.session.dispose();
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -133,7 +152,7 @@ test("Pi Web's bash is active only when named, as pi's built-in bash is (#1235)"
 
     for (const [defaultTools, expected] of [
       [["read"], ["lookup", "read"]],
-      [["codemode"], ["codemode", "lookup"]],
+      [["alpha"], ["alpha", "lookup"]],
       [["-bash"], ["edit", "lookup", "read", "write"]],
     ]) {
       const { session } = await createSession(dir, { defaultTools }, [hostBashExtension(dir)]);
@@ -181,63 +200,7 @@ test("with PowerShell switched on, the active powershell is Pi Web's sanitizing 
   }
 });
 
-// Like an MCP server's tool when only scripts reach it.
-const scriptedMcpExtension = {
-  name: "scripted-mcp",
-  factory: (pi) => {
-    pi.registerTool({
-      name: "mcp__docs__search",
-      label: "search",
-      description: "search the docs",
-      parameters: { type: "object", properties: { query: { type: "string" } } },
-      exposure: "codemode",
-      namespace: { name: "mcp__docs", description: "the docs server" },
-      async execute() {
-        return { content: [{ type: "text", text: "found" }], details: undefined };
-      },
-    });
-  },
-};
-
-test("get_tools reports codemode's description as declared, with the tools scripts can call", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "pi-web-tool-descriptions-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const { session } = await createSession(dir, { defaultTools: ["+codemode"] }, [scriptedMcpExtension]);
-  const wrapper = new AgentSessionWrapper(session);
-  t.after(() => wrapper.destroy());
-
-  const tools = await wrapper.send({ type: "get_tools" });
-  const codemode = tools.find((tool) => tool.name === "codemode");
-
-  assert.equal(codemode.active, true);
-  assert.equal(codemode.description, session.agent.state.tools.find((tool) => tool.name === "codemode").description);
-  assert.notEqual(codemode.description, session.getToolDefinition("codemode").description);
-  // Each namespace is a heading with its summary; pi no longer counts its tools there.
-  assert.match(codemode.description, /## mcp__docs\nthe docs server/);
-  assert.match(codemode.description, /search the docs/);
-});
-
-test("get_tools marks the active tools codemode's only mode leaves out of requests", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "pi-web-tool-hidden-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const hiddenNames = async (settings) => {
-    const { session } = await createSession(dir, settings);
-    const wrapper = new AgentSessionWrapper(session);
-    t.after(() => wrapper.destroy());
-    const tools = await wrapper.send({ type: "get_tools" });
-    assert.ok(tools.find((tool) => tool.name === "codemode").active);
-    return sorted(tools.filter((tool) => tool.declarationHidden).map((tool) => tool.name));
-  };
-
-  // Still active, so presets and scripts see them; only their declarations are withheld.
-  assert.deepEqual(
-    await hiddenNames({ defaultTools: ["+codemode"], codemode: { mode: "only" } }),
-    ["bash", "edit", "lookup", "read", "write"],
-  );
-  assert.deepEqual(await hiddenNames({ defaultTools: ["+codemode"] }), []);
-});
-
-test("navigating to an older branch keeps the Read-only pin and codemode", async () => {
+test("navigating to an older branch keeps the Read-only pin", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-web-tool-navigation-"));
   const { session, faux } = await createSession(dir);
   const wrapper = new AgentSessionWrapper(session);
@@ -251,14 +214,12 @@ test("navigating to an older branch keeps the Read-only pin and codemode", async
 
     appendSessionToolSelection(session.sessionManager, READ_ONLY);
     wrapper.setActiveToolSelection(READ_ONLY);
-    // Activated at runtime, as the MCP extension does when a server connects.
-    session.setActiveToolsByName([...session.getActiveToolNames(), "codemode"]);
     await session.prompt("second");
     const secondLeafId = session.sessionManager.getLeafId();
-    const pinnedTools = ["codemode", "find", "grep", "lookup", "ls", "read"];
+    const pinnedTools = ["find", "grep", "lookup", "ls", "read"];
     assert.deepEqual(sorted(session.getActiveToolNames()), pinnedTools);
 
-    // On its own, pi restores the older branch's loadout: write is back and codemode is gone.
+    // On its own, pi restores the older branch's loadout: write is back.
     await session.navigateTree(firstLeafId, {});
     assert.deepEqual(sorted(session.getActiveToolNames()), ["bash", "edit", "lookup", "read", "write"]);
     await session.navigateTree(secondLeafId, {});
@@ -284,13 +245,13 @@ test("reload keeps the pinned coding tools and what extensions chose while they 
     wrapper.beginExtensionBinding();
     await wrapper.waitUntilReady();
     wrapper.setActiveToolSelection(READ_ONLY);
-    session.setActiveToolsByName([...session.getActiveToolNames(), "tool_search"]);
-    assert.deepEqual(sorted(session.getActiveToolNames()), ["find", "grep", "lookup", "ls", "read", "tool_search"]);
+    session.setActiveToolsByName([...session.getActiveToolNames(), "beta"]);
+    assert.deepEqual(sorted(session.getActiveToolNames()), ["beta", "find", "grep", "lookup", "ls", "read"]);
 
     assert.deepEqual(await wrapper.send({ type: "reload" }), { success: true });
 
-    // The extension switched tool_search off and codemode on; the pin still holds.
-    assert.deepEqual(sorted(session.getActiveToolNames()), ["codemode", "find", "grep", "lookup", "ls", "read"]);
+    // The extension switched beta off and alpha on; the pin still holds.
+    assert.deepEqual(sorted(session.getActiveToolNames()), ["alpha", "find", "grep", "lookup", "ls", "read"]);
   } finally {
     wrapper.destroy();
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;

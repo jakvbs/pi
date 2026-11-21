@@ -33,7 +33,6 @@ import { setupPushSubscription } from "@/lib/push-client";
 import { SkillsConfig } from "./SkillsConfig";
 import { AgentsConfig } from "./AgentsConfig";
 import { PluginsConfig } from "./PluginsConfig";
-import { McpConfig } from "./McpConfig";
 import { ConfigButton, ConfigDetailNavigationContext, ConfigSwitch, type ConfigDetailNavigation } from "./SettingsUi";
 import { FontSettings } from "./FontSettings";
 import { readJsonOrThrow } from "@/lib/fetch-json";
@@ -48,12 +47,8 @@ interface Props {
   onSessionReloaded: () => void;
   quoteSelectionEnabled: boolean;
   onQuoteSelectionChange: (enabled: boolean) => void;
-  /** The page's trust status for `cwd`; Settings › MCP reloads when it changes, as after trusting. */
+  /** The page's trust status for `cwd`; trust-dependent sections reload when it changes, as after trusting. */
   projectTrust?: ProjectTrustStatus | null;
-  /** Opens the page's trust dialog for `cwd`, above Settings; Settings › MCP's trust notice offers it. */
-  onOpenTrustDialog?: () => void;
-  /** Settings › MCP added a project server, which changed `cwd`'s trust (and may have trusted a fresh folder). */
-  onProjectTrustChanged?: (cwd: string, status: ProjectTrustStatus) => void;
 }
 
 export function SettingsSectionIcon({ section, size = 16, strokeWidth = 1.8 }: { section: SettingsSection; size?: number; strokeWidth?: number }) {
@@ -74,7 +69,6 @@ export function SettingsSectionIcon({ section, size = 16, strokeWidth = 1.8 }: {
   if (section === "models") return <svg {...common}><rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3" /></svg>;
   if (section === "skills") return <svg {...common}><path d="m12 2-10 5 10 5 10-5-10-5Z" /><path d="m2 12 10 5 10-5M2 17l10 5 10-5" /></svg>;
   if (section === "agents") return <svg {...common} className="settings-section-icon is-agent"><rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" /></svg>;
-  if (section === "mcp") return <svg {...common}><rect x="3" y="3" width="18" height="7" rx="2" /><rect x="3" y="14" width="18" height="7" rx="2" /><path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6" /></svg>;
   return <svg {...common}><path d="M9 7V2M15 7V2M6 13V8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v5a6 6 0 0 1-12 0ZM12 19v3" /></svg>;
 }
 
@@ -667,8 +661,6 @@ export function SettingsPanel({
   quoteSelectionEnabled,
   onQuoteSelectionChange,
   projectTrust,
-  onOpenTrustDialog,
-  onProjectTrustChanged,
 }: Props) {
   const { t } = useI18n();
   const [section, setSection] = useState<SettingsSection>(initialSection);
@@ -682,7 +674,6 @@ export function SettingsPanel({
     { id: "skills", label: t("common.skills") },
     { id: "agents", label: t("common.agents") },
     { id: "plugins", label: t("common.plugins") },
-    { id: "mcp", label: t("settings.mcp") },
   ] as const).map((item) => ({ ...item, requiresProject: settingsSectionRequiresProject(item.id) }));
   const sectionRequiresProject = settingsSectionRequiresProject(section);
   const isPhone = useIsMobile();
@@ -726,7 +717,7 @@ export function SettingsPanel({
   useEffect(() => listenForPanelEscape(document, onClose), [onClose]);
 
   // Focus moves into Settings as it opens and back to what had it once it closes. Left
-  // on the chat composer (a bare /mcp opens Settings from there), Escape would reach the
+  // on the chat composer, Escape would reach the
   // composer first and stop a running agent, which also kept Settings open. A layout
   // effect, so the opener is read before a section focuses its own search box.
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -863,12 +854,10 @@ export function SettingsPanel({
           {sectionHost("general", <GeneralSettings sessionId={sessionId} onSessionReloaded={onSessionReloaded} quoteSelectionEnabled={quoteSelectionEnabled} onQuoteSelectionChange={onQuoteSelectionChange} />)}
           {sectionHost("models", <ModelsConfig embedded cwd={cwd} onClose={onClose} />)}
           {/* Visited sections stay mounted, so the ones whose answer depends on trust take the page's
-              status and load again in place when trusting from Settings › MCP changes it. */}
+              status and load again in place when trusting changes it. */}
           {cwd && sectionHost("skills", <SkillsConfig embedded key={cwd} cwd={cwd} trust={projectTrust} onClose={onClose} />)}
           {cwd && sectionHost("agents", <AgentsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} trust={projectTrust} onClose={onClose} onReloaded={onSessionReloaded} />)}
           {cwd && sectionHost("plugins", <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} trust={projectTrust} onClose={onClose} onReloaded={onSessionReloaded} />)}
-          {/* No project needed: the global mcp.json is listed alone, and a project adds its group. */}
-          {sectionHost("mcp", <McpConfig embedded key={cwd ?? ""} cwd={cwd} trust={projectTrust} onTrustProject={onOpenTrustDialog} onProjectTrustChanged={onProjectTrustChanged} onClose={onClose} />)}
           </ConfigDetailNavigationContext.Provider>
         </main>
       </div>

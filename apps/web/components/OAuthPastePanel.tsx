@@ -52,7 +52,7 @@ export function OAuthPastePanel({
   /** The box's accessible name, when the placeholder alone would be its only label. */
   inputLabel?: string;
   disabled?: boolean;
-  /** False: a plain Enter does nothing, and Cmd/Ctrl+Enter or the button submits, as in Settings › MCP's paste boxes. */
+  /** False: a plain Enter does nothing, and Cmd/Ctrl+Enter or the button submits. */
   plainEnterSubmits?: boolean;
   inputRef?: Ref<HTMLInputElement>;
   onValueChange: (value: string) => void;

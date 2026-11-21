@@ -137,9 +137,9 @@ function waitTimeoutText(run: SubagentRunInfo | undefined, sessionId: string, ti
 }
 /**
  * The control tools are declared to the model and activated on registration like `direct` tools,
- * but pi never lets another tool call a `model-only` tool through `ctx.executeTool()`, so a
- * codemode script cannot start, collect, or steer a subagent. A run started from a script would
- * record the nested call id (`<codemode call>/<n>`) as its `parentToolCallId`, which no transcript
+ * but pi never lets another tool call a `model-only` tool through `ctx.executeTool()`, so another
+ * tool cannot start, collect, or steer a subagent. A run started from a tool would record the
+ * nested call id (`<parent call>/<n>`) as its `parentToolCallId`, which no transcript
  * entry carries, so the chat would lose the link to the child session.
  */
 const SUBAGENT_TOOL_EXPOSURE = "model-only" satisfies ToolExposure;

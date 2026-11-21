@@ -13,12 +13,12 @@ const SUBAGENT_TOOL_NAMES: ReadonlyArray<typeof SUBAGENT_CONTROL_TOOL_NAMES[numb
 const CODING_TOOL_NAMES = new Set<string>(["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"]);
 
 // Tools whose result text may authorize a path it mentions: the coding tools and Pi
-// Web's subagent tools. Every other result (MCP, codemode, third-party extensions)
-// relays text a remote party controls.
+// Web's subagent tools. Every other result (third-party extensions) relays text a
+// remote party controls.
 const PATH_REPORTING_TOOL_NAMES = new Set<string>([...CODING_TOOL_NAMES, ...SUBAGENT_TOOL_NAMES]);
 
-// The codemode extension's script store (`CODEMODE_STORE_ENTRY_TYPE` in the SDK): values a
-// script saved, often straight from MCP results.
+// The script store of the removed codemode extension, in sessions written before its
+// removal: values a script saved, often straight from remote results.
 const CODEMODE_STORE_ENTRY_TYPE = "codemode-store";
 
 const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -96,8 +96,8 @@ function recordField(value: unknown, key: string): unknown {
  * the file its full output was spilled to, and the arguments of the coding-tool
  * calls it made through `ctx.executeTool()` (the SDK's `nestedCalls` record), the
  * files and commands the run actually operated on. Its other nested calls are left
- * out: script code passes one MCP result straight into the next MCP call without
- * the model reading it, so their arguments are as remote-controlled as the result.
+ * out: a tool can pass one remote result straight into the next call without the
+ * model reading it, so their arguments are as remote-controlled as the result.
  */
 function collectUntrustedToolResultStrings(message: ToolResultMessage, out: string[]): void {
   const fullOutputPath = recordField(message.details, "fullOutputPath");

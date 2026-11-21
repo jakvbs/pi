@@ -221,9 +221,9 @@ test("navigating the tree re-applies the pinned selection over the branch's rest
 
   assert.deepEqual(await made.wrapper.send({ type: "navigate_tree", targetId: "older" }), { cancelled: false });
 
-  // Read-only stays read-only, codemode stays on, and a tool loaded on the other branch is not.
+  // Read-only stays read-only, and a tool loaded on only one of the branches is not kept.
   // Survivors keep their carried positions; the added coding tools go last.
-  assert.deepEqual(made.state.active, ["read", "lookup", "codemode", "grep", "find", "ls"]);
+  assert.deepEqual(made.state.active, ["read", "lookup", "grep", "find", "ls"]);
 });
 
 test("navigating an unpinned session keeps the branch's restored tools", async (t) => {
@@ -238,7 +238,7 @@ test("navigating an unpinned session keeps the branch's restored tools", async (
 
   await made.wrapper.send({ type: "navigate_tree", targetId: "older" });
 
-  assert.deepEqual(made.state.active, ["read", "bash", "lookup", "scripted", "tool_search"]);
+  assert.deepEqual(made.state.active, ["read", "bash", "lookup", "scripted"]);
 });
 
 test("navigation keeps the order pi restored when the set is the same", async (t) => {

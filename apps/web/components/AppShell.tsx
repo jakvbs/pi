@@ -73,7 +73,7 @@ import {
   SIDEBAR_MIN_WIDTH,
 } from "@/lib/panel-layout";
 import type { BlockingExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
-import type { McpErrorResponse, ProjectTrustStatus } from "@/lib/api-types";
+import type { RouteErrorResponse, ProjectTrustStatus } from "@/lib/api-types";
 import type { ChatInputHandle } from "./ChatInput";
 import type { AgentEndInfo, NewSessionChoices } from "@/hooks/useAgentSession";
 import type { SessionStatsInfo } from "@/lib/pi-types";
@@ -504,7 +504,6 @@ export function AppShell() {
     setActiveTopPanel("session");
   }, [isMobile]);
 
-  // The composer opens Settings too: a bare /mcp opens Settings › MCP (useAgentSession).
   const openSettingsSection = useCallback((section: SettingsSection) => {
     setSettingsOpenAtHome(false);
     setSettingsSection(section);
@@ -1589,8 +1588,6 @@ export function AppShell() {
     if (!projectTrustCwd) return;
 
     const controller = new AbortController();
-    // The answer also lists the project's MCP servers (`mcpFile`, `mcpServers`), unused here: the
-    // trust dialog fetches the listing again when it opens, since the file can change in between.
     fetch(`/api/project-trust?cwd=${encodeURIComponent(projectTrustCwd)}`, {
       signal: controller.signal,
     })
@@ -1615,7 +1612,7 @@ export function AppShell() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: projectTrustCwd }),
       });
-      const data = await response.json() as ProjectTrustStatus & Partial<McpErrorResponse>;
+      const data = await response.json() as ProjectTrustStatus & Partial<RouteErrorResponse>;
       if (!response.ok || data.error) {
         // The dialog translates the reason; the English error is only its diagnostic.
         setProjectTrustError({ error: data.error ?? `HTTP ${response.status}`, ...(data.reason ? { reason: data.reason } : {}) });
@@ -1632,18 +1629,11 @@ export function AppShell() {
     }
   }, [projectTrustBusy, projectTrustCwd]);
 
-  // The restricted-mode banner and Settings › MCP's trust notice open the same dialog.
+  // The restricted-mode banner opens the trust dialog.
   const openProjectTrustDialog = useCallback(() => {
     setProjectTrustError(null);
     setProjectTrustDialogOpen(true);
   }, []);
-
-  // Settings › MCP added a project server: `.pi/mcp.json` alone makes a folder require trust, and a
-  // fresh folder was trusted in the same step. Every mounted section reloads in place on the new
-  // status (projectTrustReloadKey); nothing was rebuilt, so the chat needs no new session key.
-  const handleProjectTrustChanged = useCallback((cwd: string, status: ProjectTrustStatus) => {
-    if (cwd === projectTrustCwd) setProjectTrust(status);
-  }, [projectTrustCwd]);
 
   const activeFileTab = fileTabs.find((tab) => tab.id === activeFileTabId) ?? null;
   // Subagent work tabs: like files, only the active one is mounted.
@@ -3191,11 +3181,9 @@ export function AppShell() {
         }}
         onSessionReloaded={() => setSessionKey((key) => key + 1)}
         projectTrust={projectTrust}
-        onOpenTrustDialog={openProjectTrustDialog}
-        onProjectTrustChanged={handleProjectTrustChanged}
       />
     )}
-    {/* After Settings, so it opens above it (z-index 1100 over 1000) when Settings › MCP asks for it. */}
+    {/* After Settings, so it opens above it (z-index 1100 over 1000). */}
     {projectTrustDialogOpen && projectTrustCwd && (
       <ProjectTrustDialog
         cwd={projectTrustCwd}

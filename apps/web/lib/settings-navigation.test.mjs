@@ -60,38 +60,22 @@ test("shares the models selection globally", () => {
   assert.equal(getLastSettingsSelection("models", null, storage), selection);
 });
 
-test("restores Settings › MCP without a project, since it lists the global file alone", () => {
-  const storage = createStorage();
-
-  setLastSettingsSection("mcp", storage);
-  assert.equal(getLastSettingsSection(null, storage), "mcp");
-  assert.equal(getLastSettingsSection("/project", storage), "mcp");
-  assert.ok(SETTINGS_SECTION_VALUES.includes("mcp"));
-  assert.equal(settingsSectionRequiresProject("mcp"), false);
+test("only the project sections need a project", () => {
   assert.equal(settingsSectionRequiresProject("models"), false);
   assert.equal(settingsSectionRequiresProject("general"), false);
   for (const section of ["skills", "agents", "plugins"]) {
     assert.equal(settingsSectionRequiresProject(section), true, section);
   }
+  // Settings › MCP is gone: a stored "mcp" section is not one any more.
+  assert.equal(SETTINGS_SECTION_VALUES.includes("mcp"), false);
 });
 
-test("keeps the MCP selection per project and once more for no project", () => {
+test("a project section remembers nothing without a project", () => {
   const storage = createStorage();
-
-  setLastSettingsSelection("mcp", "global\0github", null, storage);
-  setLastSettingsSelection("mcp", "project\0lint", "/project-one", storage);
-  setLastSettingsSelection("mcp", "codemode", "/project-two", storage);
-
-  assert.equal(getLastSettingsSelection("mcp", null, storage), "global\0github");
-  assert.equal(getLastSettingsSelection("mcp", undefined, storage), "global\0github");
-  assert.equal(getLastSettingsSelection("mcp", "/project-one", storage), "project\0lint");
-  assert.equal(getLastSettingsSelection("mcp", "/project-two", storage), "codemode");
-  assert.equal(getLastSettingsSelection("mcp", "/project-three", storage), null);
-  // A project section still remembers nothing without a project.
   setLastSettingsSelection("plugins", "key", null, storage);
   assert.equal(getLastSettingsSelection("plugins", null, storage), null);
-  // A folder literally named "mcp" cannot reach the no-project key.
-  assert.equal(getLastSettingsSelection("mcp", "mcp", storage), null);
+  setLastSettingsSelection("plugins", "key", "/project-one", storage);
+  assert.equal(getLastSettingsSelection("plugins", "/project-one", storage), "key");
 });
 
 test("ignores malformed and unavailable browser storage", () => {

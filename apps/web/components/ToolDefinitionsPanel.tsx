@@ -96,8 +96,7 @@ function EmptyState({ children }: { children: string }) {
 }
 
 export function ToolDefinitionsPanel({ loading, tools, translate }: Props) {
-  // What the model is sent: under codemode's "only" mode the active built-in tools are reached
-  // from scripts, and codemode's description lists them.
+  // What the model is sent: an active tool whose declaration a `prepareLoadout` hook hides is not.
   const declaredTools = useMemo(
     () => tools?.filter((tool) => tool.active && !tool.declarationHidden) ?? null,
     [tools],

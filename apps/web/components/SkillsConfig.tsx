@@ -691,8 +691,8 @@ export function SkillsConfig({
   }, [cwd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Whether the project's skills load follows its trust, which can change while
-  // this section stays mounted (hidden) in Settings: trusting from Settings ›
-  // MCP. A new decision loads the list again in place, keeping the selection and
+  // this section stays mounted (hidden) in Settings: trusting from the trust
+  // dialog. A new decision loads the list again in place, keeping the selection and
   // any update checks; the first load is the effect above.
   const trustKey = projectTrustReloadKey(trust);
   const loadedTrustKeyRef = useRef(trustKey);

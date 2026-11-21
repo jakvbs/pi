@@ -1,6 +1,6 @@
 /**
  * Escape and focus for dialogs that can open above another one, such as the
- * trust dialog opened from Settings › MCP. Settings closes on an Escape that
+ * trust dialog opened above Settings. Settings closes on an Escape that
  * reaches `document` in the bubble phase unhandled; a dialog above it takes the
  * key in the capture phase on `document`, which runs before every bubble-phase
  * listener on the way (the focused element's, Settings' own, and the
@@ -126,7 +126,7 @@ function entersText(element: Opener): boolean {
  * Focus for a modal panel that opens over the page, such as Settings. Focus
  * moves to the panel itself when it opens, unless something inside it has it
  * already (an `autoFocus` field). An opener left focused behind the modal keeps
- * getting its keys: the chat composer a bare `/mcp` opens Settings from would
+ * getting its keys: the chat composer Settings was opened from would
  * take Escape as Stop while a run streams, so Settings stayed open, and on a
  * phone its software keyboard stayed up over Settings. Call it from a layout
  * effect, which runs before the panel's sections focus their own search boxes
@@ -167,9 +167,8 @@ export interface FocusDocument {
 /**
  * Moves focus to `target` when the element that had it left the page, so focus
  * fell back to `body` (or nowhere): a control that went away under the
- * keyboard, such as Settings › MCP's Trust… button, which the trust dialog
- * hands focus back to on close and the panel's reload then removes with its
- * notice. Focus anywhere else is where the user put it, and stays. Returns
+ * keyboard, such as a button the trust dialog hands focus back to on close
+ * and a panel's reload then removes. Focus anywhere else is where the user put it, and stays. Returns
  * whether it moved focus.
  */
 export function focusIfLost(doc: FocusDocument, target: Focusable | null): boolean {
@@ -187,7 +186,7 @@ export interface PressedControl extends Focusable {
 
 /**
  * Focus after a change whose control was disabled while it ran, such as a
- * switch in Settings › MCP: a focused element that becomes disabled loses
+ * switch in a Settings section: a focused element that becomes disabled loses
  * focus (the HTML focus-fixup rule drops it to `body`), so a keyboard user
  * would land on the page behind the panel. Focus goes back to that control,
  * or to `fallback` when the control left the page or is disabled still (a

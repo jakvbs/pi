@@ -67,12 +67,7 @@ function openStream(t, sessionId, holder, { connect = true, client = {} } = {}) 
  */
 async function serverWithState(t) {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: NOW });
-  const mcpState = { active: true, disposed: false, runActive: false, idleMs: 300_000, idleReleaseAt: null, servers: [], problems: 0 };
-  const mcp = { state: mcpState };
-  const wrapperA = new AgentSessionWrapper(makeInner("debug-a", { sessionFile: SESSION_FILE }), {
-    mcpHost: { prepareForPrompt: async () => true, dispose() {}, debugSnapshot: () => mcp.state() },
-  });
-  mcp.state = () => mcpState;
+  const wrapperA = new AgentSessionWrapper(makeInner("debug-a", { sessionFile: SESSION_FILE }), {});
   const wrapperSub = new AgentSessionWrapper(makeInner("debug-sub"), { suppressCompletionNotifications: true });
   t.after(() => { wrapperA.destroy(); wrapperSub.destroy(); });
   wrapperA.start();
@@ -129,7 +124,7 @@ async function serverWithState(t) {
   openStream(t, "debug-stream-only", undefined, { connect: false });
   // A subagent's stream, its wrapper already closed.
   openStream(t, "debug-child", "page-3", { connect: false });
-  return { asked, mcp };
+  return { asked };
 }
 
 test("the global layer and one summary per session with a wrapper or a stream", async (t) => {
@@ -207,7 +202,7 @@ test("a fresh composer's start whose wrapper is registered under pi's id counts 
   assert.deepEqual(buildDebugSnapshot(null, NOW).server.wrappers, { alive: 0, closing: 0, starting: 1 });
 });
 
-test("the selected session's detail: its wrapper, providers asked, streams, subagents and MCP", async (t) => {
+test("the selected session's detail: its wrapper, providers asked, streams and subagents", async (t) => {
   const { asked } = await serverWithState(t);
   const { session } = buildDebugSnapshot("debug-a", NOW);
 
@@ -236,11 +231,10 @@ test("the selected session's detail: its wrapper, providers asked, streams, suba
       resumed: false,
       dispatchedAt: NOW - 1_000,
       abortRequested: false,
-      mcpWaiting: false,
+      waitingToStart: false,
     }],
     notifications: [],
   });
-  assert.deepEqual(session.mcp, { active: true, disposed: false, runActive: false, idleMs: 300_000, idleReleaseAt: null, servers: [], problems: 0 });
 });
 
 test("a session the server holds nothing for gets an empty detail", async (t) => {
@@ -254,20 +248,17 @@ test("a session the server holds nothing for gets an empty detail", async (t) =>
     providers: [],
     eventStreams: [],
     subagents: { active: false, runs: [], notifications: [] },
-    mcp: null,
   });
   assert.ok(!snapshot.sessions.some((summary) => summary.sessionId === "debug-unknown"));
 });
 
 test("a source that throws reads as empty and the rest still answers", async (t) => {
-  const { mcp } = await serverWithState(t);
-  mcp.state = () => { throw new Error("host broken"); };
+  await serverWithState(t);
   swapGlobal(t, "__piWebTerminals", new Map([["terminal-1", { get listeners() { throw new Error("record broken"); } }]]));
   swapGlobal(t, "__piSubagentRuns", new Map([["debug-broken", { run: null }]]));
 
   const snapshot = buildDebugSnapshot("debug-a", NOW);
   assert.deepEqual(snapshot.server.terminals, { count: 0, listeners: 0, detached: 0, exited: 0, nextCleanupAt: null });
-  assert.equal(snapshot.session.mcp, null);
   assert.deepEqual(snapshot.session.subagents, { active: false, runs: [], notifications: [] });
   assert.equal(snapshot.session.wrapper.sessionId, "debug-a");
   assert.equal(snapshot.server.wrappers.alive, 2);

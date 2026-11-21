@@ -106,7 +106,6 @@ test("only an answer of the snapshot's shape is rendered", () => {
     providers: null,
     eventStreams: [],
     subagents: { active: false, runs: [], notifications: [] },
-    mcp: null,
   };
   assert.equal(state.isDebugSnapshotResponse(snapshot({ session: detail })), true);
   for (const broken of [
@@ -118,7 +117,6 @@ test("only an answer of the snapshot's shape is rendered", () => {
     snapshot({ session: undefined }),
     snapshot({ session: { ...detail, eventStreams: null } }),
     snapshot({ session: { ...detail, wrapper: { state: "alive" } } }),
-    snapshot({ session: { ...detail, mcp: { servers: "x" } } }),
     snapshot({ server: { ...snapshot().server, pages: undefined } }),
     snapshot({ server: { ...snapshot().server, sseTotal: "1" } }),
   ]) {
@@ -217,7 +215,7 @@ function wrapper(extra = {}) {
   return {
     sessionId: "s1", state: "alive", stale: false, subagent: false, chatOnly: false,
     createdAt: SERVER - 6 * MINUTE, startedAt: SERVER - 6 * MINUTE, closingAt: null, extensions: "bound",
-    run: { running: false, streaming: false, promptRunning: false, pendingPrompts: 0, bashRunning: false, compacting: false, retrying: false, queuedMessages: 0, waitingForMcp: false, runningTools: 0, mutatingCommands: 0, replacement: null },
+    run: { running: false, streaming: false, promptRunning: false, pendingPrompts: 0, bashRunning: false, compacting: false, retrying: false, queuedMessages: 0, waitingToStart: false, runningTools: 0, mutatingCommands: 0, replacement: null },
     idle: { timeoutMs: 10 * MINUTE, nextCheckAt: SERVER + 8 * MINUTE, lastResetAt: null, forcedByStop: false },
     awaitingInput: false, pendingUiRequests: 0, customUis: 0, eventListeners: 1, lastEvent: null, lastCommand: null,
     ...extra,
@@ -233,7 +231,6 @@ function detail(extra = {}) {
     providers: [],
     eventStreams: [{ holder: MINE, openedAt: SERVER - 5 * MINUTE, connectedAt: SERVER - 5 * MINUTE, lastWriteAt: null, droppedEvents: 0, queuedBytes: 0 }],
     subagents: { active: false, runs: [], notifications: [] },
-    mcp: null,
     ...extra,
   };
 }
@@ -298,14 +295,6 @@ const ISSUE_CASES = [
     { id: "extensions", tone: "error", text: "Extensions · failed" }],
   ["a liveness provider threw", { detail: { providers: [{ name: "keepalive", active: "error", byFile: false }, { name: "fine", active: true, byFile: false }] } },
     { id: "provider", tone: "error", text: "keepalive · error" }],
-  ["an MCP server did not connect", {
-    detail: {
-      mcp: {
-        active: true, disposed: false, runActive: false, idleMs: 0, idleReleaseAt: null, problems: 0,
-        servers: [{ name: "github", scope: "global", state: "failed", hasError: false, released: false }, { name: "ok", scope: "global", state: "connected", hasError: false, released: false }],
-      },
-    },
-  }, { id: "mcp", tone: "error", text: "MCP github · Did not connect" }],
 ];
 
 for (const [name, input, expected] of ISSUE_CASES) {
@@ -359,7 +348,7 @@ test("notable states are shown in place, never as issues", () => {
         awaitingInput: true,
         pendingUiRequests: 2,
         extensions: "binding",
-        run: { ...wrapper().run, running: true, retrying: true, waitingForMcp: true, pendingPrompts: 1 },
+        run: { ...wrapper().run, running: true, retrying: true, waitingToStart: true, pendingPrompts: 1 },
         idle: { timeoutMs: 10 * MINUTE, nextCheckAt: SERVER + 30 * SECOND, lastResetAt: null, forcedByStop: true },
         eventListeners: 4,
       }),
@@ -370,10 +359,9 @@ test("notable states are shown in place, never as issues", () => {
       providers: [{ name: "idle-ext", active: false, byFile: true }],
       subagents: {
         active: true,
-        runs: [{ sessionId: "sub", parentSessionId: "s1", status: "aborted", profile: null, background: true, resumed: false, dispatchedAt: null, abortRequested: true, mcpWaiting: true }],
+        runs: [{ sessionId: "sub", parentSessionId: "s1", status: "aborted", profile: null, background: true, resumed: false, dispatchedAt: null, abortRequested: true, waitingToStart: true }],
         notifications: [{ sessionId: "sub", parentSessionId: "s1", since: SERVER - SECOND }],
       },
-      mcp: { active: false, disposed: true, runActive: false, idleMs: 0, idleReleaseAt: null, problems: 2, servers: [{ name: "x", scope: "global", state: "needs-auth", hasError: false, released: true }] },
     },
   }), []);
   // A wrapper from before a hot reload knows nothing of its extensions.
@@ -518,15 +506,7 @@ test("bars and freshness by their thresholds", () => {
   assert.equal(state.streamFreshness({ ...client().connection, staleAfterMs: 0 }, LOCAL), null);
 });
 
-test("MCP servers, holders and status slots", () => {
-  const mcp = (extra) => state.mcpServerTone({ name: "x", scope: "global", state: "connected", hasError: false, released: false, ...extra });
-  assert.deepEqual(mcp({}), { tone: "ok", filled: true });
-  assert.deepEqual(mcp({ state: "connecting" }), { tone: "warning", filled: false });
-  assert.deepEqual(mcp({ state: "needs-auth" }), { tone: "warning", filled: true });
-  assert.deepEqual(mcp({ state: "conflict" }), { tone: "error", filled: true });
-  assert.deepEqual(mcp({ hasError: true }), { tone: "error", filled: true });
-  assert.deepEqual(mcp({ released: true }), { tone: "dim", filled: false });
-
+test("holders and status slots", () => {
   assert.equal(state.debugHolderTone(MINE, MINE), "accent");
   assert.equal(state.debugHolderTone(OTHER, MINE), "muted");
   assert.equal(state.debugHolderTone(null, MINE), "dim");

@@ -72,7 +72,7 @@ const REFRESH_QUEUE_KEY: symbol = Symbol.for("pi-web:shared-model-runtime-refres
 /**
  * One extension-loaded runtime per agent dir, shared by the routes that only
  * read it: the provider lists, the Models switches, the logout and API-key
- * provider lookups and MCP Test's provider token (#1226).
+ * provider lookups (#1226).
  *
  * Building one runs every extension, and the SDK keeps its extension factory
  * cache for one cwd only, so a build at the agent dir after a session's build

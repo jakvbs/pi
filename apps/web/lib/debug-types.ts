@@ -22,7 +22,8 @@ export interface DebugWrapperRun {
   retrying: boolean;
   /** Steering and follow-up messages the SDK holds (a count, never their text). */
   queuedMessages: number;
-  waitingForMcp: boolean;
+  /** A subagent run waits for session_start before it prompts the session. */
+  waitingToStart: boolean;
   runningTools: number;
   mutatingCommands: number;
   replacement: "fork" | "clone" | null;
@@ -121,7 +122,7 @@ export interface DebugSubagentRun {
   /** When this run (or resume) entered the run map. */
   dispatchedAt: number | null;
   abortRequested: boolean;
-  mcpWaiting: boolean;
+  waitingToStart: boolean;
 }
 
 /** A background run's completion still being delivered to its parent (`notifyParent()`). */
@@ -129,27 +130,6 @@ export interface DebugParentNotification {
   sessionId: string;
   parentSessionId: string;
   since: number | null;
-}
-
-export interface DebugMcpServer {
-  name: string;
-  scope: string;
-  state: string;
-  hasError: boolean;
-  released: boolean;
-}
-
-export interface DebugMcpHost {
-  active: boolean;
-  disposed: boolean;
-  runActive: boolean;
-  /** `PI_WEB_MCP_IDLE_MS`; 0 = never released. */
-  idleMs: number;
-  /** When idle servers are let go; null while a run is active or nothing is connected. */
-  idleReleaseAt: number | null;
-  servers: DebugMcpServer[];
-  /** Servers that are configured but not registered or not trusted. */
-  problems: number;
 }
 
 export interface DebugSessionDetail {
@@ -167,8 +147,6 @@ export interface DebugSessionDetail {
     runs: DebugSubagentRun[];
     notifications: DebugParentNotification[];
   };
-  /** Null: no wrapper, or a session without an MCP host (Chat only, MCP unavailable). */
-  mcp: DebugMcpHost | null;
 }
 
 /** One session the server holds something for: a wrapper or an event stream. */

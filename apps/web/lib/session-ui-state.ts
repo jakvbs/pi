@@ -29,7 +29,7 @@ const KNOWN_KEYS = new Set(["version", "revision", "sessions", "projects", "proj
 const QUEUE_KEY: symbol = Symbol.for("pi-web:session-ui-state-write-queue");
 
 /**
- * About three seconds of retries in all, as for `mcp.json`: writes are
+ * About three seconds of retries in all: writes are
  * serialized before the lock, so only another process holds it, and only for
  * one short write. A compromised lock is logged: proper-lockfile's default
  * throws from a timer, which would take the whole server down.

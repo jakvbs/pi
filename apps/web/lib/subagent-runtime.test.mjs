@@ -1107,7 +1107,7 @@ test("the debug snapshot lists a session's family at any depth with states and t
   const previousRuns = globalThis.__piSubagentRuns;
   const previousNotifications = globalThis.__piSubagentParentNotifications;
   const calls = [];
-  const mcpWait = new AbortController();
+  const startWait = new AbortController();
   const stored = (sessionId, parentSessionId, extra = {}) => [sessionId, {
     run: {
       ...completedRun(),
@@ -1128,7 +1128,7 @@ test("the debug snapshot lists a session's family at any depth with states and t
   }];
   try {
     globalThis.__piSubagentRuns = new Map([
-      stored("grandchild", "child", { dispatchedAt: 2_000, mcpWait }),
+      stored("grandchild", "child", { dispatchedAt: 2_000, startWait }),
       stored("other-child", "other"),
       stored("child", "parent", { dispatchedAt: 1_000, abortRequested: true }),
     ]);
@@ -1152,7 +1152,7 @@ test("the debug snapshot lists a session's family at any depth with states and t
       resumed: false,
       dispatchedAt: 2_000,
       abortRequested: false,
-      mcpWaiting: true,
+      waitingToStart: true,
     });
     assert.equal(snapshot.runs[1].abortRequested, true);
     assert.deepEqual(snapshot.notifications, [
@@ -1169,7 +1169,7 @@ test("the debug snapshot lists a session's family at any depth with states and t
     }
     // Read as they are: nothing cancelled, aborted, removed or reordered.
     assert.deepEqual(calls, []);
-    assert.equal(mcpWait.signal.aborted, false);
+    assert.equal(startWait.signal.aborted, false);
     assert.deepEqual([...globalThis.__piSubagentRuns.keys()], keys);
     assert.deepEqual([...globalThis.__piSubagentRuns.values()], rows);
     assert.equal(globalThis.__piSubagentParentNotifications.size, 3);

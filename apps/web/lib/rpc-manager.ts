@@ -64,13 +64,9 @@ import { isBuiltInSubagentsEnabled } from "./subagent-settings";
 import { resolveShellTools } from "./powershell-settings";
 import { CHAT_ONLY_RESOURCE_LOADER_OPTIONS, contextFilesSystemPrompt } from "./chat-only";
 import { createExactSystemPromptExtension } from "./exact-system-prompt";
-import { createPiWebBuiltinExtensions, createSubagentCodemodeExtension, createSubagentMcpExtensions } from "./builtin-extensions";
-import type { McpHost } from "./mcp-host";
 import type { MemoryStatus } from "./memory-panel-types";
 import { watchMemoryStatus, type MemoryStatusWatch } from "./observational-memory";
-import type { DebugMcpHost, DebugSessionLifecycle, DebugWrapperSnapshot } from "./debug-types";
-import { mcpPromptPreparation, type McpCommandCandidate } from "./mcp-command";
-import { createReadOnlyMcpPolicyExtension, createSubagentMcpPolicyExtension } from "./mcp-read-only-policy";
+import type { DebugSessionLifecycle, DebugWrapperSnapshot } from "./debug-types";
 import { createSubagentSkillsBinding } from "./subagent-skills";
 import { isNestedToolExecutionEvent, liveToolExecutionEvent, parallelToolCallIds } from "./agent-event-wire";
 import { collectStartupIssues, extensionErrorMessage, limitStartupNotices, type StartupIssue } from "./startup-issues";
@@ -171,9 +167,6 @@ type ExtensionCommandContextActionsLike = {
   reload: () => Promise<void>;
 };
 
-// `debugSnapshot` is optional: a host built before a hot reload lacks it.
-type WrapperMcpHost = Pick<McpHost, "prepareForPrompt" | "dispose"> & Partial<Pick<McpHost, "debugSnapshot">>;
-
 type AgentSessionWrapperOptions = {
   exactSystemPrompt?: () => string;
   chatOnly?: boolean;
@@ -181,8 +174,6 @@ type AgentSessionWrapperOptions = {
   suppressCompletionNotifications?: boolean;
   /** A subagent's wrapper: a run ended and nothing is left to do. */
   onDirectTurnSettled?: (aborted: boolean) => void;
-  /** Connects the session's MCP servers before a prompt starts a run, and lets go of them when it closes (lib/mcp-host.ts). */
-  mcpHost?: WrapperMcpHost;
   /** Chat only: the extension-provided model the session wanted, named when a prompt finds no model. */
   chatOnlyExtensionModel?: { provider: string; id: string };
   sideChat?: boolean;
@@ -221,8 +212,6 @@ function chatOnlyExtensionModelError(provider: string, modelId: string): Error {
     `${provider}/${modelId} is provided by an extension, and Chat only loads no extensions. Choose another model or tool preset.`,
   );
 }
-
-export const MCP_WAIT_STOPPED_MESSAGE = "Stopped while MCP servers were connecting; the message was not sent.";
 
 /** A running `!` command's output tail sent to the page (UTF-16 units), and how often (createBashOutputSnapshots). */
 const BASH_OUTPUT_TAIL_CHARS = 16 * 1024;
@@ -315,15 +304,15 @@ const SDK_DEFAULT_THINKING_LEVEL: ThinkingLevel = "medium";
 
 const CUSTOM_UI_KEYBINDINGS = new TuiKeybindingsManager(TUI_KEYBINDINGS);
 
-// Tools that belong to the session, not to a branch of it: the ones that reach other tools,
-// and pi-web's subagent tools, which the built-in subagent setting switches on for the whole
-// session. Navigation keeps them although the target branch was recorded without them.
-const SESSION_TOOL_NAMES = new Set<string>(["codemode", "tool_search", ...SUBAGENT_CONTROL_TOOL_NAMES]);
+// Tools that belong to the session, not to a branch of it: pi-web's subagent tools, which the
+// built-in subagent setting switches on for the whole session. Navigation keeps them although
+// the target branch was recorded without them.
+const SESSION_TOOL_NAMES = new Set<string>(SUBAGENT_CONTROL_TOOL_NAMES);
 
 /**
  * The active tools for a coding tool selection. The selection replaces only the coding
  * tools: every other tool named in `carry` that is still registered and not withdrawn stays
- * active, so a tool an extension, `tool_search`, or `defaultTools` activated survives, and a
+ * active, so a tool an extension or `defaultTools` activated survives, and a
  * tool one switched off stays off. Nothing else is added: pi itself activates the extension
  * tools it registers (all of them when it builds or reloads a session, then each new one), so
  * `carry` already holds them. An empty selection is Chat only.
@@ -409,7 +398,6 @@ export class AgentSessionWrapper {
   private readonly onAgentRunComplete?: AgentRunCompleteListener;
   private readonly onDirectTurnSettled?: (aborted: boolean) => void;
   private readonly suppressCompletionNotifications: boolean;
-  private readonly mcpHost?: WrapperMcpHost;
   private readonly chatOnlyExtensionModel?: { provider: string; id: string };
   private readonly sideChat: boolean;
   private readonly memoryStatus?: MemoryStatusWatch;
@@ -418,9 +406,8 @@ export class AgentSessionWrapper {
   // What the session was built on, so a model or level picked before the deferred switch stands.
   private readonly builtOnModel: string | undefined;
   private readonly builtOnThinkingLevel: string | undefined;
-  private mcpHostDisposed = false;
-  // The MCP wait of the prompt being admitted; Stop ends it.
-  private mcpPromptWait: { controller: AbortController; done: Promise<void> } | null = null;
+  // A subagent run's wait for session_start (prepareForRun()); Stop ends it.
+  private runStartWait: { controller: AbortController; done: Promise<void> } | null = null;
   private unsubscribe: (() => void) | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private onDestroyCallback: (() => void) | null = null;
@@ -466,7 +453,6 @@ export class AgentSessionWrapper {
     this.onAgentRunComplete = options.onAgentRunComplete;
     this.onDirectTurnSettled = options.onDirectTurnSettled;
     this.suppressCompletionNotifications = options.suppressCompletionNotifications ?? false;
-    this.mcpHost = options.mcpHost;
     this.chatOnlyExtensionModel = options.chatOnlyExtensionModel;
     this.sideChat = options.sideChat === true;
     this.memoryStatus = options.memoryStatus;
@@ -633,7 +619,7 @@ export class AgentSessionWrapper {
         compacting: inner.isCompacting === true,
         retrying: inner.isRetrying === true,
         queuedMessages: typeof inner.pendingMessageCount === "number" ? inner.pendingMessageCount : 0,
-        waitingForMcp: this.mcpPromptWait !== null,
+        waitingToStart: this.runStartWait !== null,
         runningTools: this.activeToolEvents.size,
         mutatingCommands: this.activeMutatingCommands,
         replacement: this.sessionReplacement,
@@ -655,11 +641,6 @@ export class AgentSessionWrapper {
         ? { type: this.lastCommandType, at: this.lastCommandAt }
         : null,
     };
-  }
-
-  /** The MCP host's state for the debug panel; null without a host (Chat only, MCP unavailable). */
-  getMcpDebugSnapshot(): DebugMcpHost | null {
-    return this.mcpHost?.debugSnapshot?.() ?? null;
   }
 
   start(): void {
@@ -975,13 +956,11 @@ export class AgentSessionWrapper {
   /**
    * A subagent run prompts the SDK session directly (`lib/subagent-runtime.ts`), past `send()`:
    * wait for session_start first, as a sent prompt does (a resumed child's deferred model is
-   * switched to at its end, and one of its dialogs may hold it, #1678), then connect the
-   * session's MCP servers. Stop (`abort`) ends the wait as it ends a sent prompt's, and so does
-   * `signal`. Resolves whether the run may start.
+   * switched to at its end, and one of its dialogs may hold it, #1678). Stop (`abort`) ends the
+   * wait as it ends a sent prompt's, and so does `signal`. Resolves whether the run may start.
    */
-  async prepareMcpForRun(signal: AbortSignal): Promise<boolean> {
-    const mcpHost = this.mcpHost;
-    if (this.inner.isStreaming || (!mcpHost && (this.extensionsBound || !this.extensionBindingPromise))) {
+  async prepareForRun(signal: AbortSignal): Promise<boolean> {
+    if (this.inner.isStreaming || this.extensionsBound || !this.extensionBindingPromise) {
       return !signal.aborted;
     }
     const controller = new AbortController();
@@ -993,19 +972,16 @@ export class AgentSessionWrapper {
       else controller.signal.addEventListener("abort", () => resolve(), { once: true });
     });
     // Registered before the binding is awaited, so a Stop meanwhile already ends it.
-    const waited = (async () => {
-      await Promise.race([this.waitForExtensionsBound(), stopped]);
-      if (mcpHost && !controller.signal.aborted) await mcpHost.prepareForPrompt(controller.signal);
-    })().catch((error: unknown) => {
-      console.error("[pi-web] MCP servers could not be prepared:", error instanceof Error ? error.message : error);
+    const waited = Promise.race([this.waitForExtensionsBound(), stopped]).catch((error: unknown) => {
+      console.error("[pi-web] extension binding failed before a subagent run:", error instanceof Error ? error.message : error);
     });
     const wait = { controller, done: waited };
-    this.mcpPromptWait = wait;
+    this.runStartWait = wait;
     try {
       await waited;
     } finally {
       signal.removeEventListener("abort", stop);
-      if (this.mcpPromptWait === wait) this.mcpPromptWait = null;
+      if (this.runStartWait === wait) this.runStartWait = null;
     }
     return !controller.signal.aborted;
   }
@@ -1084,19 +1060,6 @@ export class AgentSessionWrapper {
     }
   }
 
-  /** The session's extension commands as pi looks them up: by invocation name, with the extension's path. */
-  private extensionCommandCandidates(): McpCommandCandidate[] {
-    try {
-      return this.inner.extensionRunner.getRegisteredCommands().map((command) => ({
-        name: command.invocationName,
-        sourceInfo: command.sourceInfo,
-      }));
-    } catch {
-      // Unreadable: treat the prompt as one that may start a run, as before.
-      return [];
-    }
-  }
-
   /**
    * get_state waits for the binding, so a fresh session reports the model and prompt its
    * session_start handlers left, but not past a blocking dialog one of them waits on: the dialog
@@ -1139,7 +1102,7 @@ export class AgentSessionWrapper {
 
   /**
    * pi restores the target branch's loadout from its transcript when it navigates the tree,
-   * which can bring back coding tools the pinned preset leaves out and drop codemode, so a
+   * which can bring back coding tools the pinned preset leaves out, so a
    * normal session applies its selection again when the set changed, and otherwise keeps the
    * order the prompt was in. Chat only declares no tools, and a subagent's tools are fixed by
    * its profile; both keep what pi restored.
@@ -1277,7 +1240,7 @@ export class AgentSessionWrapper {
     this.idleDeadlineAt = this.idleLastResetAt + timeoutMs;
     this.idleTimer = setTimeout(() => {
       this.idleDeadlineAt = null;
-      // A subagent run that waits for a slot (or its MCP servers) holds this SDK session and will
+      // A subagent run that waits for a slot (or for session_start) holds this SDK session and will
       // prompt it: disposing it now would leave that run on a dead session that records nothing (#1590).
       if (!this.forceShutdownOnIdle && (this.isRunning() || getLiveSubagentStatus(this.sessionId) !== undefined || hasActiveSessionLivenessProvider({
         sessionId: this.sessionId,
@@ -1487,35 +1450,6 @@ export class AgentSessionWrapper {
 
           this.pendingPromptCount += 1;
           promptCounted();
-          // A prompt that may start a run first connects the session's MCP servers and
-          // waits for the ones still connecting. The SDK runs before_agent_start before a
-          // run has an abort signal, so Stop is honoured here: it ends the wait, and the
-          // message is rejected unsent, which returns it to the composer. pi runs an
-          // extension command before anything else and starts no run for it: another
-          // extension's command skips this, and the built-in `/mcp`, which acts on the
-          // registered servers, registers them without waiting (`mcpPromptPreparation()`).
-          const mcpPreparation = this.mcpHost && !this.inner.isStreaming
-            ? mcpPromptPreparation(typeof command.message === "string" ? command.message : "", this.extensionCommandCandidates())
-            : "none";
-          if (this.mcpHost && mcpPreparation !== "none") {
-            const controller = new AbortController();
-            const waited = this.mcpHost.prepareForPrompt(controller.signal, { wait: mcpPreparation === "wait" })
-              .catch((error: unknown) => {
-                console.error("[pi-web] MCP servers could not be prepared:", error instanceof Error ? error.message : error);
-              })
-              .then(() => {
-                if (!controller.signal.aborted) return;
-                finishPrompt();
-                throw new Error(MCP_WAIT_STOPPED_MESSAGE);
-              });
-            const wait = { controller, done: waited.then(() => undefined, () => undefined) };
-            this.mcpPromptWait = wait;
-            try {
-              await waited;
-            } finally {
-              if (this.mcpPromptWait === wait) this.mcpPromptWait = null;
-            }
-          }
           // A new prompt, not one queued into a run: what an earlier run's Stop said is over.
           // Not at acceptance: pi accepts a command that awaits a run of its own after that
           // run settled, and the run's Stop must still keep its push and chime away.
@@ -1599,9 +1533,9 @@ export class AgentSessionWrapper {
         this.resetIdleTimer();
         // Stop must unwind extension commands that have not started the agent yet.
         this.extensionUiAbortController.abort(new DOMException("Extension UI cancelled by Stop", "AbortError"));
-        // A prompt still waiting for MCP servers is withdrawn before it starts a run.
-        if (this.mcpPromptWait) {
-          const wait = this.mcpPromptWait;
+        // A subagent run still waiting for session_start is withdrawn before it starts.
+        if (this.runStartWait) {
+          const wait = this.runStartWait;
           wait.controller.abort();
           await wait.done;
         }
@@ -1909,10 +1843,10 @@ export class AgentSessionWrapper {
         const all: ToolInfo[] = this.inner.getAllTools().filter((t) => t.exposure !== "hidden");
         const active = new Set<string>(this.inner.getActiveToolNames());
         // The definition's description is not always what the model gets: `prepareLoadout`
-        // hooks rewrite the declared ones (codemode lists its nested tools and the MCP types).
+        // hooks rewrite the declared ones.
         const declared = new Map((this.inner.agent.state?.tools ?? []).map((t) => [t.name, t.description]));
-        // Active and callable, but requests leave the declaration out: codemode's "only" mode
-        // does this to active `direct` tools. The set is private to pi 0.99's AgentSession.
+        // Active and callable, but requests leave the declaration out (a `prepareLoadout` hook's
+        // `hiddenDeclarations`). The set is private to pi 0.99's AgentSession.
         const hiddenDeclarations: unknown = Reflect.get(this.inner, "_hiddenDeclarations");
         const hidden = hiddenDeclarations instanceof Set ? hiddenDeclarations : new Set<unknown>();
         return all.map((t) => ({
@@ -2075,26 +2009,10 @@ export class AgentSessionWrapper {
     }
   }
 
-  /**
-   * Once, as closing starts and before extensions hear session_shutdown: the
-   * MCP host's own handler runs after every other extension's, and one that
-   * never returns would leave its records behind (lib/mcp-host.ts).
-   */
-  private disposeMcpHost(): void {
-    if (this.mcpHostDisposed) return;
-    this.mcpHostDisposed = true;
-    try {
-      this.mcpHost?.dispose();
-    } catch (error) {
-      console.error("[pi-web] MCP host dispose failed:", error instanceof Error ? error.message : error);
-    }
-  }
-
   destroy(): void {
     if (!this._alive) return;
     this._alive = false;
     this.closingAt ??= Date.now();
-    this.disposeMcpHost();
     // Tell attached SSE listeners to drop this instance so the browser
     // EventSource errors and reconnects instead of staying OPEN on a dead wrapper.
     if (!this.extensionShutdownRequested) this.emit({ type: "session_shutdown" });
@@ -2130,7 +2048,7 @@ export class AgentSessionWrapper {
 
     // Always emit session_shutdown before dispose, even when callers skip
     // shutdown() (process exit, direct destroy). Await when possible so
-    // extension MCP children can reap before the runner is invalidated.
+    // extension children can reap before the runner is invalidated.
     if (this.sessionShutdownEmitted) {
       finishDispose();
       return;
@@ -2181,8 +2099,6 @@ export class AgentSessionWrapper {
             error instanceof Error ? error.message : error,
           );
         }
-        // After binding, so the host's session_start has run and finds nothing to record later.
-        this.disposeMcpHost();
         if (!this.sessionShutdownEmitted) {
           this.sessionShutdownEmitted = true;
           const emit = this.inner.extensionRunner?.emit;
@@ -2198,9 +2114,8 @@ export class AgentSessionWrapper {
   /**
    * Gives extensions at most SESSION_SHUTDOWN_DEADLINE_MS to handle
    * session_shutdown, then returns so the SDK session is disposed and
-   * unregistered anyway. Closing an MCP connection has no upper bound: it waits
-   * for a token refresh in flight and for a stdio child whose daemonized
-   * grandchild may never close stdout.
+   * unregistered anyway. An extension's handler has no upper bound: it may wait
+   * for a child process whose daemonized grandchild never closes stdout.
    */
   private async emitSessionShutdown(
     emit: NonNullable<AgentSessionLike["extensionRunner"]["emit"]>,
@@ -3017,7 +2932,6 @@ const SUBAGENT_CONTROLLER = createSubagentController({
       chatOnly: options?.chatOnly,
       suppressCompletionNotifications: true,
       onDirectTurnSettled: (aborted) => SUBAGENT_CONTROLLER.settleDirectTurn(inner.sessionId, aborted),
-      ...(options?.mcpHost ? { mcpHost: options.mcpHost } : {}),
       ...(options?.memoryStatus ? { memoryStatus: options.memoryStatus } : {}),
     });
     registerRpcWrapper(wrapper);
@@ -3403,11 +3317,9 @@ export interface RpcSessionDebugEntry {
   snapshot: DebugWrapperSnapshot;
   /** Matches liveness providers registered by file; never sent to the browser. */
   sessionFile: string | null;
-  /** The MCP host's state; read for the session the panel shows only. */
-  readMcp(): DebugMcpHost | null;
 }
 
-type MaybeStaleWrapper = Partial<Pick<AgentSessionWrapper, "isAlive" | "isRunning" | "getDebugSnapshot" | "getMcpDebugSnapshot">>;
+type MaybeStaleWrapper = Partial<Pick<AgentSessionWrapper, "isAlive" | "isRunning" | "getDebugSnapshot">>;
 
 /** A wrapper built before a hot reload has no getDebugSnapshot(): only state and running are known. */
 function staleWrapperSnapshot(sessionId: string, wrapper: MaybeStaleWrapper): DebugWrapperSnapshot {
@@ -3434,7 +3346,7 @@ function staleWrapperSnapshot(sessionId: string, wrapper: MaybeStaleWrapper): De
       compacting: false,
       retrying: false,
       queuedMessages: 0,
-      waitingForMcp: false,
+      waitingToStart: false,
       runningTools: 0,
       mutatingCommands: 0,
       replacement: null,
@@ -3473,11 +3385,7 @@ export function getRpcSessionDebugSnapshots(): RpcSessionDebugEntry[] {
     try {
       sessionFile = typeof wrapper.sessionFile === "string" && wrapper.sessionFile ? wrapper.sessionFile : null;
     } catch { /* matched by id only */ }
-    entries.push({
-      snapshot,
-      sessionFile,
-      readMcp: () => typeof wrapper.getMcpDebugSnapshot === "function" ? wrapper.getMcpDebugSnapshot() : null,
-    });
+    entries.push({ snapshot, sessionFile });
   }
   return entries;
 }
@@ -3595,7 +3503,7 @@ export async function startRpcSession(
     appendSessionToolSelection(sessionManager, requestedToolNames);
   }
   const subagentLoadsResources = Boolean(
-    subagentResources?.loadExtensions || subagentResources?.loadSkills || subagentResources?.codemode || subagentResources?.mcp,
+    subagentResources?.loadExtensions || subagentResources?.loadSkills,
   );
   const chatOnly = pinnedToolNames?.length === 0 && !subagentLoadsResources;
   // A side chat (ADR 0007) starts as a normal session, or as Chat only, with fewer tools.
@@ -3654,26 +3562,6 @@ export async function startRpcSession(
     // after the session is created, so the getter is filled in below.
     const exactSystemPromptRef: { current?: () => string } = {};
     const exactSystemPromptExtension = createExactSystemPromptExtension(() => exactSystemPromptRef.current?.());
-    // codemode, tool-search, and mcp, as the pi CLI loads them, and the host that decides
-    // which MCP servers the session connects (ADR 0006).
-    const builtins = subagentResources || chatOnly || sideChatTools
-      ? undefined
-      : await createPiWebBuiltinExtensions({ agentDir });
-    const subagentCodemode = subagentResources?.codemode
-      ? await createSubagentCodemodeExtension({
-          agentDir,
-          cwd: sessionCwd,
-          projectTrusted: () => settingsManager.isProjectTrusted(),
-        })
-      : undefined;
-    const subagentMcp = subagentResources?.mcp
-      ? await createSubagentMcpExtensions({
-          agentDir,
-          cwd: sessionCwd,
-          projectTrusted: () => settingsManager.isProjectTrusted(),
-          codemode: subagentResources.codemode === true,
-        })
-      : undefined;
     const skillsBinding = subagentResources ? createSubagentSkillsBinding({
       loadSkills: subagentResources.loadSkills,
       skills: subagentResources.skills,
@@ -3682,10 +3570,6 @@ export async function startRpcSession(
     }) : undefined;
     const subagentExtensionFactories = [
       llamaCppExtension,
-      ...(subagentCodemode ? [subagentCodemode] : []),
-      ...(subagentMcp && subagentResources
-        ? [...subagentMcp.extensions, createSubagentMcpPolicyExtension(() => subagentResources)]
-        : []),
       ...(skillsBinding?.loaderOptions.extensionFactories ?? []),
     ];
     // The memory panel subscribes before the extensions load: they publish from session_start on.
@@ -3716,8 +3600,6 @@ export async function startRpcSession(
         : {
             extensionFactories: [
               llamaCppExtension,
-              ...(builtins?.extensions ?? []),
-              createReadOnlyMcpPolicyExtension(),
               createProjectCommandBashExtension({
                 cwd: sessionCwd,
                 settings: settingsManager,
@@ -3735,10 +3617,6 @@ export async function startRpcSession(
           }) },
       ...(trustReloadOptions ? { resourceLoaderReloadOptions: trustReloadOptions } : {}),
     });
-    if (subagentResources?.codemode
-      && !services.resourceLoader.getExtensions().extensions.some((extension) => extension.tools.has("codemode"))) {
-      throw new Error("Code mode is unavailable: builtin:codemode was not registered");
-    }
     const enabledModels = services.settingsManager.getEnabledModels();
     const scope = await resolveVisibleModels(services.modelRuntime, enabledModels);
     // A provider an extension registers only at session_start (lib/deferred-provider-models.ts)
@@ -3835,7 +3713,7 @@ export async function startRpcSession(
 
     // A pinned selection replaces only the coding tools of the SDK's initial loadout, which
     // already holds the extension tools pi activates on registration and whatever
-    // `defaultTools` names (such as `+codemode`), so installed extensions stay usable in
+    // `defaultTools` names, so installed extensions stay usable in
     // Pi Web just like in the `pi` CLI.
     if (!subagentResources && !chatOnly) {
       const initialToolNames = inner.getActiveToolNames();
@@ -3851,7 +3729,6 @@ export async function startRpcSession(
         ? () => contextFilesSystemPrompt(inner.resourceLoader.getAgentsFiles().agentsFiles)
         : undefined;
     exactSystemPromptRef.current = exactSystemPrompt;
-    const mcpHost = builtins?.mcpHost ?? subagentMcp?.mcpHost;
     const startupIssues = collectStartupIssues({
       diagnostics: services.diagnostics,
       extensions: services.resourceLoader.getExtensions(),
@@ -3899,7 +3776,6 @@ export async function startRpcSession(
       ...(subagentResources
         ? { onDirectTurnSettled: (aborted: boolean) => SUBAGENT_CONTROLLER.settleDirectTurn(inner.sessionId, aborted) }
         : {}),
-      ...(mcpHost ? { mcpHost } : {}),
       ...(chatOnlyExtensionModel ? { chatOnlyExtensionModel } : {}),
       sideChat: isSideChat,
       memoryStatus,

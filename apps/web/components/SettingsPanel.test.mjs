@@ -5,7 +5,7 @@ import test from "node:test";
 const cssSource = await readFile(new URL("../app/settings.css", import.meta.url), "utf8");
 const loginSource = await readFile(new URL("../app/login/page.tsx", import.meta.url), "utf8");
 
-test("the trust dialog Settings › MCP opens stacks above Settings", () => {
+test("the trust dialog stacks above Settings", () => {
   const zIndex = (selector) => Number(cssSource.match(new RegExp(`\\${selector} \\{[^}]*z-index: (\\d+);`))?.[1]);
   assert.ok(zIndex(".project-trust-backdrop") > zIndex(".settings-dialog-backdrop"));
 });

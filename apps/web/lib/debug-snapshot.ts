@@ -80,7 +80,6 @@ function buildDetail(
       runs: subagents.runs,
       notifications: subagents.notifications,
     },
-    mcp: entry ? read(() => entry.readMcp(), null) : null,
   };
 }
 

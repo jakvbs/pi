@@ -86,7 +86,7 @@ export function sideOwnEntries<T extends { timestamp?: string }>(entries: readon
 
 /**
  * A side chat's tools, which `startRpcSession()` passes as pi's allow-list, so
- * nothing else registers, every extension, MCP, Code mode and subagent tool
+ * nothing else registers, every extension and subagent tool
  * included: the ones its transcript gives it, a pin first, then the loadout pi
  * recorded, cut down to `SIDE_TOOLS`. Never more than the parent had, so a
  * Read-only parent stays without a shell. Reopening reads the same answer back

@@ -188,7 +188,7 @@ function wrapper(extra = {}) {
   return {
     sessionId: "s1", state: "alive", stale: false, subagent: false, chatOnly: false,
     createdAt: SERVER - 6 * MINUTE, startedAt: SERVER - 6 * MINUTE, closingAt: null, extensions: "bound",
-    run: { running: false, streaming: false, promptRunning: false, pendingPrompts: 0, bashRunning: false, compacting: false, retrying: false, queuedMessages: 0, waitingForMcp: false, runningTools: 0, mutatingCommands: 0, replacement: null },
+    run: { running: false, streaming: false, promptRunning: false, pendingPrompts: 0, bashRunning: false, compacting: false, retrying: false, queuedMessages: 0, waitingToStart: false, runningTools: 0, mutatingCommands: 0, replacement: null },
     idle: { timeoutMs: 10 * MINUTE, nextCheckAt: SERVER + 8 * MINUTE + 30 * SECOND, lastResetAt: SERVER - 90 * SECOND, forcedByStop: false },
     awaitingInput: false, pendingUiRequests: 0, customUis: 0, eventListeners: 2,
     lastEvent: { type: "agent_end", at: SERVER - 90 * SECOND }, lastCommand: { type: "prompt", at: SERVER - 2 * MINUTE },
@@ -230,7 +230,6 @@ function reply() {
         { holder: "page-mine-123", address: "127.0.0.1", client: "Chrome · macOS", openedAt: SERVER - 5 * MINUTE, connectedAt: SERVER - 5 * MINUTE, lastWriteAt: SERVER - 3 * SECOND, droppedEvents: 0, queuedBytes: 0 },
       ],
       subagents: { active: false, runs: [], notifications: [] },
-      mcp: null,
     },
   };
 }
@@ -512,17 +511,10 @@ test("server states, run statuses and close reasons read as words, not codes", (
       subagents: {
         active: true,
         runs: [
-          { sessionId: "sub-queued-1", parentSessionId: "s1", status: "queued", profile: "general", background: true, resumed: false, dispatchedAt: SERVER - 2 * SECOND, abortRequested: false, mcpWaiting: false },
-          { sessionId: "sub-newer-2", parentSessionId: "s1", status: "paused", profile: null, background: false, resumed: false, dispatchedAt: null, abortRequested: true, mcpWaiting: false },
+          { sessionId: "sub-queued-1", parentSessionId: "s1", status: "queued", profile: "general", background: true, resumed: false, dispatchedAt: SERVER - 2 * SECOND, abortRequested: false, waitingToStart: false },
+          { sessionId: "sub-newer-2", parentSessionId: "s1", status: "paused", profile: null, background: false, resumed: false, dispatchedAt: null, abortRequested: true, waitingToStart: false },
         ],
         notifications: [{ sessionId: "sub-queued-1", parentSessionId: "s1", since: SERVER - SECOND }],
-      },
-      mcp: {
-        active: true, disposed: false, runActive: false, idleMs: 0, idleReleaseAt: null, problems: 0,
-        servers: [
-          { name: "github", scope: "global", state: "needs-auth", hasError: false, released: false },
-          { name: "later", scope: "project", state: "warming", hasError: false, released: false },
-        ],
       },
     }),
   });
@@ -536,35 +528,9 @@ test("server states, run statuses and close reasons read as words, not codes", (
   assert.ok(text.includes("sub-newe paused abort requested"));
   assert.ok(text.includes("notifying s1 · 11s ago"));
   assert.ok(text.includes("a run is unsettled"));
-  assert.ok(titles(html).includes("github (global) · Needs sign-in"));
-  assert.ok(titles(html).includes("later (project) · warming"));
 
   const noReason = render({ page: page({ client: client({ connection: { ...client().connection, lastClose: { reason: null, at: LOCAL - SECOND } } }) }) });
   assert.ok(titles(noReason).some((title) => title.split("\n").includes("Last close — · 1s ago")));
-});
-
-test("an MCP server's state is never the dot's hue alone: words after the name, and the pill's name", () => {
-  const servers = [
-    { name: "github", scope: "global", state: "connected", hasError: false, released: false },
-    { name: "linear", scope: "project", state: "needs-auth", hasError: false, released: false },
-    { name: "fs", scope: "global", state: "connected", hasError: false, released: true },
-    { name: "sentry", scope: "global", state: "failed", hasError: true, released: false },
-    { name: "jira", scope: "global", state: "connected", hasError: true, released: false },
-  ];
-  const html = render({
-    server: withDetail({ mcp: { active: true, disposed: false, runActive: false, idleMs: 0, idleReleaseAt: null, problems: 1, servers } }),
-  });
-  const card = detailOf(html);
-  const pill = (name) => card.match(new RegExp(`<span class="debug-pill" role="img"[^>]*>(?:(?!</span></span>).)*?>${name}</span>.*?</span>(?=<span class="debug-(?:pill|chip)|</div>)`))?.[0];
-  assert.match(pill("github"), /^<span class="debug-pill" role="img" aria-label="github \(global\) · Connected" title="github \(global\) · Connected"><span class="debug-dot is-ok" aria-hidden="true"><\/span><span>github<\/span><\/span>$/);
-  assert.match(pill("linear"), /aria-label="linear \(project\) · Needs sign-in"[^>]*><span class="debug-dot is-warning" aria-hidden="true"><\/span><span>linear<\/span><span class="debug-pill-state">· Needs sign-in<\/span><\/span>$/);
-  // Let go while idle: a dim ring and a dim name, no state word (it was connected).
-  assert.match(pill("fs"), /aria-label="fs \(global\) · Connected · released"[^>]*><span class="debug-dot is-dim is-ring" aria-hidden="true"><\/span><span class="is-dim">fs<\/span><\/span>$/);
-  assert.match(pill("sentry"), /aria-label="sentry \(global\) · Did not connect · error"[^>]*><span class="debug-dot is-error" aria-hidden="true"><\/span><span>sentry<\/span><span class="debug-pill-state">· Did not connect<\/span><\/span>$/);
-  // Red beside a green dot of the same shape: the error is written out too.
-  assert.match(pill("jira"), /<span class="debug-dot is-error" aria-hidden="true"><\/span><span>jira<\/span><span class="debug-pill-state">· error<\/span><\/span>$/);
-  const text = visibleText(card);
-  assert.ok(text.includes("linear · Needs sign-in") && text.includes("sentry · Did not connect"), text);
 });
 
 test("the run's chips show only what is true: no chip row while idle, amber for what waits", () => {

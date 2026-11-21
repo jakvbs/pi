@@ -234,14 +234,14 @@ test("a subagent run waits for session_start before its prompt, and Stop ends th
   await f.wrapper.send({ type: "get_state" });
   const stop = new AbortController();
   let ready;
-  const waiting = f.wrapper.prepareMcpForRun(stop.signal).then((value) => { ready = value; });
+  const waiting = f.wrapper.prepareForRun(stop.signal).then((value) => { ready = value; });
   await nextTurn();
   assert.equal(ready, undefined);
   stop.abort();
   await waiting;
   assert.equal(ready, false);
 
-  const running = f.wrapper.prepareMcpForRun(new AbortController().signal).then((value) => { ready = value; });
+  const running = f.wrapper.prepareForRun(new AbortController().signal).then((value) => { ready = value; });
   await nextTurn();
   assert.equal(ready, false);
   await f.wrapper.send({ type: "extension_ui_response", id: f.dialog().id, confirmed: true });

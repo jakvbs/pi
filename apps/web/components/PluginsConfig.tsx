@@ -642,7 +642,7 @@ export function PluginsConfig({
 
   // Whether project packages load, and the Project scope can be chosen, follows
   // the folder's trust, which can change while this section stays mounted
-  // (hidden) in Settings: trusting from Settings › MCP. A new decision loads the
+  // (hidden) in Settings: trusting from the trust dialog. A new decision loads the
   // list again in place, keeping the selection and any update checks; the first
   // load is the effect above.
   const trustKey = projectTrustReloadKey(trust);

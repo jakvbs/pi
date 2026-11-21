@@ -23,11 +23,8 @@ import { TurnWrittenFiles } from "./TurnWrittenFiles";
 import type { WrittenFile } from "@/lib/turn-written-files";
 import { skillExpansionContent, skillExpansionToCommand } from "@/lib/slash-display";
 import type { SubagentToolDetails } from "@/lib/subagent-extension";
-import { CODEMODE_TOOL_NAME, codemodeCalls, codemodeScript, codemodeScriptPreview, stripCodemodeHeader } from "@/lib/codemode-view";
-import { CodemodeCallList } from "./CodemodeToolView";
 import { toolFieldsOfInput, toolInputPreview, type ToolField } from "@/lib/tool-fields";
 import { parseStreamingJson } from "@earendil-works/pi-ai/utils/json-parse";
-import { mcpToolLabel, prettyMcpResultText } from "@/lib/mcp-tool-display";
 import { streamRateKey, streamRateStart, streamTokensPerSecond, type StreamRateStart } from "@/lib/stream-token-rate";
 import { formatNoticeTokens, getTranscriptNotices } from "@/lib/transcript-notices";
 import { TRANSCRIPT_NOTICE_WARNING_COLOR, transcriptNoticeText } from "@/components/TranscriptNotices";
@@ -1247,37 +1244,25 @@ function ToolCallBlock({ block, result, notRun, duration, clock, onOpenSubagent,
   const patchLabel = isApplyPatchToolName(block.toolName)
     ? summarizeApplyPatchInput(block)
     : null;
-  // A script and the calls it made, instead of the input JSON. Streamed input is
-  // still incomplete JSON and keeps the generic view.
-  const codemodeCode = block.toolName === CODEMODE_TOOL_NAME && !isStreamingInput ? codemodeScript(block.input) : null;
-  const codemode = codemodeCode === null ? null : { code: codemodeCode, ...codemodeCalls(result?.details) };
-  // A running script's progress snapshot has calls but no content yet.
-  const codemodeRunning = codemode !== null && result !== undefined && result.content.length === 0;
-
   // Flat arguments as rows instead of a JSON blob, unless the card has a view of
-  // its own (a write's file text, codemode, an applied patch). See `lib/tool-fields.ts`.
+  // its own (a write's file text, an applied patch). See `lib/tool-fields.ts`.
   // Input still streaming goes through pi's own partial parse, the arguments its
   // TUI draws live, so a multi-line command shows its lines before the call ends.
   const toolFields =
-    expanded && writtenFileText === null && codemode === null && patchFiles === null
+    expanded && writtenFileText === null && patchFiles === null
       ? toolFieldsOfInput(isStreamingInput ? parseStreamingJson(block.rawInput) : block.input)
       : null;
 
-  // `server/tool` instead of the registered `mcp__server__tool`, as pi's TUI shows it.
-  const mcpLabel = mcpToolLabel(block.toolName, result?.details);
-
   // Result display
-  const resultContent = result ? (codemode ? stripCodemodeHeader(result.content) : result.content) : [];
-  const joinedResultText = result
+  const resultContent = result ? result.content : [];
+  const resultText = result
     ? resultContent.filter((b): b is { type: "text"; text: string } => b.type === "text").map((b) => b.text).join("\n")
     : null;
-  const resultText = mcpLabel && joinedResultText !== null ? prettyMcpResultText(joinedResultText) : joinedResultText;
   const resultImages = getMessageImages(resultContent);
   const resultIsEmpty = resultText === null ? false : (resultText.trim() === "(no output)" || resultText.trim() === "");
   const isError = (result?.isError ?? false)
     || (isApplyPatchToolName(block.toolName) && applyPatchResultHasFailures(result?.details));
   const subagent = isSubagentToolDetails(result?.details) ? result.details : null;
-  const codemodeCallCount = codemode ? codemode.calls.length + codemode.omitted : 0;
 
   return (
     <div
@@ -1308,27 +1293,14 @@ function ToolCallBlock({ block, result, notRun, duration, clock, onOpenSubagent,
             textAlign: "left",
           }}
         >
-          <span
-            title={mcpLabel ? block.toolName : undefined}
-            style={{ color: isError ? "#f87171" : "#16a34a", fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}
-          >
-            {mcpLabel ? (
-              <>
-                <span style={{ fontWeight: 500, opacity: 0.75 }}>{mcpLabel.server}/</span>
-                {mcpLabel.tool}
-              </>
-            ) : block.toolName}
+          <span style={{ color: isError ? "#f87171" : "#16a34a", fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}>
+            {block.toolName}
           </span>
           <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
             {isStreamingInput
               ? t("chat.generatingToolInput")
-              : (patchLabel ?? (codemode ? codemodeScriptPreview(codemode.code) : toolInputPreview(block.input, resultPatchPath, block.toolName)))}
+              : (patchLabel ?? toolInputPreview(block.input, resultPatchPath, block.toolName))}
           </span>
-          {codemodeCallCount > 0 && (
-            <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
-              {codemodeCallCount === 1 ? t("codemode.callCountOne") : t("codemode.callCount", { count: codemodeCallCount })}
-            </span>
-          )}
           {duration !== undefined ? (
             <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{formatToolDuration(duration)}</span>
           ) : clock && (
@@ -1352,7 +1324,7 @@ function ToolCallBlock({ block, result, notRun, duration, clock, onOpenSubagent,
         )}
       </div>
 
-      {/* ── Expanded: input args (only when no richer view exists); a codemode script in place of its JSON ── */}
+      {/* ── Expanded: input args (only when no richer view exists) ── */}
       {expanded && (isStreamingInput || !isEditTool || (!result && !notRun && !editPreview)) && !patchFiles && (
         toolFields ? (
           <div
@@ -1379,14 +1351,9 @@ function ToolCallBlock({ block, result, notRun, duration, clock, onOpenSubagent,
               wordBreak: "break-all",
             }}
           >
-            {codemode ? codemode.code.replace(/\r/g, "").trimEnd() : inputStr}
+            {inputStr}
           </pre>
         )
-      )}
-
-      {/* ── Expanded: the calls a codemode script made ── */}
-      {expanded && codemode && (
-        <CodemodeCallList calls={codemode.calls} omitted={codemode.omitted} isError={isError} />
       )}
 
       {/* ── Result images — always visible, independent of the collapsed details ── */}
@@ -1414,7 +1381,7 @@ function ToolCallBlock({ block, result, notRun, duration, clock, onOpenSubagent,
           isError={isError}
         />
       )}
-      {expanded && result && !patchFiles && !codemodeRunning && (
+      {expanded && result && !patchFiles && (
         resultDiff ? (
           <PairedDiffResult
             diff={resultDiff}

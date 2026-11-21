@@ -9,7 +9,6 @@ import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
 const {
-  CODEMODE_SNAPSHOT_CALL_LIMIT,
   isEventIncludedInSnapshot,
   isNestedToolExecutionEvent,
   isSystemMessageEvent,
@@ -182,10 +181,10 @@ test("recognizes only the in-flight event already covered by a snapshot", () => 
 test("keeps the existing event omissions and slim agent_end", () => {
   assert.equal(toClientAgentEvent({ type: "turn_start" }), null);
   assert.equal(toClientAgentEvent({ type: "turn_end" }), null);
-  // An appended entry can be a 1 MiB custom entry (codemode `store()` writes).
+  // An appended entry can be a large custom entry.
   assert.equal(toClientAgentEvent({
     type: "entry_appended",
-    entry: { type: "custom", customType: "codemode-store", data: { set: { big: "x".repeat(1024) } } },
+    entry: { type: "custom", customType: "big-store", data: { set: { big: "x".repeat(1024) } } },
   }), null);
   assert.deepEqual(
     toClientAgentEvent({ type: "agent_end", messages: [assistantMessage("done")] }),
@@ -219,9 +218,9 @@ test("forwards tool execution progress without repeating tool arguments", () => 
 test("keeps a model-issued tool start as is", () => {
   const start = {
     type: "tool_execution_start",
-    toolCallId: "call-codemode-1",
-    toolName: "codemode",
-    args: { code: "await tools.read({ path: 'a' })" },
+    toolCallId: "call-script-1",
+    toolName: "script",
+    args: { code: "read a" },
   };
   assert.strictEqual(toClientAgentEvent(start), start);
 });
@@ -229,30 +228,30 @@ test("keeps a model-issued tool start as is", () => {
 test("slims the start of a nested call and keeps its parent", () => {
   const start = {
     type: "tool_execution_start",
-    toolCallId: "call-codemode-1/1",
+    toolCallId: "call-script-1/1",
     toolName: "read",
     args: { path: "/repo/large-input.txt" },
-    parentToolCallId: "call-codemode-1",
+    parentToolCallId: "call-script-1",
   };
   assert.equal(isNestedToolExecutionEvent(start), true);
   assert.deepEqual(toClientAgentEvent(start), {
     type: "tool_execution_start",
-    toolCallId: "call-codemode-1/1",
+    toolCallId: "call-script-1/1",
     toolName: "read",
-    parentToolCallId: "call-codemode-1",
+    parentToolCallId: "call-script-1",
   });
 });
 
 test("drops the progress updates of nested calls before rebuilding updates", () => {
   // Rebuilding first would lose parentToolCallId and forward the update as a top-level one.
-  for (const toolName of ["bash", "codemode", "mcp__github__search"]) {
+  for (const toolName of ["bash", "script", "github_search"]) {
     assert.equal(toClientAgentEvent({
       type: "tool_execution_update",
-      toolCallId: "call-codemode-1/2",
+      toolCallId: "call-script-1/2",
       toolName,
       args: {},
       partialResult: { content: [{ type: "text", text: "partial" }], details: {} },
-      parentToolCallId: "call-codemode-1",
+      parentToolCallId: "call-script-1",
     }), null);
   }
 });
@@ -307,18 +306,18 @@ test("delivers completed SDK reads early only while a parallel call remains, ret
 test("sends a nested tool end slim, keeping its parent id", () => {
   assert.deepEqual(toClientAgentEvent({
     type: "tool_execution_end",
-    toolCallId: "call-codemode-1/1",
+    toolCallId: "call-script-1/1",
     toolName: "read",
     result: { content: [{ type: "text", text: "x" }], details: { structuredContent: { rows: [1] } } },
     isError: true,
-    parentToolCallId: "call-codemode-1",
+    parentToolCallId: "call-script-1",
     durationMs: 12,
   }), {
     type: "tool_execution_end",
-    toolCallId: "call-codemode-1/1",
+    toolCallId: "call-script-1/1",
     toolName: "read",
     isError: true,
-    parentToolCallId: "call-codemode-1",
+    parentToolCallId: "call-script-1",
   });
 });
 
@@ -341,85 +340,6 @@ test("recognizes nested calls only by a parent id on tool execution events", () 
     toolName: "read",
     parentToolCallId: "call-1/1",
   }), true);
-});
-
-function codemodeCalls(count) {
-  return Array.from({ length: count }, (_, index) => ({
-    id: `call-codemode-1/${index + 1}`,
-    name: "read",
-    args: `{"path":"file-${index + 1}"}`,
-    status: "ok",
-  }));
-}
-
-test("keeps the newest calls of a large codemode snapshot and counts the rest", () => {
-  const calls = codemodeCalls(CODEMODE_SNAPSHOT_CALL_LIMIT + 50);
-  const projected = toClientAgentEvent({
-    type: "tool_execution_update",
-    toolCallId: "call-codemode-1",
-    toolName: "codemode",
-    args: { code: "for (const f of files) await tools.read({ path: f })" },
-    partialResult: { content: [], details: { calls } },
-  });
-
-  assert.equal(projected.type, "tool_execution_update");
-  assert.equal(Object.hasOwn(projected, "args"), false);
-  assert.deepEqual(projected.partialResult.content, []);
-  assert.equal(projected.partialResult.details.omittedCalls, 50);
-  assert.equal(projected.partialResult.details.calls.length, CODEMODE_SNAPSHOT_CALL_LIMIT);
-  assert.deepEqual(projected.partialResult.details.calls[0], calls[50]);
-  assert.deepEqual(projected.partialResult.details.calls.at(-1), calls.at(-1));
-  // The session's own snapshot is left alone.
-  assert.equal(calls.length, CODEMODE_SNAPSHOT_CALL_LIMIT + 50);
-});
-
-test("leaves small codemode snapshots and other tools' details untouched", () => {
-  const small = { content: [], details: { calls: codemodeCalls(CODEMODE_SNAPSHOT_CALL_LIMIT) } };
-  assert.strictEqual(toClientAgentEvent({
-    type: "tool_execution_update",
-    toolCallId: "call-codemode-1",
-    toolName: "codemode",
-    partialResult: small,
-  }).partialResult, small);
-
-  const other = { content: [], details: { calls: codemodeCalls(CODEMODE_SNAPSHOT_CALL_LIMIT + 1) } };
-  assert.strictEqual(toClientAgentEvent({
-    type: "tool_execution_update",
-    toolCallId: "call-workflow-1",
-    toolName: "workflow",
-    partialResult: other,
-  }).partialResult, other);
-
-  const malformed = { content: [], details: { calls: "not an array" } };
-  assert.strictEqual(toClientAgentEvent({
-    type: "tool_execution_update",
-    toolCallId: "call-codemode-2",
-    toolName: "codemode",
-    partialResult: malformed,
-  }).partialResult, malformed);
-});
-
-function projectedCodemodeSnapshotBytes(callCount) {
-  const calls = [];
-  let bytes = 0;
-  for (let index = 0; index < callCount; index += 1) {
-    calls.push({ id: `call-codemode-1/${index + 1}`, name: "read", args: '{"path":"file"}', status: "ok" });
-    const projected = toClientAgentEvent({
-      type: "tool_execution_update",
-      toolCallId: "call-codemode-1",
-      toolName: "codemode",
-      partialResult: { content: [], details: { calls: calls.map((call) => ({ ...call })) } },
-    });
-    bytes += Buffer.byteLength(JSON.stringify(projected));
-  }
-  return bytes;
-}
-
-test("serialized codemode progress grows linearly once snapshots hit the limit", () => {
-  const base = projectedCodemodeSnapshotBytes(CODEMODE_SNAPSHOT_CALL_LIMIT * 2);
-  const doubled = projectedCodemodeSnapshotBytes(CODEMODE_SNAPSHOT_CALL_LIMIT * 4);
-  // Untruncated, doubling the calls would quadruple the bytes.
-  assert.ok(doubled / base < 2.6, `expected near-linear growth, got ${doubled / base}`);
 });
 
 function projectedStreamBytes(totalLength) {

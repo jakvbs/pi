@@ -61,7 +61,7 @@ function recordingRuntime() {
   };
 }
 
-// Stands in for codemode: a direct tool that calls other tools through `ctx.executeTool()`.
+// A direct tool that calls other tools through `ctx.executeTool()`.
 function nestedCallerExtension(outcomes) {
   return (pi) => {
     pi.registerTool({
@@ -76,7 +76,7 @@ function nestedCallerExtension(outcomes) {
     pi.registerTool({
       name: "script",
       label: "script",
-      description: "Call other tools the way a codemode script does.",
+      description: "Call other tools through ctx.executeTool().",
       parameters: Type.Object({}),
       async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
         const calls = [
@@ -132,7 +132,7 @@ function textOf(message) {
   return message.content.map((block) => block.text ?? "").join("");
 }
 
-// A codemode script must not start, collect, or steer subagents: a run started from a script
+// Another tool must not start, collect, or steer subagents: a run started from a tool
 // would carry a nested parentToolCallId that no transcript entry has, so the chat could not
 // link to its session. The model itself keeps all three tools and can still call them.
 test("subagent control tools are declared to the model but cannot be called from another tool", async () => {
