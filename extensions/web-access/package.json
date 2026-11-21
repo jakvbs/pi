@@ -1,85 +1,35 @@
 {
   "name": "pi-web-access",
-  "version": "0.48.0",
-  "description": "Web search, URL fetching, GitHub repo cloning, PDF extraction, YouTube video understanding, and local video analysis for Pi coding agent. Supports OpenAI, Brave, Parallel, TinyFish, Searchinfinity, Querit, Tavily, Firecrawl, Crawl4AI, Jina, Kagi, Ollama, AnySearch, You.com, SearXNG, degoog, Exa, Perplexity, Gemini, Kimi, Mistral, Tabstack, and custom search providers set in config.",
+  "version": "1.0.0",
+  "private": true,
   "type": "module",
+  "description": "Web search (OpenAI hosted search, Exa), page, PDF and GitHub repository fetching, and stored-result retrieval for pi.",
+  "license": "MIT",
   "engines": {
     "node": ">=22.19.0"
   },
   "scripts": {
-    "test": "node --import ./test/isolate-env.mjs --import ../../packages/coding-agent/src/experimental/source-resolver.ts --test",
-    "typecheck": "tsc --noEmit",
-    "audit:runtime": "npm audit --omit=dev --omit=peer"
+    "test": "node --import ../../packages/coding-agent/src/experimental/source-resolver.ts --test *.test.ts",
+    "typecheck": "tsc --noEmit"
   },
-  "keywords": [
-    "pi-package",
-    "pi",
-    "pi-coding-agent",
-    "extension",
-    "web-search",
-    "tinyfish",
-    "searchinfinity",
-    "querit",
-    "tabstack",
-    "degoog",
-    "perplexity",
-    "fetch",
-    "scraping"
-  ],
-  "author": "Nico Bailon",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/nicobailon/pi-web-access.git"
-  },
-  "bugs": {
-    "url": "https://github.com/nicobailon/pi-web-access/issues"
-  },
-  "homepage": "https://github.com/nicobailon/pi-web-access#readme",
-  "files": [
-    "dist",
-    "*.ts",
-    "CHANGELOG.md",
-    "SECURITY.md",
-    "banner.png",
-    "pi-web-fetch-demo.mp4"
-  ],
-  "devDependencies": {
-    "@types/turndown": "5.0.6"
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.32.1",
     "@mozilla/readability": "0.6.0",
-    "defuddle": "0.19.3",
     "linkedom": "0.16.11",
-    "p-limit": "6.2.0",
-    "promise.try": "2.0.2",
     "turndown": "7.2.4",
-    "undici": "8.12.3",
     "unpdf": "1.9.0"
+  },
+  "devDependencies": {
+    "@types/turndown": "5.0.6"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
-  },
-  "peerDependenciesMeta": {
-    "@earendil-works/pi-ai": {
-      "optional": true
-    },
-    "@earendil-works/pi-coding-agent": {
-      "optional": true
-    },
-    "@earendil-works/pi-tui": {
-      "optional": true
-    }
-  },
-  "pi": {
-    "extensions": [
-      "./index.ts"
-    ],
-    "video": "https://github.com/nicobailon/pi-web-access/raw/refs/heads/main/pi-web-fetch-demo.mp4"
-  },
-  "private": true
+  }
 }
