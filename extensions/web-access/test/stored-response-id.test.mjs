@@ -17,10 +17,7 @@ await writeFile(configPath, JSON.stringify(baseConfig));
 
 const { default: initializeExtension } = await import("../index.ts");
 const { clearResults, storeResult } = await import("../storage.ts");
-const { createWebToolCore, createStandaloneWebToolCore, DEFAULT_TOOL_NAMES } = await import("../web-tool-core.ts");
-const { createMcpServer } = await import("../mcp-server.ts");
-const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
-const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+const { createWebToolCore, DEFAULT_TOOL_NAMES } = await import("../web-tool-core.ts");
 
 const pageUrl = "http://93.184.216.34/page";
 const page = "ORIGINAL_PAGE_MARKER and a short original source.";
@@ -170,20 +167,4 @@ test("the shared approved-review formatter retains usable search guidance", asyn
 	assert.equal(result.content[0].text, "Approved prose");
 	const stored = await core.getSearchContent(printedCall(result, "queryIndex"));
 	assert.match(visibleText(stored), /Provider answer/);
-});
-
-test("MCP short fetch exposes an ID through content, without exporting metadata", async t => {
-	const core = createStandaloneWebToolCore();
-	const server = createMcpServer(core, { name: "visible-id-test", version: "0.0.0" });
-	const client = new Client({ name: "test", version: "0.0.0" });
-	const [ct, st] = InMemoryTransport.createLinkedPair();
-	await Promise.all([server.connect(st), client.connect(ct)]);
-	t.after(async () => { await client.close(); await server.close(); });
-	const result = await client.callTool({ name: "fetch_content", arguments: { url: pageUrl, mode: "raw" } });
-	assert.equal(result.details, undefined);
-	assert.equal(result.structuredContent, undefined);
-	assert.equal(result.content[0].text, page);
-	const stored = await client.callTool({ name: "get_search_content", arguments: printedCall(result) });
-	assert.notEqual(stored.isError, true);
-	assert.match(visibleText(stored), /ORIGINAL_PAGE_MARKER/);
 });

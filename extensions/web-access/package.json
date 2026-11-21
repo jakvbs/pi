@@ -3,17 +3,13 @@
   "version": "0.48.0",
   "description": "Web search, URL fetching, GitHub repo cloning, PDF extraction, YouTube video understanding, and local video analysis for Pi coding agent. Supports OpenAI, Brave, Parallel, TinyFish, Searchinfinity, Querit, Tavily, Firecrawl, Crawl4AI, Jina, Kagi, Ollama, AnySearch, You.com, SearXNG, degoog, Exa, Perplexity, Gemini, Kimi, Mistral, Tabstack, and custom search providers set in config.",
   "type": "module",
-  "bin": {
-    "pi-web-access-mcp": "dist/mcp-cli.js"
-  },
   "engines": {
     "node": ">=22.19.0"
   },
   "scripts": {
     "test": "node --import ./test/isolate-env.mjs --import ../../packages/coding-agent/src/experimental/source-resolver.ts --test",
     "typecheck": "tsc --noEmit",
-    "audit:runtime": "npm audit --omit=dev --omit=peer",
-    "build": "node scripts/build.js"
+    "audit:runtime": "npm audit --omit=dev --omit=peer"
   },
   "keywords": [
     "pi-package",

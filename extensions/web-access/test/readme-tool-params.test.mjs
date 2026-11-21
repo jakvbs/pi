@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import initializeExtension from "../index.ts";
-import { MCP_TOOL_DEFINITIONS } from "../mcp-tool-definitions.ts";
 
 // Tool schemas carry short descriptions only; each parameter's details live in the tool's README section.
 const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
@@ -21,7 +20,7 @@ function undocumented(tool, properties) {
 	return Object.keys(properties).filter((name) => !section.includes(`\`${name}\``)).map((name) => `${tool}.${name}`);
 }
 
-test("every Pi and MCP tool parameter is named in its tool's README section", () => {
+test("every Pi tool parameter is named in its tool's README section", () => {
 	const tools = [];
 	initializeExtension({
 		registerTool(tool) { tools.push(tool); },
@@ -32,7 +31,6 @@ test("every Pi and MCP tool parameter is named in its tool's README section", ()
 	assert.deepEqual(tools.map((tool) => tool.name), ["web_search", "source_check", "fetch_content", "get_search_content"]);
 	const missing = [
 		...tools.flatMap((tool) => undocumented(tool.name, tool.parameters.properties)),
-		...MCP_TOOL_DEFINITIONS.flatMap((tool) => undocumented(tool.name, tool.inputSchema.properties)),
 	];
 	assert.deepEqual([...new Set(missing)], []);
 });

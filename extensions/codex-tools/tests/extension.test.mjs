@@ -3,7 +3,7 @@ import test from "node:test";
 import { readFile, access } from "node:fs/promises";
 import { join } from "node:path";
 import { Type } from "typebox";
-import { createCodemodeExtension, createEditToolDefinition, createWriteToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createEditToolDefinition, createWriteToolDefinition } from "@earendil-works/pi-coding-agent";
 import { codexHarness, requestBody, textResponse } from "./codex-harness.mjs";
 
 process.env.CI = "1";
@@ -452,54 +452,6 @@ test("explicit deactivation survives reload and model switches", async (t) => {
     await harness.close();
   }
 });
-
-for (const mode of ["on", "only"]) {
-  test(`real codemode discovers and executes native editing (${mode})`, async (t) => {
-    const harness = await codexHarness([createCodemodeExtension({ mode }), piCodexTools], {
-      defaultTools: ["read", "bash", "edit", "write", "codemode"],
-    });
-    try {
-      const declarations = await getDeclaredTools(t, harness);
-      const patch = declarations.find((tool) => tool.name === "apply_patch");
-      assert.equal(patch.type, "custom");
-      assert.match(patch.description, /describeTool\("edit"\)/);
-      assert.match(patch.description, /describeTool\("write"\)/);
-      for (const name of ["edit", "write"]) assert.ok(!declarations.some((tool) => tool.name === name));
-      const code = [
-        'text({ edit: await describeTool("edit"), write: await describeTool("write"), patch: await describeTool("apply_patch") });',
-        'await tools.write({ path: "codemode.txt", content: "before\\n" });',
-        'await tools.edit({ path: "codemode.txt", edits: [{ oldText: "before", newText: "after" }] });',
-        'text(ALL_TOOLS.map(tool => tool.name));',
-      ].join("\n");
-      const item = { type: "custom_tool_call", id: "ct_code", call_id: "call_code", name: "codemode", input: code };
-      let requests = 0;
-      t.mock.method(globalThis, "fetch", async () => {
-        if (requests++) return textResponse();
-        return new Response([
-          { type: "response.output_item.added", output_index: 0, item: { ...item, input: "" } },
-          { type: "response.custom_tool_call_input.delta", output_index: 0, item_id: item.id, delta: code },
-          { type: "response.output_item.done", output_index: 0, item },
-          { type: "response.completed", response: { status: "completed", output: [item], usage: { input_tokens: 10, output_tokens: 1 } } },
-        ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), {
-          headers: { "content-type": "text/event-stream" },
-        });
-      });
-      await harness.session.prompt("Write and edit codemode.txt through codemode.");
-      const result = harness.session.messages.findLast((message) => message.role === "toolResult");
-      assert.equal(result?.isError, false, JSON.stringify(result?.content));
-      assert.equal(await readFile(join(harness.ctx.cwd, "codemode.txt"), "utf8"), "after\n");
-      const output = result.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
-      assert.match(output, /oldText/);
-      assert.match(output, /content/);
-      assert.deepEqual(result.nestedCalls.calls.map((call) => call.name), ["write", "edit"]);
-      assert.ok(!harness.session.getCallableToolNames().includes("apply_patch"));
-      assert.deepEqual(harness.errors, []);
-    } finally {
-      t.mock.restoreAll();
-      await harness.close();
-    }
-  });
-}
 
 test("reload preserves nested editing and unsupported-model declarations", async (t) => {
   const harness = await codexHarness([piCodexTools, nestedProbe(async (ctx) => {

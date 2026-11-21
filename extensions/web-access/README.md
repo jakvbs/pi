@@ -34,8 +34,6 @@ The agent can now pull specific values off a page, like a price or a rate limit,
 
 **GitHub Cloning** — GitHub URLs are cloned locally instead of scraped. The agent gets real file contents and a local path to explore, not rendered HTML.
 
-**Other Agents** — The search and fetch tools also run as a local MCP server for Claude Code, Codex, Cursor, and other MCP clients. See [Use from other agents (MCP)](#use-from-other-agents-mcp).
-
 ## Install
 
 ```bash
@@ -335,34 +333,6 @@ const urls = search.queries[0].results.slice(0, 3).map((result) => result.url);
 const page = await tools.fetch_content({ urls, mode: "extract", fields: { pro_monthly: "number: Pro plan price per month" } });
 return page.urls.map(({ url, extraction }) => ({ url, price: extraction?.fields?.pro_monthly }));
 ```
-
-## Use from other agents (MCP)
-
-Other agents, such as Claude Code, Codex, Cursor, or Executor, can use `web_search`, `fetch_content`, `get_search_content`, and `source_check` through a local stdio MCP server. It needs Node.js 22.19 or later and no Pi install:
-
-```bash
-npx -y pi-web-access
-```
-
-Add it to an `mcpServers` config (Claude Code, Cursor, and similar clients; Codex takes the same command, args, and env in its `config.toml`):
-
-```json
-{
-  "mcpServers": {
-    "pi-web-access": {
-      "command": "npx",
-      "args": ["-y", "pi-web-access"],
-      "env": { "BRAVE_API_KEY": "BSA_..." }
-    }
-  }
-}
-```
-
-- The server reads the same `web-search.json` and provider environment variables as the extension. It lists only the tools enabled there, under their default names; `toolNames` renames do not apply.
-- Pi-only features are not available: the curator and summaries (a configured `workflow` is ignored), Kimi search, OpenAI search through ChatGPT sign-in or the current Pi model, `fetch_content` answer and extract modes and video prompts or frames, and direct image fetches. Explicit requests for them return a tool error rather than a fallback, and automatic provider selection only uses providers that work outside Pi.
-- `includeContent` waits for the page fetch before `web_search` returns.
-- The server keeps the 50 most recent results in memory for `get_search_content`; they are gone when it exits. Restart the server to pick up config changes.
-- Install with npm's default settings or `--legacy-peer-deps`. `--omit=peer` leaves out `zod`, which the MCP SDK needs.
 
 ## Capabilities
 

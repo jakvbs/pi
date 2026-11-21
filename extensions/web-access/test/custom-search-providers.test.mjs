@@ -247,20 +247,6 @@ test("auto and all never use a custom provider", async () => {
 	assert.ok(output.calls.every((url) => !url.startsWith("https://google.serper.dev")), output.calls.join("\n"));
 });
 
-test("the MCP server accepts a custom provider name", async () => {
-	const home = await createHome({ customSearchProviders: { mysearch: recipe("serper") } });
-	const output = runChild(`
-		const { MCP_TOOL_DEFINITIONS, validateMcpToolArguments } = await import(${JSON.stringify(new URL("../mcp-tool-definitions.ts", import.meta.url).href)});
-		const tool = MCP_TOOL_DEFINITIONS.find((t) => t.name === "web_search");
-		console.log(JSON.stringify({
-			custom: validateMcpToolArguments(tool, { query: "q", provider: ["mysearch", "brave"] }),
-			unknown: validateMcpToolArguments(tool, { query: "q", provider: "nosuch" }),
-		}));
-	`, { PI_CODING_AGENT_DIR: home });
-	assert.deepEqual(output.custom, []);
-	assert.match(output.unknown[0], /unknown provider "nosuch".* Custom: mysearch\./);
-});
-
 test("a custom provider's key never appears in its error", async () => {
 	const home = await createHome({ customSearchProviders: { mysearch: recipe("serpapi") } });
 	const output = runChild(`

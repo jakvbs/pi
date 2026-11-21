@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, getCurrentTools, getSystemMessageText } from "@earendil-works/pi-ai";
-import { createAgentSession, createCodemodeExtension, createToolSearchExtension, DefaultResourceLoader, SessionManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader, SessionManager } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 const extensionPath = new URL("../index.ts", import.meta.url).pathname;
 const root = mkdtempSync(join(tmpdir(), "pi-web-access-sdk-"));
@@ -200,17 +201,31 @@ test("deferred exposure keeps web_enable as the route to web tools on a model wi
 	assert.deepEqual(requests[1].tools.map(tool => tool.name), ["web_enable", ...deferredWebTools]);
 });
 
-test("none activation leaves deferred web tools to codemode scripts without web_enable", async () => {
+/** A tool that calls other tools through ctx.executeTool(), as a script runner would. */
+function nestedCallerExtension(pi) {
+	pi.registerTool({
+		name: "call_tools",
+		label: "call_tools",
+		description: "Calls get_search_content.",
+		parameters: Type.Object({}),
+		exposure: "model-only",
+		execute: async (_id, _params, _signal, _onUpdate, ctx) => {
+			// An unknown responseId answers offline, so the call proves the tool runs without web_enable.
+			const outcome = await ctx.executeTool("get_search_content", { responseId: "missing" });
+			const text = JSON.stringify({ names: ctx.tools.map(tool => tool.name), call: outcome.result.content });
+			return { content: [{ type: "text", text }], details: {} };
+		},
+	});
+}
+
+test("none activation leaves deferred web tools to nested callers without web_enable", async () => {
 	let scriptResult;
 	const requests = await withNativeEnv({ toolExposure: "deferred", toolActivation: "none" }, async () => {
 		const { faux, requests, captureRequest, start } = nativeHarness();
 		faux.setResponses([
 			(context) => {
 				captureRequest(context);
-				return fauxAssistantMessage(fauxToolCall("codemode", {
-					// An unknown responseId answers offline, so the call proves the tool runs without web_enable.
-					code: "let call; try { call = await tools.get_search_content({ responseId: 'missing' }); } catch (error) { call = error.message; } return { names: ALL_TOOLS.map(tool => tool.name), call };",
-				}), { stopReason: "toolUse" });
+				return fauxAssistantMessage(fauxToolCall("call_tools", {}), { stopReason: "toolUse" });
 			},
 			(context) => {
 				captureRequest(context);
@@ -218,36 +233,12 @@ test("none activation leaves deferred web tools to codemode scripts without web_
 				return fauxAssistantMessage("done");
 			},
 		]);
-		const session = await start({ extensions: true, sessionManager: SessionManager.inMemory(root), reason: "startup", noTools: "builtin", extensionFactories: [createCodemodeExtension()] });
-		session.setActiveToolsByName([...session.getActiveToolNames(), "codemode"]);
+		const session = await start({ extensions: true, sessionManager: SessionManager.inMemory(root), reason: "startup", noTools: "builtin", extensionFactories: [nestedCallerExtension] });
 		await session.prompt("Research this");
 		session.dispose();
 		return requests;
 	});
-	for (const request of requests) assert.deepEqual(request.tools.map(tool => tool.name), ["codemode"]);
+	for (const request of requests) assert.deepEqual(request.tools.map(tool => tool.name), ["call_tools"]);
 	for (const name of deferredWebTools) assert.match(scriptResult, new RegExp(name));
 	assert.match(scriptResult, /No stored results for responseId/);
-});
-
-test("Pi's tool_search finds and loads a deferred web tool", async () => {
-	const requests = await withNativeEnv({ toolExposure: "deferred" }, async () => {
-		const { faux, requests, captureRequest, start } = nativeHarness();
-		faux.setResponses([
-			(context) => {
-				captureRequest(context);
-				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "fetch content from a URL" }), { stopReason: "toolUse" });
-			},
-			(context) => {
-				captureRequest(context);
-				return fauxAssistantMessage("done");
-			},
-		]);
-		const session = await start({ extensions: true, sessionManager: SessionManager.inMemory(root), reason: "startup", noTools: "builtin", extensionFactories: [createToolSearchExtension()] });
-		session.setActiveToolsByName([...session.getActiveToolNames(), "tool_search"]);
-		await session.prompt("Read https://example.com");
-		session.dispose();
-		return requests;
-	});
-	assert.ok(!requests[0].tools.some(tool => deferredWebTools.includes(tool.name)));
-	assert.ok(requests[1].tools.some(tool => tool.name === "fetch_content"));
 });
