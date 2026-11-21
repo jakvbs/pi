@@ -111,3 +111,17 @@ packages/coding-agent/test/subagent-extension.test.ts
 packages/coding-agent/test/suite/regressions/8261-subagent-project-trust.test.ts
 packages/coding-agent/test/tool-renderer-examples.test.ts
 packages/coding-agent/test/trigger-compact-extension.test.ts
+
+# coding-agent modules nothing imports: the Bun binary entry, the stale core barrel, the published editor JSON schemas
+# and their generator, one-off probes and a v0.30 session migration script.
+packages/coding-agent/schemas
+packages/coding-agent/scripts/generate-schemas.ts
+packages/coding-agent/scripts/migrate-sessions.sh
+packages/coding-agent/src/bun
+packages/coding-agent/src/core/index.ts
+packages/coding-agent/src/core/keybindings-schema.ts
+packages/coding-agent/test/config-schemas.test.ts
+packages/coding-agent/test/restore-sandbox-env.test.ts
+packages/coding-agent/test/rpc-example.ts
+packages/coding-agent/test/sdk-codex-cache-probe-tool-loop.ts
+packages/coding-agent/test/streaming-render-debug.ts
