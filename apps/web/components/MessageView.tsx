@@ -16,8 +16,8 @@ import { diffGapLabel, parseUnifiedPatch, unifiedDiffLines, type SplitDiffCell, 
 import { editPreviewFile } from "@/lib/edit-preview";
 import { applyPatchPreviewToFiles, applyPatchResultHasFailures, extractApplyPatchPaths, getApplyPatchInputText, parseApplyPatchInput } from "@/lib/apply-patch";
 import { isApplyPatchToolName, isEditToolName, isWriteToolName } from "@/lib/tool-names";
-import { isToolCallExpanded, setToolCallExpanded } from "@/lib/tool-call-expansion";
-import { isThinkingExpandedByDefault, THINKING_EXPANDED_EVENT } from "@/lib/thinking-expansion-preference";
+import { useBlockExpansion } from "@/hooks/useBlockExpansion";
+import { customMessageBlockType, toolCallBlockType, type CollapseBlockType } from "@/lib/collapse-policy";
 import { TurnWrittenFiles } from "./TurnWrittenFiles";
 import type { WrittenFile } from "@/lib/turn-written-files";
 import { skillExpansionContent, skillExpansionToCommand } from "@/lib/slash-display";
@@ -884,7 +884,7 @@ function AssistantMessageView({
         {/* Not keyed by the entry id: a message of this run gets one when the file is
             read again, and its blocks keep their state across that read (#1184). */}
         {blockItems.map(({ block, originalIndex }) => (
-          <BlockView key={originalIndex} block={block} searchTarget={block === searchBlock} toolResults={toolResults} toolsNotRun={aborted || providerError !== null} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} toolClocks={toolClocks} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
+          <BlockView key={originalIndex} block={block} searchTarget={block === searchBlock} toolResults={toolResults} toolsNotRun={aborted || providerError !== null} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} toolClocks={toolClocks} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} messageTimestamp={message.timestamp} />
         ))}
       </div>
 
@@ -1010,12 +1010,12 @@ function AssistantMessageView({
   );
 }
 
-function BlockView({ block, searchTarget, toolResults, toolsNotRun, isStreaming, streamingDuration, toolCallDurations, toolClocks, cwd, onOpenFile, onOpenSubagent, sessionId, entryId, blockIndex }: { block: AssistantContentBlock; searchTarget?: boolean; toolResults?: Map<string, ToolResultMessage>; toolsNotRun?: boolean; isStreaming?: boolean; streamingDuration?: number; toolCallDurations?: Map<string, number>; toolClocks?: ToolClocks; cwd?: string; onOpenFile?: (filePath: string, page?: number) => void; onOpenSubagent?: (sessionId: string, label: string) => void; sessionId?: string; entryId?: string; blockIndex: number }) {
+function BlockView({ block, searchTarget, toolResults, toolsNotRun, isStreaming, streamingDuration, toolCallDurations, toolClocks, cwd, onOpenFile, onOpenSubagent, sessionId, entryId, blockIndex, messageTimestamp }: { block: AssistantContentBlock; searchTarget?: boolean; toolResults?: Map<string, ToolResultMessage>; toolsNotRun?: boolean; isStreaming?: boolean; streamingDuration?: number; toolCallDurations?: Map<string, number>; toolClocks?: ToolClocks; cwd?: string; onOpenFile?: (filePath: string, page?: number) => void; onOpenSubagent?: (sessionId: string, label: string) => void; sessionId?: string; entryId?: string; blockIndex: number; messageTimestamp?: number }) {
   if (block.type === "text") {
     return <div data-message-text data-search-target={searchTarget || undefined}><TextBlock block={block as TextContent} isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} /></div>;
   }
   if (block.type === "thinking") {
-    return <ThinkingBlock block={block as ThinkingContent} duration={streamingDuration} sessionId={sessionId} entryId={entryId} blockIndex={blockIndex} />;
+    return <ThinkingBlock block={block as ThinkingContent} duration={streamingDuration} sessionId={sessionId} entryId={entryId} blockIndex={blockIndex} messageTimestamp={messageTimestamp} />;
   }
   if (block.type === "toolCall") {
     const tc = block as ToolCallContent;
@@ -1043,15 +1043,20 @@ function ThinkingText({ text }: { text: string }) {
   return pieces.map((piece, index) => <div key={index}>{piece.text}</div>);
 }
 
-export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
+export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex, messageTimestamp }: {
   block: ThinkingContent;
   duration?: number;
   sessionId?: string;
   entryId?: string;
   blockIndex: number;
+  /** The assistant message's request time: with the block index, the block's key for a toggle, kept from the stream to the file (an entry id comes later). */
+  messageTimestamp?: number;
 }) {
   const { t } = useI18n();
-  const [expanded, setExpanded] = useState(isThinkingExpandedByDefault);
+  const [expanded, toggleExpanded] = useBlockExpansion(
+    "thinking",
+    messageTimestamp === undefined ? undefined : `thinking:${sessionId ?? ""}:${messageTimestamp}:${blockIndex}`,
+  );
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1068,13 +1073,6 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
   const tRef = useRef(t);
   tRef.current = t;
   const preview = getThinkingPreview(block.thinking);
-
-  // Keep already-mounted blocks in sync when the preference changes.
-  useEffect(() => {
-    const onChange = () => setExpanded(isThinkingExpandedByDefault());
-    window.addEventListener(THINKING_EXPANDED_EVENT, onChange);
-    return () => window.removeEventListener(THINKING_EXPANDED_EVENT, onChange);
-  }, []);
 
   // Load deferred history content whenever the block is expanded.
   // loadThinkingContent() memoizes in-flight promises and drops failed ones
@@ -1123,7 +1121,7 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
         aria-expanded={expanded}
         aria-label={`${t("i18n.thinking")}${preview ? `: ${preview}` : ""}`}
         title={t("i18n.thinking")}
-        onClick={() => setExpanded((v) => !v)}
+        onClick={toggleExpanded}
         style={{
           display: "inline-flex",
           alignItems: "center",
@@ -1215,14 +1213,11 @@ function ToolClockTime({ clock }: { clock: ToolClock }) {
 // what it offers acts on the result the reader is looking at.
 // `notRun`: the message ended aborted or in an error, so pi ran none of its
 // calls and no result will come (pi-agent-core's agent loop).
-function ToolCallBlock({ block, result, notRun, duration, clock, onOpenSubagent, resultFooter }: { block: ToolCallContent; result?: ToolResultMessage; notRun?: boolean; duration?: number; clock?: ToolClock; onOpenSubagent?: (sessionId: string, label: string) => void; resultFooter?: ReactNode }) {
+// `blockType`: the collapse policy's type when the card stands for something else
+// than an agent's tool call (a `!` command); otherwise the tool's name decides.
+function ToolCallBlock({ block, result, notRun, duration, clock, onOpenSubagent, resultFooter, blockType }: { block: ToolCallContent; result?: ToolResultMessage; notRun?: boolean; duration?: number; clock?: ToolClock; onOpenSubagent?: (sessionId: string, label: string) => void; resultFooter?: ReactNode; blockType?: CollapseBlockType }) {
   const { t } = useI18n();
-  const [expanded, setExpanded] = useState(() => isToolCallExpanded(block.toolCallId));
-  const toggleExpanded = () => {
-    const next = !expanded;
-    setToolCallExpanded(block.toolCallId, next);
-    setExpanded(next);
-  };
+  const [expanded, toggleExpanded] = useBlockExpansion(blockType ?? toolCallBlockType(block.toolName), block.toolCallId);
   const writtenFileText = getWrittenFileText(block);
   const inputStr = writtenFileText ?? getToolCallInputText(block);
   const isStreamingInput = block.rawInput !== undefined;
@@ -2003,8 +1998,12 @@ function CompactionFileList({ title, files }: { title: string; files: string[] }
 
 function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessage; cwd?: string; onOpenFile?: (filePath: string, page?: number) => void }) {
   const { t } = useI18n();
-  // Expanded by default: pi's TUI always draws a displayed custom message in full.
-  const [contentExpanded, setContentExpanded] = useState(true);
+  // The collapse policy decides how it starts: an extension message expanded by
+  // default, as pi's TUI draws it in full; a subagent's report collapsed.
+  const [contentExpanded, toggleContentExpanded] = useBlockExpansion(
+    customMessageBlockType(message),
+    message.timestamp === undefined ? undefined : `custom:${message.customType}:${message.timestamp}`,
+  );
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const text = getMessageText(message.content);
@@ -2047,7 +2046,7 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
         >
           <button
             type="button"
-            onClick={() => setContentExpanded((v) => !v)}
+            onClick={toggleContentExpanded}
             aria-expanded={contentExpanded}
             title={contentExpanded ? t("i18n.collapse") : t("i18n.expand")}
             style={{
@@ -2441,7 +2440,7 @@ function BashExecutionView({ message, sessionId }: { message: BashExecutionMessa
 
   return (
     <div style={{ margin: "6px 0" }}>
-      <ToolCallBlock block={block} result={result} resultFooter={fullOutputFooter} />
+      <ToolCallBlock block={block} result={result} resultFooter={fullOutputFooter} blockType="bash" />
     </div>
   );
 }

@@ -24,7 +24,7 @@ const {
 } = await jiti.import("./MessageView.tsx");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 const { splitFinalAssistantBlocks } = await jiti.import("@/lib/message-display");
-const { clearExpandedToolCalls, setToolCallExpanded } = await jiti.import("@/lib/tool-call-expansion");
+const { clearBlockExpansions, setBlockExpansion } = await jiti.import("@/lib/block-expansion");
 const { parseUnifiedPatch } = await jiti.import("@/lib/patch");
 
 function renderMessage(message, props = {}) {
@@ -92,40 +92,37 @@ test("matches response model aliases and otherwise includes the provider", () =>
   assert.equal(getModelDisplayName("gateway", "unknown-model", names), "gateway/unknown-model");
 });
 
-test("previews the first thinking line and reveals the full text with the saved default", () => {
-  const previousWindow = globalThis.window;
-  try {
-    for (const expanded of [false, true]) {
-      globalThis.window = { localStorage: { getItem: () => String(expanded) } };
-      const html = renderToStaticMarkup(React.createElement(
-        I18nProvider,
-        null,
-        React.createElement(ThinkingBlock, {
-          block: { type: "thinking", thinking: "**Independent reasoning**\n\nDetailed second line." },
-          blockIndex: 2,
-          duration: 3,
-        }),
-      ));
-      assert.match(html, new RegExp(`aria-expanded="${expanded}"`));
-      assert.equal((html.match(/>[^<]*Independent reasoning[^<]*</g) ?? []).length, 1);
-      assert.equal(html.includes("Detailed second line."), expanded);
-      assert.match(html, /aria-label="Thinking: /);
-      assert.match(html, /3s/);
-    }
-  } finally {
-    if (previousWindow === undefined) delete globalThis.window;
-    else globalThis.window = previousWindow;
+test("previews the first thinking line and reveals the full text once opened", (t) => {
+  t.after(clearBlockExpansions);
+  for (const expanded of [false, true]) {
+    // A toggle is kept by the message's request time and the block's index.
+    setBlockExpansion("thinking::1000:2", expanded);
+    const html = renderToStaticMarkup(React.createElement(
+      I18nProvider,
+      null,
+      React.createElement(ThinkingBlock, {
+        block: { type: "thinking", thinking: "**Independent reasoning**\n\nDetailed second line." },
+        blockIndex: 2,
+        messageTimestamp: 1000,
+        duration: 3,
+      }),
+    ));
+    assert.match(html, new RegExp(`aria-expanded="${expanded}"`));
+    assert.equal((html.match(/>[^<]*Independent reasoning[^<]*</g) ?? []).length, 1);
+    assert.equal(html.includes("Detailed second line."), expanded);
+    assert.match(html, /aria-label="Thinking: /);
+    assert.match(html, /3s/);
   }
 });
 
-test("renders long expanded thinking in pieces and short thinking as one text node (#1196)", () => {
-  const previousWindow = globalThis.window;
-  globalThis.window = { localStorage: { getItem: () => "true" } };
+test("renders long expanded thinking in pieces and short thinking as one text node (#1196)", (t) => {
+  t.after(clearBlockExpansions);
+  setBlockExpansion("thinking::1000:0", true);
   const contentOf = (thinking) => {
     const html = renderToStaticMarkup(React.createElement(
       I18nProvider,
       null,
-      React.createElement(ThinkingBlock, { block: { type: "thinking", thinking }, blockIndex: 0 }),
+      React.createElement(ThinkingBlock, { block: { type: "thinking", thinking }, blockIndex: 0, messageTimestamp: 1000 }),
     ));
     return html.match(/overflow-wrap:anywhere">([\s\S]*)<\/div><\/div>$/)[1];
   };
@@ -136,19 +133,14 @@ test("renders long expanded thinking in pieces and short thinking as one text no
     assert.ok(pieces.length > 1);
     return pieces;
   };
-  try {
-    assert.equal(contentOf("First <b>line</b>\n\nSecond line."), "First &lt;b&gt;line&lt;/b&gt;\n\nSecond line.");
+  assert.equal(contentOf("First <b>line</b>\n\nSecond line."), "First &lt;b&gt;line&lt;/b&gt;\n\nSecond line.");
 
-    // The block boundary stands in for the line break at a cut; a line with
-    // no break is cut with nothing left out.
-    const thinking = "Wait, let me check settings.json again.\n".repeat(2_000);
-    assert.equal(piecesOf(thinking).join("\n"), thinking);
-    const oneLine = "Wait, let me check settings.json again. ".repeat(2_000);
-    assert.equal(piecesOf(oneLine).join(""), oneLine);
-  } finally {
-    if (previousWindow === undefined) delete globalThis.window;
-    else globalThis.window = previousWindow;
-  }
+  // The block boundary stands in for the line break at a cut; a line with
+  // no break is cut with nothing left out.
+  const thinking = "Wait, let me check settings.json again.\n".repeat(2_000);
+  assert.equal(piecesOf(thinking).join("\n"), thinking);
+  const oneLine = "Wait, let me check settings.json again. ".repeat(2_000);
+  assert.equal(piecesOf(oneLine).join(""), oneLine);
 });
 
 test("shows deferred thinking previews without loading the full content", () => {
@@ -230,8 +222,8 @@ test("renders write tool content as readable file text", () => {
     toolName: "write",
     input: { path: "src/example.ts", content: "first line\nsecond line\n" },
   };
-  clearExpandedToolCalls();
-  setToolCallExpanded(block.toolCallId, true);
+  clearBlockExpansions();
+  setBlockExpansion(block.toolCallId, true);
   try {
     const html = renderMessage({
       role: "assistant",
@@ -245,7 +237,7 @@ test("renders write tool content as readable file text", () => {
     assert.ok(!html.includes("<table"));
     assert.doesNotMatch(textOf(html), /"content":/);
   } finally {
-    clearExpandedToolCalls();
+    clearBlockExpansions();
   }
 });
 
@@ -256,14 +248,14 @@ test("a write with another argument or an empty file shows every argument as a r
   ];
   for (const { id, input, expect } of cases) {
     const block = { type: "toolCall", toolCallId: id, toolName: "write", input };
-    clearExpandedToolCalls();
-    setToolCallExpanded(id, true);
+    clearBlockExpansions();
+    setBlockExpansion(id, true);
     try {
       const html = renderMessage({ role: "assistant", provider: "anthropic", model: "claude-test", content: [block] });
       assert.ok(textOf(html).includes(expect), id);
       assert.doesNotMatch(textOf(html), /"path":/, id);
     } finally {
-      clearExpandedToolCalls();
+      clearBlockExpansions();
     }
   }
 });
@@ -279,8 +271,8 @@ test("streaming input shows the rows pi's partial parse has so far, else its raw
   ];
   for (const { id, toolName, rawInput, rows } of cases) {
     const block = { type: "toolCall", toolCallId: id, toolName, input: {}, rawInput };
-    clearExpandedToolCalls();
-    setToolCallExpanded(id, true);
+    clearBlockExpansions();
+    setBlockExpansion(id, true);
     try {
       const html = renderMessage({ role: "assistant", provider: "anthropic", model: "claude-test", content: [block] });
       if (rows) {
@@ -291,7 +283,7 @@ test("streaming input shows the rows pi's partial parse has so far, else its raw
         assert.ok(textOf(html).includes(getToolCallInputText(block)), id);
       }
     } finally {
-      clearExpandedToolCalls();
+      clearBlockExpansions();
     }
   }
 });
@@ -303,15 +295,15 @@ test("a nested argument keeps the JSON body: a row cannot hold a subtree", () =>
     toolName: "mcp__issues__search",
     input: { query: "open bugs", filter: { labels: ["bug"], assignee: "me" }, limit: 10 },
   };
-  clearExpandedToolCalls();
-  setToolCallExpanded(block.toolCallId, true);
+  clearBlockExpansions();
+  setBlockExpansion(block.toolCallId, true);
   try {
     const html = renderMessage({ role: "assistant", provider: "anthropic", model: "claude-test", content: [block] });
     assert.ok(!html.includes("<table"));
     assert.ok(textOf(html).includes('"filter"'));
     assert.ok(textOf(html).includes('"labels"'));
   } finally {
-    clearExpandedToolCalls();
+    clearBlockExpansions();
   }
 });
 
@@ -321,13 +313,13 @@ test("an edit call shows no table: its arguments are a list of patches", () => {
     edits: [{ oldText: "const a = 1", newText: "const a = 2" }],
   };
   const block = { type: "toolCall", toolCallId: "call-edit-nested", toolName: "edit", input };
-  clearExpandedToolCalls();
-  setToolCallExpanded(block.toolCallId, true);
+  clearBlockExpansions();
+  setBlockExpansion(block.toolCallId, true);
   try {
     const html = renderMessage({ role: "assistant", provider: "anthropic", model: "claude-test", content: [block] });
     assert.ok(!html.includes("<table"));
   } finally {
-    clearExpandedToolCalls();
+    clearBlockExpansions();
   }
 });
 
@@ -338,8 +330,8 @@ test("a pending edit previews its edits as a diff until the result's diff replac
     toolName: "edit",
     input: { path: "src/a.ts", edits: [{ oldText: "const keep = 0;\nconst a = 1;", newText: "const keep = 0;\nconst a = 2;" }] },
   };
-  setToolCallExpanded(block.toolCallId, true);
-  t.after(() => setToolCallExpanded(block.toolCallId, false));
+  setBlockExpansion(block.toolCallId, true);
+  t.after(clearBlockExpansions);
   const message = { role: "assistant", provider: "anthropic", model: "claude-test", content: [block] };
 
   const pending = textOf(renderMessage(message, { toolResults: new Map() }));
@@ -374,8 +366,8 @@ test("an edit in an aborted or failed message gets no preview: pi never runs it"
       toolName: "edit",
       input: { path: "src/a.ts", edits: [{ oldText: "const a = 1;", newText: "const a = 2;" }] },
     };
-    setToolCallExpanded(block.toolCallId, true);
-    t.after(() => setToolCallExpanded(block.toolCallId, false));
+    setBlockExpansion(block.toolCallId, true);
+    t.after(clearBlockExpansions);
     const message = { role: "assistant", provider: "anthropic", model: "claude-test", content: [block], stopReason, errorMessage: "boom" };
     const html = textOf(renderMessage(message, { toolResults: new Map() }));
     assert.ok(!html.includes("const a = 2;"), stopReason);
@@ -385,8 +377,8 @@ test("an edit in an aborted or failed message gets no preview: pi never runs it"
 
 test("a pending edit with no edits to preview shows its input instead of nothing", (t) => {
   const block = { type: "toolCall", toolCallId: "call-edit-other", toolName: "str_replace_editor", input: { path: "f", old_str: "a", new_str: "b" } };
-  setToolCallExpanded(block.toolCallId, true);
-  t.after(() => setToolCallExpanded(block.toolCallId, false));
+  setBlockExpansion(block.toolCallId, true);
+  t.after(clearBlockExpansions);
   const html = renderMessage({ role: "assistant", provider: "anthropic", model: "claude-test", content: [block] }, { toolResults: new Map() });
   assert.ok(textOf(html).includes("old_str"));
 });
@@ -399,8 +391,8 @@ test("a read, a subagent and a flat MCP call show one row per argument", (t) => 
   ];
   for (const { id, toolName, input, expect } of cases) {
     const block = { type: "toolCall", toolCallId: id, toolName, input };
-    setToolCallExpanded(id, true);
-    t.after(() => setToolCallExpanded(id, false));
+    setBlockExpansion(id, true);
+    t.after(clearBlockExpansions);
     const html = renderMessage({ role: "assistant", provider: "anthropic", model: "claude-test", content: [block] });
     assert.ok(html.includes("<table"), id);
     for (const needle of expect) assert.ok(html.includes(needle), `${id}: ${needle}`);
@@ -415,8 +407,8 @@ test("a long or multi-line value stays inside the card", (t) => {
     toolName: "Agent",
     input: { subagent_type: "a".repeat(200), prompt: content },
   };
-  setToolCallExpanded(block.toolCallId, true);
-  t.after(() => setToolCallExpanded(block.toolCallId, false));
+  setBlockExpansion(block.toolCallId, true);
+  t.after(clearBlockExpansions);
   const html = renderMessage({ role: "assistant", provider: "anthropic", model: "claude-test", content: [block] });
   // A single-line value wraps in its cell; a value with lines of its own scrolls in a block.
   assert.ok(html.includes("<table"));
@@ -809,10 +801,34 @@ test("collapses a displayed custom message from its header alone", () => {
   );
 });
 
+test("a background subagent's report starts collapsed to its one-line preview until opened", (t) => {
+  t.after(clearBlockExpansions);
+  const report = {
+    role: "custom",
+    customType: "pi-web:subagent-notification",
+    display: true,
+    timestamp: 1234,
+    content: [{ type: "text", text: "Subagent finished.\n\nFull report body" }],
+  };
+  const header = (html) => html.slice(0, html.indexOf("</button>"));
+
+  const collapsed = renderMessage(report);
+  assert.match(header(collapsed), /aria-expanded="false"/);
+  assert.match(header(collapsed), /Subagent finished\. Full report body/);
+  assert.doesNotMatch(collapsed, /Copy/);
+
+  // The user's toggle wins over the policy and outlives a remount.
+  setBlockExpansion("custom:pi-web:subagent-notification:1234", true);
+  assert.match(header(renderMessage(report)), /aria-expanded="true"/);
+  // Another extension's message keeps starting expanded.
+  assert.match(header(renderMessage({ ...report, customType: "extension", timestamp: 1235 })), /aria-expanded="true"/);
+});
+
 test("renders custom-message images as buttons that open a larger preview", () => {
   const html = renderMessage({
     role: "custom",
     customType: "extension",
+    display: true,
     content: [{ type: "image", data: "YWJj", mimeType: "image/png" }],
     timestamp: Date.now(),
   });
@@ -886,7 +902,7 @@ const CODEMODE_SCRIPT = "// @options: {\"timeoutMs\": 5000}\nconst files = await
 
 test("collapses a codemode call to its first script line and call count", (t) => {
   const block = codemodeCall("call-codemode-collapsed", CODEMODE_SCRIPT);
-  t.after(() => setToolCallExpanded(block.toolCallId, false));
+  t.after(clearBlockExpansions);
   const html = renderCodemode(block, {
     role: "toolResult",
     toolCallId: block.toolCallId,
@@ -909,8 +925,8 @@ test("collapses a codemode call to its first script line and call count", (t) =>
 
 test("expands a codemode call into its script, its calls, and the output without the header", (t) => {
   const block = codemodeCall("call-codemode-expanded", CODEMODE_SCRIPT);
-  setToolCallExpanded(block.toolCallId, true);
-  t.after(() => setToolCallExpanded(block.toolCallId, false));
+  setBlockExpansion(block.toolCallId, true);
+  t.after(clearBlockExpansions);
   const calls = Array.from({ length: 23 }, (_, index) => ({
     id: `call-codemode-expanded/${index + 1}`,
     name: index === 22 ? "bash" : "read",
@@ -954,8 +970,8 @@ test("expands a codemode call into its script, its calls, and the output without
 
 test("shows a running script's calls without an empty output", (t) => {
   const block = codemodeCall("call-codemode-running", "await tools.read({ path: \"a\" })");
-  setToolCallExpanded(block.toolCallId, true);
-  t.after(() => setToolCallExpanded(block.toolCallId, false));
+  setBlockExpansion(block.toolCallId, true);
+  t.after(clearBlockExpansions);
   const html = renderCodemode(block, {
     role: "toolResult",
     toolCallId: block.toolCallId,
@@ -974,8 +990,8 @@ test("shows a running script's calls without an empty output", (t) => {
 
 test("a codemode call with no script or streaming input falls back to a plain body", (t) => {
   const streaming = { ...codemodeCall("call-codemode-streaming", ""), input: {}, rawInput: "{\"code\":\"const secret" };
-  setToolCallExpanded(streaming.toolCallId, true);
-  t.after(() => setToolCallExpanded(streaming.toolCallId, false));
+  setBlockExpansion(streaming.toolCallId, true);
+  t.after(clearBlockExpansions);
   const streamingText = textOf(renderCodemode(streaming));
   assert.match(streamingText, /Generating parameters/);
   // The script so far, through the partial parse, rather than its JSON.
@@ -984,8 +1000,8 @@ test("a codemode call with no script or streaming input falls back to a plain bo
   assert.doesNotMatch(streamingText, /Tool calls/);
 
   const other = { type: "toolCall", toolCallId: "call-codemode-other", toolName: "codemode", input: { script: "x" } };
-  setToolCallExpanded(other.toolCallId, true);
-  t.after(() => setToolCallExpanded(other.toolCallId, false));
+  setBlockExpansion(other.toolCallId, true);
+  t.after(clearBlockExpansions);
   // An argument this view does not understand is still an argument: no script box,
   // but the flat row shows it.
   const otherHtml = renderCodemode(other);
@@ -1001,8 +1017,8 @@ test("labels an MCP call server/tool and indents a JSON result", (t) => {
     toolName: "mcp__docs_v2__search",
     input: { query: "codemode" },
   };
-  setToolCallExpanded(block.toolCallId, true);
-  t.after(() => setToolCallExpanded(block.toolCallId, false));
+  setBlockExpansion(block.toolCallId, true);
+  t.after(clearBlockExpansions);
   const html = renderMessage({
     role: "assistant",
     provider: "anthropic",
@@ -1036,8 +1052,8 @@ test("keeps the registered name where no result names the server and tool", (t) 
 
   // A codemode script's calls carry only that name, which is also what the script calls.
   const script = codemodeCall("call-codemode-mcp", "await tools.mcp__docs_v2__search_pages({})");
-  setToolCallExpanded(script.toolCallId, true);
-  t.after(() => setToolCallExpanded(script.toolCallId, false));
+  setBlockExpansion(script.toolCallId, true);
+  t.after(clearBlockExpansions);
   const html = renderCodemode(script, {
     role: "toolResult",
     toolCallId: script.toolCallId,
@@ -1146,7 +1162,7 @@ test("an edit card draws the applied patch in two columns while there is room", 
     content: [{ type: "text", text: "ok" }],
     details: { patch: EDIT_PATCH },
   };
-  setToolCallExpanded(block.toolCallId, true);
+  setBlockExpansion(block.toolCallId, true);
   try {
     const html = renderMessage(
       { role: "assistant", provider: "anthropic", model: "claude-test", content: [block] },
@@ -1155,7 +1171,7 @@ test("an edit card draws the applied patch in two columns while there is room", 
     assert.ok(html.includes(TWO_COLUMN_GRID), "the card reaches the patch view");
     assert.ok(html.includes("const value = &quot;new&quot;;"));
   } finally {
-    clearExpandedToolCalls();
+    clearBlockExpansions();
   }
 });
 

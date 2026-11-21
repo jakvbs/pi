@@ -25,10 +25,8 @@ import {
   type SettingsSection,
 } from "@/lib/settings-navigation";
 import { focusModalPanel, listenForPanelEscape } from "@/lib/stacked-dialog";
-import {
-  isThinkingExpandedByDefault,
-  setThinkingExpandedByDefault,
-} from "@/lib/thinking-expansion-preference";
+import { setBlockStart, useCollapsePolicy } from "@/hooks/useCollapsePolicy";
+import { COLLAPSE_BLOCK_TYPES, type BlockStart, type CollapseBlockType } from "@/lib/collapse-policy";
 import { ModelsConfig } from "./ModelsConfig";
 import { setupPushSubscription } from "@/lib/push-client";
 import { SkillsConfig } from "./SkillsConfig";
@@ -78,6 +76,19 @@ export function SettingsSectionIcon({ section, size = 16, strokeWidth = 1.8 }: {
   return <svg {...common}><path d="M9 7V2M15 7V2M6 13V8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v5a6 6 0 0 1-12 0ZM12 19v3" /></svg>;
 }
 
+const BLOCK_TYPE_LABELS: Record<CollapseBlockType, string> = {
+  toolCalls: "settings.blockTypeToolCalls",
+  subagents: "settings.blockTypeSubagents",
+  extensionMessages: "settings.blockTypeExtensionMessages",
+  thinking: "settings.blockTypeThinking",
+  bash: "settings.blockTypeBash",
+};
+
+const BLOCK_STARTS: readonly (readonly [BlockStart, string])[] = [
+  ["expanded", "settings.blockStartExpanded"],
+  ["collapsed", "settings.blockStartCollapsed"],
+];
+
 function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, onQuoteSelectionChange }: Pick<Props, "sessionId" | "onSessionReloaded" | "quoteSelectionEnabled" | "onQuoteSelectionChange">) {
   const { locale, setLocale, supportedLocales, t } = useI18n();
   const { preference, setThemePreference } = useTheme();
@@ -89,7 +100,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
   const [shellError, setShellError] = useState<string | null>(null);
   const [builtinToolsSaving, setBuiltinToolsSaving] = useState(false);
   const [builtinToolsError, setBuiltinToolsError] = useState<string | null>(null);
-  const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const collapsePolicy = useCollapsePolicy();
   const [cacheMissNotices, setCacheMissNotices] = useState<boolean | null>(null);
   const [cacheMissNoticesSaving, setCacheMissNoticesSaving] = useState(false);
   const [cacheMissNoticesError, setCacheMissNoticesError] = useState<string | null>(null);
@@ -100,7 +111,6 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
   const [logoutError, setLogoutError] = useState("");
 
   useEffect(() => {
-    setThinkingExpanded(isThinkingExpandedByDefault());
     void fetch("/api/web-auth")
       .then((response) => response.ok ? response.json() : null)
       .then((data: { enabled?: boolean } | null) => setWebAuthEnabled(data?.enabled === true))
@@ -349,17 +359,6 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
         <h3 className="settings-general-heading">{t("settings.chat")}</h3>
         <div className="settings-chat-options">
           <div className="settings-chat-option settings-chat-switch-option">
-            <span>{t("settings.thinkingExpandedDefault")}</span>
-            <ConfigSwitch
-              checked={thinkingExpanded}
-              label={t("settings.thinkingExpandedDefault")}
-              onChange={(enabled) => {
-                setThinkingExpandedByDefault(enabled);
-                setThinkingExpanded(enabled);
-              }}
-            />
-          </div>
-          <div className="settings-chat-option settings-chat-switch-option">
             <span>{t("settings.quoteSelection")}</span>
             <ConfigSwitch
               checked={quoteSelectionEnabled}
@@ -407,6 +406,32 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
         </div>
         <p id="settings-cache-miss-notices-description" className="settings-general-description">{t("settings.cacheMissNoticesDescription")}</p>
         {cacheMissNoticesError && <p role="alert" className="settings-general-error">{cacheMissNoticesError}</p>}
+      </section>
+
+      <section className="settings-general-section">
+        <h3 className="settings-general-heading">{t("settings.blockStarts")}</h3>
+        <div className="settings-chat-options">
+          {COLLAPSE_BLOCK_TYPES.map((type) => (
+            <div key={type} className="settings-chat-option settings-chat-switch-option" role="radiogroup" aria-label={t(BLOCK_TYPE_LABELS[type])}>
+              <span>{t(BLOCK_TYPE_LABELS[type])}</span>
+              <div className="settings-send-mode-options">
+                {BLOCK_STARTS.map(([start, label]) => (
+                  <label key={start} className="settings-send-mode-option">
+                    <input
+                      type="radio"
+                      name={`block-start-${type}`}
+                      value={start}
+                      checked={collapsePolicy[type] === start}
+                      onChange={() => setBlockStart(type, start)}
+                      className="sr-only"
+                    />
+                    <span className="settings-send-mode-label">{t(label)}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="settings-general-section">
