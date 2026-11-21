@@ -15,7 +15,10 @@ type Item = TextContent | ImageContent;
 type Saved = TextContent | { readonly image: ImageContent; readonly label: string };
 
 /** Writes a file of the result under a fixed name; its path, or why it could not be written. */
-export type OutputFile = (name: string, data: string | Uint8Array) => Promise<{ path: string } | { error: string }>;
+export type OutputFile = (
+	name: string,
+	data: string | Uint8Array,
+) => Promise<{ readonly kind: "saved"; readonly path: string } | { readonly kind: "failed"; readonly error: string }>;
 
 /** Bytes per token when estimating, as the Harness counts the tool output limit. */
 const BYTES_PER_TOKEN = 4;
@@ -108,7 +111,7 @@ async function truncate(
 	const warning = `Warning: truncated output (original token count: ${tokens})\nTotal output lines: ${combined.split("\n").length}\n\n`;
 	const spilled = await write("output.txt", combined);
 	const notice =
-		"path" in spilled
+		spilled.kind === "saved"
 			? `\n\n[Full output: ${spilled.path} (read with offset/limit)]`
 			: `\n\n[Could not save the full output: ${spilled.error}]`;
 	// The marker counts fewer tokens than the whole text, so its length with the whole count bounds it.
@@ -122,7 +125,7 @@ async function truncate(
 			{ type: "text", text: `${warning}${head.text}…${removed} tokens truncated…${tail.text}${notice}` },
 			...items.filter((item) => "image" in item),
 		],
-		...("path" in spilled ? { fullOutputPath: spilled.path } : {}),
+		...(spilled.kind === "saved" ? { fullOutputPath: spilled.path } : {}),
 	};
 }
 
@@ -134,7 +137,7 @@ async function saveImages(items: readonly Item[], write: OutputFile): Promise<Sa
 		const kind = `${mimeType}, ${bytes.length} bytes`;
 		// A failed write must not discard the result of a script whose calls already ran: it becomes part of the label.
 		const saved = await write(`image-${index}${IMAGE_EXTENSIONS[mimeType] ?? ".bin"}`, bytes);
-		return "path" in saved
+		return saved.kind === "saved"
 			? `[Image saved to ${saved.path} (${kind})]`
 			: `[Image (${kind}) could not be saved: ${saved.error}]`;
 	};

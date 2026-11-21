@@ -9,6 +9,11 @@
 ### Fixed
 
 - Fixed the agent loop running a shell and a file-writing tool from one assistant message in parallel, so one tool's write could replace the other's. `AgentTool` takes a new `fileWrites` field (`ToolFileWrites`): `"argument"` for a tool that writes only files named in its arguments, `"any"` for a shell. A batch that holds both kinds runs sequentially in the model's order; other batches keep their execution mode
+
+## [1.6.0] - 2026-11-20
+
+### Fixed
+
 - Fixed tool calls skipped by an abort mid-batch getting no tool result in the transcript; each now gets an "Operation aborted" error result. With an aborted signal, `runToolCall` and the loop now return that result before looking up the tool or calling `beforeToolCall` ([#9986](https://github.com/earendil-works/pi/issues/9986))
 
 ## [1.5.2] - 2026-11-10

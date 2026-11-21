@@ -11,14 +11,15 @@
  */
 
 import type { ImageContent, JsonValue, TextContent } from "@earendil-works/pi-ai";
-import type {
-	ContentBlock,
-	ListResourcesResult,
-	ListResourceTemplatesResult,
-	McpRequestOptions,
-	ReadResourceResult,
-	Resource,
-	ResourceTemplate,
+import {
+	type ContentBlock,
+	type ListResourcesResult,
+	type ListResourceTemplatesResult,
+	type McpRequestOptions,
+	type ReadResourceResult,
+	type Resource,
+	type ResourceTemplate,
+	toMcpModelContent,
 } from "@earendil-works/pi-mcp";
 import type { TSchema } from "typebox";
 import type { ToolAnnotations, ToolDefinition } from "../../core/extensions/types.ts";
@@ -28,7 +29,7 @@ import {
 	READ_MCP_RESOURCE_TOOL,
 } from "../../core/mcp-servers.ts";
 import type { McpExposure } from "./config.ts";
-import { type McpToolDetails, toModelContent, toToolExposure } from "./tools.ts";
+import { type McpToolDetails, saveToTempFile, toToolExposure } from "./tools.ts";
 
 export { LIST_MCP_RESOURCE_TEMPLATES_TOOL, LIST_MCP_RESOURCES_TOOL, READ_MCP_RESOURCE_TOOL };
 
@@ -317,7 +318,7 @@ export function createMcpResourceToolDefinitions(options: {
 				...(result.contents.length > 1 ? [{ type: "text" as const, text: `${contents.uri}:` }] : []),
 				{ type: "resource" as const, resource: contents },
 			]);
-			const converted = await toModelContent(server.name, blocks);
+			const converted = await toMcpModelContent(server.name, { content: blocks }, { saveOutput: saveToTempFile });
 			const contents = result.contents.map(({ _meta: _ignored, ...rest }) => rest);
 			return {
 				content: converted.length > 0 ? converted : [{ type: "text", text: `Resource ${uri} is empty.` }],

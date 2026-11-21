@@ -4,8 +4,24 @@
 
 ### Breaking Changes
 
+- Tool parks are tagged: `{ kind: "sleep", checkpoint?, until?, signals? }` and `{ kind: "wait", checkpoint?, on, policy }`, flat, in place of `{ sleep: { ... } }` and `{ wait: { ... } }`; a result has no `kind`. An object with another `kind` is an invalid park. Migration: return `{ kind: "sleep", ...sleep }` or `{ kind: "wait", ...wait }`, and tell a park from a result by `returned.kind`.
+- `Wrap` is tagged: `{ kind: "tool", tool, wrap }` or `{ kind: "section", section, wrap }`. Migration: build wraps with `wrapTool()` and `wrapSection()`, or add the `kind`; read the target after checking `wrap.kind`.
+- `onYield` hook results are tagged: `{ kind: "continue", continue }` or `{ kind: "tasks", tasks }`. Migration: add the `kind`. A task's `YieldDecision` (`{ continue? }`) is unchanged.
+- `beforeCompact` hook results are tagged: `{ kind: "decline" }` or `{ kind: "summary", summary }`, in place of `{ decline: true }` and `{ summary }`. Migration: return the tagged forms.
+- `Conversation.submit(tx, draft)` and `ConversationHandle.submit(tx, draft)` are `admit(tx, draft)`; `submit(draft, context)` is unchanged. Migration: rename the transaction form's calls to `admit`.
+- `SignalState` is tagged: `{ kind: "value", value }` or `{ kind: "expired" }`, in place of `{ value }` and `{ expired: true }`. Migration: test `state?.kind === "value"` or `state.kind === "expired"` instead of `"value" in state`. Stored signal memos keep their shape.
+- `CommitResult` (`Storage.commit()`) is tagged: `{ kind: "stored", stored }` or `{ kind: "refused", stored, refused }`. Migration: a custom Storage returns the tagged forms; a caller reads `refused` after checking `result.kind === "refused"`.
 - Code mode scripts no longer accept `max_output_tokens` in their `// @options:` line; naming it fails the call.
 - Every tool result's text has one limit, the new `HarnessSettings.toolOutputMaxTokens` (default 5000 estimated tokens, 20000 bytes), as in the coding agent. This replaces the default `outputLimits` of 50 KiB and 2000 lines, which no longer limit lines, and code mode's 10000-token budget and 4 MiB limits. A tool's `outputLimits` may only lower the limit; `ToolExecutionApi.outputLimits` gives a call's limits. `read` cuts text to them, `bash` and `powershell` spill output past them, and code mode fits a cut result in them with its spill notice.
+
+### Added
+
+- `Harness.shellOutputLimits()` gives the limits of the `bash` and `powershell` tools' output under the current settings (the end of the output within `toolOutputMaxTokens`, no line limit), so a host that runs its users' shell commands into the context keeps them within the same limit.
+
+## [1.6.0] - 2026-11-20
+
+### Breaking Changes
+
 - `RunEndTask` and `runEndTask` are renamed `HookTask` and `hookTask`, as `afterTools` and `onYield` hooks now ask for tasks too. Migration: rename the import in `afterRun` hooks.
 - A tool's `execute()` returns `Promise<ToolExecutionResult | ToolPark>`: it may park instead of returning a result. Code that calls a tool's `execute()` itself, such as a wrapper or a test, handles parks; reading a result field still compiles, since a park has none. Code that annotates `Promise<ToolExecutionResult>` widens the annotation.
 - `until` is optional on sleeping task states (`TaskState`, `TaskInspection`, `TaskGraphState`): a sleep may wait for signals only. Code that reads `until` of a sleeping task handles its absence.
@@ -15,7 +31,6 @@
 
 ### Added
 
-- `Harness.shellOutputLimits()` gives the limits of the `bash` and `powershell` tools' output under the current settings (the end of the output within `toolOutputMaxTokens`, no line limit), so a host that runs its users' shell commands into the context keeps them within the same limit.
 - Signals: `defineSignal({ name, version, schema, migrate? })` defines a typed JSON value delivered to a live task from outside with `harness.signal(taskId, token, key, value, context)` or `tx.signal()`, which answer `delivered`, `duplicate`, `invalid`, `closed`, or `not_found`. A value is kept in the task, also one that arrives before the sleep on its key, which then wakes at once; `readSignal(token, key, context)` on `TaskRuntime`, `HookApi`, and `ToolExecutionApi` reads it until the task ends, migrated to the token's version, or that the key expired. A key serves one wait: the wake marks it consumed.
 - A sleep may wait for signals (`{ status: "sleeping", signals, until? }`) and ends at whichever comes first; a wait may use `policy: "any"` to resume once one task in `on` ends. A woken task reads why in `state.wake` (`WakeReason`: `time`, `expired`, `signal`, `tasks`), kept until it commits another checkpoint. Parked work holds no invocation, and `Harness.wake()` reports it inactive; a sleep without `until` adds no `at`.
 - Tools that park: `execute()` may return `{ sleep: { checkpoint?, until?, signals? } }` or `{ wait: { checkpoint?, on, policy } }` and runs again, once woken, with `api.wake` and `api.checkpoint` set. The call holds no invocation meanwhile, its slot shows `sleeping` or `waiting` without output, and an invalid park ends it with an `invalid_park` result. `cancel(args, api, context)` cleans up the external work of a parked call that is aborted. Wrappers never park: a composite's park its base did not return is invalid.

@@ -867,6 +867,37 @@ describe("Coding Agent Tools", () => {
 			expect(snapshot.truncation.content).toContain("yyyyEND");
 		});
 
+		// #12350: an over-long line followed by a blank line returned "(no output)".
+		// The fork's bash tool keeps the start of output within toolOutputMaxTokens; OutputAccumulator keeps the tail fix.
+		it.each([
+			[60_000, "\n"],
+			[219_000, "\n"],
+			[219_000, "\r\n"],
+		])("should show the end of an over-long line followed by a blank line (%i bytes, %j)", async (length, eol) => {
+			const longLine = `${"y".repeat(length)}END`;
+			const data = Buffer.from(`first line${eol}${longLine}${eol}${eol}`, "utf-8");
+			const operations: BashOperations = {
+				exec: async (_command, _cwd, { onData }) => {
+					for (let i = 0; i < data.length; i += 8192) onData(data.subarray(i, i + 8192));
+					return { exitCode: 0 };
+				},
+			};
+			const bash = createBashTool(testDir, { operations });
+
+			const result = await bash.execute("test-call-long-line-blank-line", { command: "long-line" });
+			const output = getTextOutput(result);
+
+			expect(result.details?.truncation?.truncated).toBe(true);
+			expect(output).toMatch(/^first line\r?\n/);
+			expect(output).toContain("Full output:");
+
+			const accumulator = new OutputAccumulator();
+			for (let i = 0; i < data.length; i += 8192) accumulator.append(data.subarray(i, i + 8192));
+			const snapshot = accumulator.snapshot();
+			expect(snapshot.truncation.lastLinePartial).toBe(true);
+			expect(snapshot.truncation.content).toMatch(/^y+END\r?\n/);
+		});
+
 		it("should decode UTF-8 characters split across output chunks", async () => {
 			const euro = Buffer.from("€\n", "utf-8");
 			const operations: BashOperations = {

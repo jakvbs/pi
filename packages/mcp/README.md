@@ -70,7 +70,7 @@ const tools: AgentTool[] = (await client.listTools()).map((tool) => ({
 }));
 ```
 
-For applications that name tools like pi's coding agent: `createMcpToolName(server, tool, isTaken)` builds `mcp__<server>__<tool>`, limited to the characters and the 64-character length providers accept, with a hash suffix for long names and for names `isTaken` reports as used by another tool. `mcpNamespace(server)` is the prefix of a server's tool names. `normalizeMcpInputSchema()` turns an input schema into an object schema with `properties`.
+For applications that name tools like pi's coding agent: `createMcpToolName(server, tool, isTaken)` builds `mcp__<server>__<tool>`, limited to the characters and the 64-character length providers accept, with a hash suffix for long names and for names `isTaken` reports as used by another tool. `mcpNamespace(server)` is the prefix of a server's tool names. `normalizeMcpInputSchema()` turns an input schema into an object schema with `properties`. `toMcpModelContent(server, result, { saveOutput, readResourceTool })` converts a result's blocks for the model as pi does: text blobs as text, binary resources saved through `saveOutput` (an `McpOutputSaver`), and resource links naming `readResourceTool`. `createMcpResultSchema(tool.outputSchema)` is the output schema for programs (such as code mode scripts) that get a tool's whole `CallToolResult`, with the tool's own output schema as `structuredContent`.
 
 The [mcp-codemode example](https://github.com/earendil-works/pi/tree/main/packages/agent/examples/mcp-codemode) also forwards progress, passes `structuredContent` through, and lets `@earendil-works/pi-codemode` scripts call the tools.
 
