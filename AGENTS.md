@@ -96,7 +96,15 @@ If conflicts occur while rebasing your own branch (an upstream merge follows sec
 
 ## Fork
 
-This checkout is the `jakvbs/pi` fork; its `main` on `origin` is the source of truth. Do not open issues or PRs against `earendil-works/pi` and do not propose upstreaming. Upstream changes arrive through an occasional merge: merge `upstream/main` into a run branch based on `main`, resolve the conflicts there, verify locally, fast-forward `main` and push (section Delivery). Never rebase `main` onto `upstream/main`: the ruleset refuses the force-push it needs. Keep fork commits small and self-contained so the merge stays cheap.
+This checkout is the `jakvbs/pi` fork; its `main` on `origin` is the source of truth. Do not open issues or PRs against `earendil-works/pi` and do not propose upstreaming. Never rebase `main` onto `upstream/main`: the ruleset refuses the force-push it needs. Keep fork commits small and self-contained so the merge stays cheap.
+
+Upstream changes arrive through an occasional merge into a run branch based on `main`:
+
+1. `git fetch upstream && git merge --no-commit upstream/main`.
+2. `node scripts/fork-deleted.mjs resolve`: `git rm`s what the merge brought back of the upstream paths the fork deleted (patterns in `fork-deleted.txt`), both modify/delete conflicts and new upstream files.
+3. Resolve the remaining conflicts, run `npm run check` (`check:fork-deleted` fails while a deleted path is tracked) and the tests, commit, and deliver (section Delivery).
+
+To delete an upstream path, delete it and add its pattern to `fork-deleted.txt` in the same commit. For apps/web and the imported extensions, add an `exclude` key to their `UPSTREAM` instead (`extensions/README.md`).
 
 ## Delivery
 

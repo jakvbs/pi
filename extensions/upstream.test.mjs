@@ -230,3 +230,67 @@ test("refuses import when unrelated changes are staged or target directory is di
 	assert.equal(stagedImport.status, 1);
 	assert.match(stagedImport.stderr, /staged changes in index/);
 });
+
+test("drops excluded paths from both sides, so upstream changes to fork-deleted files neither conflict nor return", async (t) => {
+	const { upstream, fork, run } = await setup(t);
+	const withDemo = await upstream.commit("add demo", { "packages/ext/demo/a.ts": "a\n" });
+	await fork.commit("delete demo", {
+		"extensions/ext/UPSTREAM": `[upstream]\n\turl = ${upstream.dir}\n\tbranch = main\n\tpath = packages/ext\n\tcommit = ${withDemo}\n\texclude = demo\n\texclude = *.png\n`,
+	});
+	const demoOnly = await upstream.commit("change demo", {
+		"packages/ext/demo/a.ts": "a2\n",
+		"packages/ext/demo/b.ts": "b\n",
+		"packages/ext/shot.png": "png\n",
+	});
+	const kept = await upstream.commit("change index and demo", {
+		"packages/ext/index.ts": "two\n",
+		"packages/ext/demo/a.ts": "a3\n",
+		"packages/ext/assets/logo.png": "png\n",
+	});
+
+	const status = run("status");
+	assert.equal(status.status, 0, status.stderr);
+	assert.match(status.stdout, /change index and demo/);
+	assert.doesNotMatch(status.stdout, /change demo\n/);
+	assert.match(status.stdout, /review: git log -p \S+ -- packages\/ext ':\(exclude,glob\)packages\/ext\/demo'/);
+
+	const imported = run("import", "ext");
+	assert.equal(imported.status, 0, imported.stderr);
+	assert.equal(await fork.read("extensions/ext/index.ts"), "two\n");
+	// `*` stays within a directory: only the top-level image is excluded.
+	assert.equal(
+		fork.git("ls-files", "extensions/ext"),
+		"extensions/ext/UPSTREAM\nextensions/ext/assets/logo.png\nextensions/ext/index.ts",
+	);
+	assert.equal(fork.git("config", "-f", "extensions/ext/UPSTREAM", "upstream.commit"), kept);
+	const body = fork.git("log", "-1", "--format=%b");
+	assert.match(body, new RegExp(`- ${kept.slice(0, 7)} change index and demo`));
+	assert.doesNotMatch(body, new RegExp(demoOnly.slice(0, 7)));
+	assert.equal(fork.git("status", "--porcelain"), "");
+});
+
+test("records an app whose new upstream commits touch only excluded paths without changing its files", async (t) => {
+	const { upstream, fork, first, run } = await setup(t, "upstream", "apps/web", "");
+	await mkdir(join(fork.dir, "extensions"));
+	await fork.commit("exclude demo", {
+		"apps/web/UPSTREAM": `[upstream]\n\turl = ${upstream.dir}\n\tbranch = main\n\tcommit = ${first}\n\texclude = demo\n`,
+	});
+	const head = await upstream.commit("add demo", { "demo/page.ts": "page\n" });
+	run("status");
+
+	const imported = run("import", "apps/web");
+	assert.equal(imported.status, 0, imported.stderr);
+	assert.equal(fork.git("ls-files", "apps/web"), "apps/web/UPSTREAM\napps/web/index.ts");
+	assert.equal(fork.git("config", "-f", "apps/web/UPSTREAM", "upstream.commit"), head);
+	assert.equal(fork.git("diff", "--name-only", "HEAD^", "HEAD"), "apps/web/UPSTREAM");
+});
+
+test("rejects an exclude with a ! exception", async (t) => {
+	const { upstream, fork, first, run } = await setup(t);
+	await fork.commit("bad exclude", {
+		"extensions/ext/UPSTREAM": `[upstream]\n\turl = ${upstream.dir}\n\tbranch = main\n\tpath = packages/ext\n\tcommit = ${first}\n\texclude = !demo\n`,
+	});
+	const status = run("status");
+	assert.equal(status.status, 1);
+	assert.match(status.stderr, /exclude takes no ! exceptions/);
+});

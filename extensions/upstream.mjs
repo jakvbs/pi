@@ -61,7 +61,7 @@ function status() {
 				const log = git(["log", "--no-merges", "--format=  %h %s", `${current.commit}..${head}`, ...pathspec(current)]);
 				console.log(`${current.label}: ${short(current.commit)}..${short(head)}${current.path ? ` in ${current.path}` : ""}`);
 				console.log(log.trimEnd() || `  no commit touches ${current.path}`);
-				console.log(`  review: ${["git log -p", `${short(current.commit)}..${current.trackingRef}`, ...pathspec(current)].join(" ")}`);
+				console.log(`  review: ${["git log -p", `${short(current.commit)}..${current.trackingRef}`, ...pathspec(current).map(shellWord)].join(" ")}`);
 			}
 		}
 	}
@@ -95,8 +95,12 @@ function importUpstream(name, skip, body) {
 	}
 	const included = commits.filter((sha) => !skipped.has(sha));
 	if (included.length > 0) {
-		const baseSub = subtreeOf(upstream.commit, upstream.path);
-		const targetSub = skipped.size === 0 ? subtreeOf(head, upstream.path) : mergeIncludedSubtree(baseSub, included, upstream.path);
+		const fullBaseSub = subtreeOf(upstream.commit, upstream.path);
+		const fullTargetSub =
+			skipped.size === 0 ? subtreeOf(head, upstream.path) : mergeIncludedSubtree(fullBaseSub, included, upstream.path);
+		// Paths the fork deleted are dropped from both sides, so upstream changes to them neither conflict nor come back.
+		const baseSub = withoutExcluded(fullBaseSub, upstream.exclude);
+		const targetSub = withoutExcluded(fullTargetSub, upstream.exclude);
 		if (targetSub !== baseSub) {
 			const label = `${name} upstream ${short(upstream.commit)}..${short(head)}`;
 			const baseRoot = rootTreeWithSubtree(dir, baseSub);
@@ -202,6 +206,20 @@ function subtreeOf(commit, path) {
 	return result.status === 0 ? result.stdout.trim() : EMPTY_TREE;
 }
 
+/** Returns `tree` without the files that the `exclude` patterns (git glob pathspecs relative to the tree) match. */
+function withoutExcluded(tree, exclude) {
+	if (exclude.length === 0 || tree === EMPTY_TREE) return tree;
+	const tmp = mkdtempSync(join(tmpdir(), "pi-upstream-"));
+	const idxEnv = { ...process.env, GIT_INDEX_FILE: join(tmp, "index") };
+	try {
+		git(["read-tree", tree], idxEnv);
+		git(["rm", "-r", "--cached", "-f", "-q", "--ignore-unmatch", "--", ...exclude.map((pattern) => `:(glob)${pattern}`)], idxEnv);
+		return git(["write-tree"], idxEnv).trim();
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+}
+
 /** Builds a root tree identical to HEAD except that `dir` holds `subtree` (without touching the real index). */
 function rootTreeWithSubtree(dir, subtree) {
 	const tmp = mkdtempSync(join(tmpdir(), "pi-upstream-"));
@@ -252,8 +270,16 @@ function sections(name) {
 	for (const line of git(["config", "-f", file, "--list"]).split("\n").filter(Boolean)) {
 		const key = line.slice(0, line.indexOf("="));
 		const id = key.slice(0, key.lastIndexOf("."));
-		const fields = byId.get(id) ?? {};
-		fields[key.slice(id.length + 1)] = line.slice(key.length + 1);
+		const fields = byId.get(id) ?? { exclude: [] };
+		const field = key.slice(id.length + 1);
+		const value = line.slice(key.length + 1);
+		// exclude repeats: each value is a path pattern of the upstream tree that the fork deleted.
+		if (field === "exclude") {
+			if (value.startsWith("!")) fail(`${directory(name)}/UPSTREAM: exclude takes no ! exceptions (${value})`);
+			fields.exclude.push(value);
+		} else {
+			fields[field] = value;
+		}
 		byId.set(id, fields);
 	}
 	return [...byId].map(([id, fields]) => {
@@ -274,8 +300,16 @@ function directory(name) {
 	return name.startsWith("apps/") ? name : join("extensions", name);
 }
 
+/** The pathspec of the section's upstream tree without its excluded paths (none: the whole repository). */
 function pathspec(current) {
-	return current.path ? ["--", current.path] : [];
+	const prefix = current.path ? `${current.path.replace(/^\/+|\/+$/g, "")}/` : "";
+	const excluded = current.exclude.map((pattern) => `:(exclude,glob)${prefix}${pattern}`);
+	return current.path || excluded.length > 0 ? ["--", ...(current.path ? [current.path] : []), ...excluded] : [];
+}
+
+/** `word` quoted for a shell when it holds pathspec magic. */
+function shellWord(word) {
+	return word.startsWith(":(") ? `'${word}'` : word;
 }
 
 function revParse(rev) {

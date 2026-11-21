@@ -1,0 +1,16 @@
+# Paths of earendil-works/pi (upstream/main) that the fork deleted. `npm run check` fails while a tracked file matches
+# a pattern; after `git merge --no-commit upstream/main`, `node scripts/fork-deleted.mjs resolve` removes the matching
+# files that the merge brought back (AGENTS.md section Fork). Paths of apps/web and the imported extensions go into the
+# `exclude` keys of their UPSTREAM files instead.
+#
+# One git glob pathspec per line: `*` stays within a directory, `**` crosses directories, a directory matches
+# everything below it, and a leading `!` keeps what it matches.
+
+# Apps of upstream's p2/p3 product.
+apps/p2
+apps/p2-mac
+apps/p3
+
+# GitHub: only CI runs in the fork; issues and PRs go nowhere upstream.
+.github
+!.github/workflows/ci.yml
