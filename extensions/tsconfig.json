@@ -1,0 +1,94 @@
+// The base config of the extensions' typecheck (extensions/*/tsconfig.json extend it; each sets its own include).
+// It type-checks against the modules extensions see at run time (packages/coding-agent/src/core/extensions/virtual-modules.ts):
+// "@earendil-works/pi-ai" is the extension view, which adds TypeBox's Type, Static and TSchema to the compat entry (the
+// view imports "@earendil-works/pi-ai/compat", so that path stays the package's own).
+// The other paths repeat the root tsconfig.json; keep them in sync.
+{
+	"extends": "../tsconfig.json",
+	"compilerOptions": {
+		"paths": {
+			"@earendil-works/pi-telemetry": [
+				"../packages/telemetry/src/index.ts"
+			],
+			"@earendil-works/pi-telemetry/testing": [
+				"../packages/telemetry/src/testing/index.ts"
+			],
+			"@earendil-works/pi-telemetry/render": [
+				"../packages/telemetry/src/render.ts"
+			],
+			"@earendil-works/pi-codemode": [
+				"../packages/codemode/src/index.ts"
+			],
+			"@earendil-works/pi-codemode/cloudflare": [
+				"../packages/codemode/src/cloudflare.ts"
+			],
+			"@earendil-works/pi-codemode/declarations": [
+				"../packages/codemode/src/declarations.ts"
+			],
+			"@earendil-works/pi-codemode/portable": [
+				"../packages/codemode/src/portable.ts"
+			],
+			"@earendil-works/pi-codemode/source": [
+				"../packages/codemode/src/source.ts"
+			],
+			"@earendil-works/pi-codemode/worker": [
+				"../packages/codemode/src/runtime/worker.ts"
+			],
+			"@earendil-works/pi-schema": [
+				"../packages/schema/src/index.ts"
+			],
+			"@earendil-works/pi-schema/formats": [
+				"../packages/schema/src/formats/index.ts"
+			],
+			"@earendil-works/pi-mcp": [
+				"../packages/mcp/src/index.ts"
+			],
+			"@earendil-works/pi-mcp/oauth": [
+				"../packages/mcp/src/oauth/index.ts"
+			],
+			"@earendil-works/pi-mcp/testing": [
+				"../packages/mcp/src/testing/index.ts"
+			],
+			"@earendil-works/pi-ai": [
+				"../packages/coding-agent/src/core/extensions/pi-ai-extension-view.ts"
+			],
+			"@earendil-works/pi-ai/oauth": [
+				"../packages/ai/src/oauth.ts"
+			],
+			"@earendil-works/pi-ai/*": [
+				"../packages/ai/src/*.ts",
+				"../packages/ai/src/providers/*.ts"
+			],
+			"@earendil-works/pi-ai/dist/*": [
+				"../packages/ai/src/*"
+			],
+			"@earendil-works/pi-agent-core": [
+				"../packages/agent/src/index.ts"
+			],
+			"@earendil-works/pi-coding-agent": [
+				"../packages/coding-agent/src/index.ts"
+			],
+			"@earendil-works/pi-coding-agent/hooks": [
+				"../packages/coding-agent/src/core/hooks/index.ts"
+			],
+			"@earendil-works/pi-coding-agent/*": [
+				"../packages/coding-agent/src/*"
+			],
+			"typebox": [
+				"../node_modules/typebox"
+			],
+			"@earendil-works/pi-tui": [
+				"../packages/tui/src/index.ts"
+			],
+			"@earendil-works/pi-tui/*": [
+				"../packages/tui/src/*"
+			],
+			"@mariozechner/pi-ai": [
+				"../packages/coding-agent/src/core/extensions/pi-ai-extension-view.ts"
+			]
+		}
+	},
+	"exclude": [
+		"**/node_modules/**"
+	]
+}

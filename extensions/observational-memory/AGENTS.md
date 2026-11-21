@@ -11,7 +11,7 @@ fork (branch `fix/omit-memory-thinking`, commit `25c63ea`) of `elpapi42/pi-obser
 git history. It is a standalone package outside the root npm workspaces with no dependencies or lockfile of
 its own: build, typecheck and tests use the monorepo root `node_modules` (`npm install` in the
 root) and resolve `@earendil-works/*` to the fork's `packages/*/src` through the paths of
-`packages/coding-agent/examples/tsconfig.json` (`@earendil-works/pi-ai` as the extension view pi gives
+`extensions/tsconfig.json` (`@earendil-works/pi-ai` as the extension view pi gives
 extensions, see `../README.md`) and the `vitest.base.ts` aliases. It is `private`, is not published, and no CI runs it. pi loads it by path from
 `settings.json` `packages`. `UPSTREAM` (git config format) records the last imported upstream commit; newer
 upstream commits are imported as a single squash commit with `node extensions/upstream.mjs import observational-memory`.

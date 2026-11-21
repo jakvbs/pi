@@ -98,3 +98,16 @@ packages/evals
 .pi/prompts
 .pi/skills
 !.pi/skills/interactive-testing.md
+
+# coding-agent examples and the tests that only exercise them.
+packages/coding-agent/examples
+packages/coding-agent/test/compaction-extensions-example.test.ts
+packages/coding-agent/test/git-merge-and-resolve-extension.test.ts
+packages/coding-agent/test/input-transform-streaming-example.test.ts
+packages/coding-agent/test/jev-router-example.test.ts
+packages/coding-agent/test/plan-mode-extension.test.ts
+packages/coding-agent/test/plan-mode-utils.test.ts
+packages/coding-agent/test/subagent-extension.test.ts
+packages/coding-agent/test/suite/regressions/8261-subagent-project-trust.test.ts
+packages/coding-agent/test/tool-renderer-examples.test.ts
+packages/coding-agent/test/trigger-compact-extension.test.ts

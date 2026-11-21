@@ -4,10 +4,7 @@
 	"type": "module",
 	"workspaces": [
 		"packages/*",
-		"apps/*",
-		"packages/coding-agent/examples/extensions/with-deps",
-		"packages/coding-agent/examples/extensions/custom-provider-anthropic",
-		"packages/coding-agent/examples/extensions/gondolin"
+		"apps/*"
 	],
 	"scripts": {
 		"clean": "npm run clean --workspaces --if-present",
@@ -16,7 +13,7 @@
 		"build:native:darwin": "npm --prefix packages/tui run build:native:darwin",
 		"build:native:linux": "npm --prefix packages/tui run build:native:linux",
 		"build:native:win32": "npm --prefix packages/tui run build:native:win32",
-		"check": "biome check --error-on-warnings --write . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:fork-deleted && tsc --noEmit && tsc --noEmit -p packages/coding-agent/examples/tsconfig.json",
+		"check": "biome check --error-on-warnings --write . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:fork-deleted && tsc --noEmit",
 		"check:pinned-deps": "node scripts/check-pinned-deps.mjs",
 		"check:fork-deleted": "node scripts/fork-deleted.mjs check",
 		"check:ts-imports": "node scripts/check-ts-relative-imports.mjs",

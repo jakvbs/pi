@@ -1,5 +1,5 @@
 {
-  "extends": "../../packages/coding-agent/examples/tsconfig.json",
+  "extends": "../tsconfig.json",
   "compilerOptions": { "lib": ["ES2024", "DOM", "DOM.Iterable"] },
   "include": ["*.ts", "../../packages/*/src/**/*.d.ts"]
 }
