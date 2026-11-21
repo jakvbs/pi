@@ -92,3 +92,9 @@ packages/chord
 packages/durable
 packages/env
 packages/evals
+
+# Project resources pi loads in every session in this repository: upstream's issue, PR, release and p2 workflows.
+.pi/extensions
+.pi/prompts
+.pi/skills
+!.pi/skills/interactive-testing.md
