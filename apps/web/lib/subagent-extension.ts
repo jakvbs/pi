@@ -8,6 +8,7 @@ import {
   type ToolExposure,
 } from "@earendil-works/pi-coding-agent";
 import {
+  defaultSubagentProfileName,
   SUBAGENT_CONTROL_TOOL_NAMES,
   type SubagentProfile,
   type SubagentRunInfo,
@@ -163,7 +164,8 @@ export interface SubagentToolDetails {
 export interface StartSubagentRequest {
   parentContext: ExtensionContext;
   parentToolCallId: string;
-  profile: string;
+  /** The profile the call names; absent, the runtime starts the default profile (`defaultSubagentProfileName`). */
+  profile?: string;
   task: string;
   inputFiles?: string[];
   description: string;
@@ -326,6 +328,8 @@ export function createSubagentExtension(
       const profiles = getProfiles().filter((profile) => profile.enabled);
       const profileNames = profiles.map((profile) => profile.name);
       const availableTypes = profileNames.length > 0 ? profileNames.join(", ") : "none";
+      const defaultType = defaultSubagentProfileName(profiles);
+      const defaultText = defaultType ? ` Default: ${defaultType}.` : profiles.length > 0 ? " No default: name one of the available types." : "";
       // The scope exists only once the session does, and can change while it runs, so each run
       // registers the declaration again when what it says about the scope (`model`'s list, roles
       // whose model the scope refuses) changed.
@@ -344,7 +348,7 @@ export function createSubagentExtension(
         ],
         executionMode: "parallel",
         parameters: Type.Object({
-          subagent_type: Type.Optional(Type.String({ description: `Configured agent profile. Available types: ${availableTypes}. Default: general-purpose.` })),
+          subagent_type: Type.Optional(Type.String({ description: `Configured agent profile. Available types: ${availableTypes}.${defaultText}` })),
           prompt: Type.String({ description: "The complete task for the subagent." }),
           role: Type.Optional(Type.String({ description: "Role, for an agent type that lists roles above. The subagent starts on the role's model and thinking level and is given the role's required reading. model in this call replaces the role's model and keeps its level unless it names one; thinking sets the level alone." })),
           resume: Type.Optional(Type.String({ description: "Existing session ID to continue with its current profile, model, thinking, and context. Omit new-session options." })),
@@ -424,7 +428,7 @@ export function createSubagentExtension(
               : await runtime.start({
               parentContext: ctx,
               parentToolCallId: toolCallId,
-              profile: params.subagent_type ?? "general-purpose",
+              ...(params.subagent_type?.trim() ? { profile: params.subagent_type.trim() } : {}),
               task: params.prompt,
               ...(params.input_files ? { inputFiles: params.input_files } : {}),
               description: params.description,

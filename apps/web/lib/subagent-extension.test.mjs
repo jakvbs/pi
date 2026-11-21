@@ -193,6 +193,35 @@ test("Agent tool description lists enabled effective profiles and refreshes when
   assert.match(reloaded.parameters.properties.subagent_type.description, /Available types: reviewer/);
 });
 
+test("subagent_type names the real default, and a call without it leaves the choice to the runtime", async () => {
+  const requests = [];
+  const runtime = {
+    async start(request) {
+      requests.push(request);
+      return { run: run({ runInBackground: true }), completion: new Promise(() => {}) };
+    },
+    async notifyParent() {},
+  };
+  const enabled = (name) => ({
+    name, displayName: name, description: name, systemPrompt: name, tools: [],
+    inheritContext: false, runInBackground: false, enabled: true, scope: "project",
+  });
+  const typeDescription = async (profiles) => (await loadTools(runtime, () => profiles))
+    .tools.get("Agent").parameters.properties.subagent_type.description;
+
+  // Before: "Default: general-purpose" even with general-purpose switched off.
+  assert.match(await typeDescription([enabled("legible-worker")]), /Available types: legible-worker\. Default: legible-worker\.$/);
+  assert.match(await typeDescription([enabled("general-purpose"), enabled("explore")]), /Default: general-purpose\.$/);
+  assert.match(await typeDescription([enabled("explore"), enabled("plan")]), /Available types: explore, plan\. No default: name one of the available types\.$/);
+  assert.match(await typeDescription([]), /Available types: none\.$/);
+
+  const { tools } = await loadTools(runtime, () => [enabled("legible-worker")]);
+  await tools.get("Agent").execute("call-1", { prompt: "Do it", description: "Work" });
+  await tools.get("Agent").execute("call-2", { subagent_type: " explore ", prompt: "Do it", description: "Work" });
+  assert.equal("profile" in requests[0], false);
+  assert.equal(requests[1].profile, "explore");
+});
+
 test("integrated extension removes a legacy extension that owns the same tools", () => {
   const host = {
     path: "<inline:pi-web-subagents>",

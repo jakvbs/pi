@@ -19,6 +19,8 @@ const {
   readSubagentRun,
   readSubagentSessionResources,
   resolveSubagentProfile,
+  defaultSubagentProfileName,
+  startableSubagentProfile,
   saveSubagentProfile,
   saveProjectSubagentProfile,
   SUBAGENT_META_TYPE,
@@ -1002,6 +1004,45 @@ test("a built-in is switched off through settings.json, not a copied-out file", 
   } finally {
     writeDisabledBuiltInSubagent("explore", false);
     deleteSubagentProfile(cwd, "global", "explore");
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a call without subagent_type runs general-purpose while enabled, else the only enabled profile", () => {
+  assert.equal(defaultSubagentProfileName([{ name: "explore" }, { name: "General-Purpose" }]), "general-purpose");
+  assert.equal(defaultSubagentProfileName([{ name: "legible-worker" }]), "legible-worker");
+  assert.equal(defaultSubagentProfileName([{ name: "explore" }, { name: "plan" }]), undefined);
+  assert.equal(defaultSubagentProfileName([]), undefined);
+});
+
+test("with every built-in switched off a run starts the remaining profile and refusals name the enabled ones", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-web-subagents-"));
+  const builtIns = ["general-purpose", "explore", "plan"];
+  try {
+    for (const name of builtIns) writeDisabledBuiltInSubagent(name, true);
+    // Before: a call without subagent_type asked for general-purpose and failed with no hint.
+    assert.throws(() => startableSubagentProfile(cwd, undefined), {
+      message: `No subagent profile is enabled. Enable a built-in profile in the Agents panel, or add a profile file to ${join(testAgentDir, "agents")} or the project's .pi/agents.`,
+    });
+
+    saveSubagentProfile(cwd, "global", profile({ name: "worker" }));
+    assert.equal(startableSubagentProfile(cwd, undefined).name, "worker");
+    assert.equal(startableSubagentProfile(cwd, " WORKER ").name, "worker");
+    assert.throws(() => startableSubagentProfile(cwd, "general-purpose"), {
+      message: "Unknown or disabled subagent profile: general-purpose. Enabled profiles: worker.",
+    });
+
+    saveSubagentProfile(cwd, "global", profile({ name: "reviewer" }));
+    assert.throws(() => startableSubagentProfile(cwd, undefined), {
+      message: "subagent_type is required: no profile is the default. Enabled profiles: reviewer, worker.",
+    });
+
+    writeDisabledBuiltInSubagent("general-purpose", false);
+    assert.equal(startableSubagentProfile(cwd, undefined).name, "general-purpose");
+  } finally {
+    for (const name of builtIns) writeDisabledBuiltInSubagent(name, false);
+    deleteSubagentProfile(cwd, "global", "worker");
+    deleteSubagentProfile(cwd, "global", "reviewer");
     await rm(cwd, { recursive: true, force: true });
   }
 });

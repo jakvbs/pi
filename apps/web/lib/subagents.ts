@@ -557,6 +557,30 @@ export function resolveSubagentProfile(cwd: string, name: string): SubagentProfi
   return listSubagentProfiles(cwd).find((profile) => profile.name.toLowerCase() === name.trim().toLowerCase() && profile.enabled);
 }
 
+/**
+ * The profile a call that names none runs: `general-purpose` while it is enabled, else the only
+ * enabled profile. With several other profiles enabled there is none: guessing one would hand the
+ * task to a prompt and tool grant the caller never chose.
+ */
+export function defaultSubagentProfileName(enabled: readonly Pick<SubagentProfile, "name">[]): string | undefined {
+  if (enabled.some((profile) => profile.name.toLowerCase() === "general-purpose")) return "general-purpose";
+  return enabled.length === 1 ? enabled[0].name : undefined;
+}
+
+/** The enabled profile a new run starts with: the one `name` gives, else the default. Throws naming the enabled profiles when none fits. */
+export function startableSubagentProfile(cwd: string, name: string | undefined): SubagentProfile {
+  const enabled = listSubagentProfiles(cwd).filter((profile) => profile.enabled);
+  if (enabled.length === 0) {
+    throw new Error(`No subagent profile is enabled. Enable a built-in profile in the Agents panel, or add a profile file to ${join(getAgentDir(), "agents")} or the project's .pi/agents.`);
+  }
+  const available = `Enabled profiles: ${enabled.map((profile) => profile.name).join(", ")}.`;
+  const wanted = name?.trim() || defaultSubagentProfileName(enabled);
+  if (!wanted) throw new Error(`subagent_type is required: no profile is the default. ${available}`);
+  const profile = enabled.find((candidate) => candidate.name.toLowerCase() === wanted.toLowerCase());
+  if (!profile) throw new Error(`Unknown or disabled subagent profile: ${wanted}. ${available}`);
+  return profile;
+}
+
 function assertProfileName(name: string): string {
   const normalized = name.trim();
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(normalized)) {

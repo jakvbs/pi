@@ -21,7 +21,7 @@ import {
 } from "./subagent-extension";
 import {
   readSubagentRun,
-  resolveSubagentProfile,
+  startableSubagentProfile,
   SUBAGENT_META_TYPE,
   SUBAGENT_STATUS_TYPE,
   SUBAGENT_RESULT_TYPE,
@@ -476,8 +476,7 @@ export function createSubagentController(
     // The child works in `repo`, or cuts its worktree from it; the parent's cwd otherwise.
     const baseCwd = repo ?? parent.cwd;
     try {
-      const profile = resolveSubagentProfile(parent.cwd, request.profile);
-      if (!profile) throw new Error(`Unknown or disabled subagent profile: ${request.profile}`);
+      const profile = startableSubagentProfile(parent.cwd, request.profile);
       const role = request.role === undefined ? undefined : findSubagentRole(profile.name, profile.roles, request.role);
 
       const runInBackground = request.runInBackground ?? profile.runInBackground;
