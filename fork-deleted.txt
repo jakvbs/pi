@@ -86,3 +86,9 @@ scripts/update-model-catalog-pin.mjs
 scripts/update-model-catalog-pin.test.mjs
 scripts/update-source-imports-to-ts.sh
 scripts/use-local-packages.mjs
+
+# Packages nothing in the fork imports: the runtime of upstream's apps/p2 and apps/p3, and their evals.
+packages/chord
+packages/durable
+packages/env
+packages/evals
