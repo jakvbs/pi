@@ -4,7 +4,7 @@ pi extensions maintained in this fork. Each directory is a standalone package ou
 
 ## Own and imported extensions
 
-An extension whose `UPSTREAM` file has an `[upstream]` section is a copy of a separate upstream repository without its history; `auto-effort`, `composer-predictions`, `timing`, `turn-handoff` and `usage` were written here. `UPSTREAM` uses git config format:
+An extension whose `UPSTREAM` file has an `[upstream]` section is a copy of a separate upstream repository without its history; `timing` and `usage` were written here. `UPSTREAM` uses git config format:
 
 ```ini
 [upstream]
@@ -12,13 +12,15 @@ An extension whose `UPSTREAM` file has an `[upstream]` section is a copy of a se
 	branch = main
 	path = packages/pi-codex-tools
 	commit = 91fd55fdfd7c5516ac8d08267f34b49f1b37d050
+	exclude = SECURITY.md
+	exclude = src/install-telemetry.ts
 ```
 
 `commit` is the last imported upstream commit. `path` is set only when the extension is a subdirectory of the upstream repository. Each `exclude` key names a path of the upstream tree (relative to `path`) that the fork deleted, as a git glob pathspec: `*` stays within a directory, `**` crosses directories, a directory matches everything below it. `import` drops excluded paths from both sides of its 3-way merge, so upstream changes to them neither conflict nor bring them back, and `npm run check` (`scripts/fork-deleted.mjs`) fails while an excluded path is tracked. Newer upstream commits are imported on top of `commit` with `extensions/upstream.mjs`: `status` fetches every section into `refs/extensions/` and lists its new commits, `import <name>` squashes the range into one commit together with `UPSTREAM` (using a 3-way merge), and `record` writes the fetched commit to `UPSTREAM` and commits it with any staged import changes (`--help` shows the arguments). The script also covers an app with an `UPSTREAM` file under `apps/`, named by its path: pi-web in `apps/web` is `node extensions/upstream.mjs import apps/web`. The `sync` skill (`~/.legible/skills/sync/SKILL.md`) decides which upstream commits fit the fork.
 
 An extension written here can track the repositories it replaced in `[reference "<name>"]` sections with the same keys, for example `timing`, which reimplements `@narumitw/pi-stamp` and `@carlosgtrz/pi-run-timer` without their code. Their commits never apply to the extension: `commit` is the last reviewed commit, and newer commits are only candidates to port by hand.
 
-Fork changes to an imported extension stay small so imports stay cheap: relative imports end in `.ts` (`npm run check:ts-imports`), `package.json` is `private` with exact versions and without devDependencies the root already provides, and upstream CI, publish scripts, lockfiles of other package managers and large media are dropped. Install telemetry is dropped too (`codex-tools`). An upstream test that checks only the npm package or the pi release upstream tests against is skipped with `--test-skip-pattern` in the `package.json` test script instead of being edited; the commit that adds a pattern says why.
+Fork changes to an imported extension stay small so imports stay cheap: relative imports end in `.ts` (`npm run check:ts-imports`), `package.json` is `private` with exact versions and without devDependencies the root already provides, and upstream CI, publish scripts, lockfiles of other package managers, large media and contributor boilerplate are dropped and listed in `exclude`. Install telemetry is dropped too (`codex-tools`). An upstream test that checks only the npm package or the pi release upstream tests against is skipped with `--test-skip-pattern` in the `package.json` test script instead of being edited; the commit that adds a pattern says why.
 
 ## Dependencies
 
