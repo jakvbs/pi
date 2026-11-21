@@ -111,7 +111,8 @@ function convertContentBlocks(content: (TextContent | ImageContent)[]): unknown 
 	if (!hasImages) {
 		return sanitizeSurrogates(content.map((c) => (c as TextContent).text ?? "").join("\n"));
 	}
-	const blocks = content.map((block) =>
+	// A blank text block is rejected by the API and would suppress the placeholder.
+	const blocks = content.filter((block) => block.type !== "text" || block.text.trim()).map((block) =>
 		block.type === "text"
 			? { type: "text" as const, text: sanitizeSurrogates(block.text) }
 			: {
@@ -163,18 +164,22 @@ function convertMessages(
 					params.push({ role: "user", content: sanitizeSurrogates(msg.content) });
 				}
 			} else {
-				const blocks = (msg.content as (TextContent | ImageContent)[]).map((item) =>
-					item.type === "text"
-						? { type: "text" as const, text: sanitizeSurrogates(item.text) }
-						: {
-								type: "image" as const,
-								source: {
-									type: "base64" as const,
-									media_type: normalizeImageMediaType(item.mimeType),
-									data: item.data,
+				// pi sends an image-only prompt as [{type:"text",text:""}, image]; the API
+				// rejects blank text blocks, so drop them and skip a message left empty.
+				const blocks = (msg.content as (TextContent | ImageContent)[])
+					.filter((item) => item.type !== "text" || item.text.trim())
+					.map((item) =>
+						item.type === "text"
+							? { type: "text" as const, text: sanitizeSurrogates(item.text) }
+							: {
+									type: "image" as const,
+									source: {
+										type: "base64" as const,
+										media_type: normalizeImageMediaType(item.mimeType),
+										data: item.data,
+									},
 								},
-							},
-				);
+					);
 				if (blocks.length > 0) params.push({ role: "user", content: blocks });
 			}
 		} else if (msg.role === "assistant") {

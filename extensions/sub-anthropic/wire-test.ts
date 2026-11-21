@@ -467,6 +467,60 @@ console.log("\n=== THINKING: per-message effort markers keep the cached prefix =
 	srv7.close();
 }
 
+console.log("\n=== BLANK TEXT BLOCKS NEVER REACH THE WIRE ===");
+{
+	// pi sends an image-only prompt as [{type:"text",text:""}, image]; Anthropic
+	// rejects it with 400 "text content blocks must be non-empty".
+	const image = { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" };
+	const send = async (messages: any[]) => {
+		let body: any;
+		const s = createPiSubAnthropicStream()(model, { messages } as any, {
+			apiKey: "sk-ant-oat01-FAKE",
+			fetch: async (_input: unknown, init?: RequestInit) => {
+				body = JSON.parse(typeof init?.body === "string" ? init.body : new TextDecoder().decode(init?.body as Uint8Array));
+				return new Response(SSE, { headers: { "Content-Type": "text/event-stream" } });
+			},
+		} as any);
+		for await (const _ of s) {
+			/* drain */
+		}
+		return body;
+	};
+	const blankTexts = (b: any) => {
+		let count = 0;
+		JSON.stringify(b?.messages ?? [], (_k, v) => {
+			if (v?.type === "text" && typeof v.text === "string" && v.text.trim() === "") count++;
+			return v;
+		});
+		return count;
+	};
+
+	for (const [label, text] of [
+		["empty", ""],
+		["whitespace", " \n\t"],
+	] as const) {
+		const b8 = await send([{ role: "user", content: [{ type: "text", text }, image] }]);
+		const last = b8?.messages?.at(-1);
+		check(`user ${label} text + image: no blank text block`, blankTexts(b8) === 0, JSON.stringify(last?.content)?.slice(0, 120));
+		check(`user ${label} text + image: image kept`, last?.role === "user" && last.content.length === 1 && last.content[0].type === "image", JSON.stringify(last?.content)?.slice(0, 120));
+	}
+
+	const onlyBlank = await send([
+		{ role: "user", content: "real" },
+		{ role: "user", content: [{ type: "text", text: "  " }] },
+	]);
+	check("user with only blank text is skipped", blankTexts(onlyBlank) === 0 && JSON.stringify(onlyBlank?.messages?.at(-1)).includes("real"), JSON.stringify(onlyBlank?.messages?.at(-1))?.slice(0, 120));
+
+	const tool = await send([
+		{ role: "user", content: "look" },
+		{ role: "assistant", content: [{ type: "toolCall", id: "toolu_9", name: "read_file", arguments: { path: "/a.png" } }] },
+		{ role: "toolResult", toolCallId: "toolu_9", content: [{ type: "text", text: "" }, image], isError: false },
+	]);
+	const result = tool?.messages?.at(-1)?.content?.[0]?.content;
+	check("tool result blank text + image: no blank text block", blankTexts(tool) === 0, JSON.stringify(result)?.slice(0, 120));
+	check("tool result blank text + image: placeholder added", result?.[0]?.text === "(see attached image)" && result?.[1]?.type === "image", JSON.stringify(result)?.slice(0, 120));
+}
+
 console.log("\n=== RESPONSE PARSING ===");
 check("stream produced a done event", events.includes("done"), events.join(","));
 check("thinking captured", final?.content?.[0]?.thinking === "pondering");
