@@ -2,3 +2,6 @@
 	url = https://github.com/elpapi42/pi-observational-memory
 	branch = master
 	commit = a94a98df103b6d8d297b5676152678fc56b76e25
+	exclude = .github
+	exclude = package-lock.json
+	exclude = scripts/verify-release-identity.mjs

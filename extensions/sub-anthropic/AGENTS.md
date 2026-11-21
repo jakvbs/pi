@@ -36,16 +36,14 @@ its fix), and `CONTRIBUTING.md` holds setup, tests and hard rules. Read `docs/in
 | `fingerprint.ts` | pinned omp wire constants, beta profiles, billing header, pure-BigInt XXH64, `cch` patch |
 | `oauth.ts` | OAuth login/refresh (PKCE, callback port 54545) + bootstrap identity |
 | `wire-test.ts` | assertions against a mock Anthropic HTTP server; no credentials, no network |
-| `compare-bun.ts` / `verify-xxhash.ts` | XXH64 conformance (vs bun native / canonical vectors) |
-| `diagnostics/*.ts` | one-off probes that need a **live** credential; not part of `npm test` |
+| `verify-xxhash.ts` | XXH64 conformance against canonical vectors |
 
 ## Commands
 
 ```bash
 npm test          # wire-test.ts  -> expect "0 failed"
 npm run test:xxhash
-npm run test:bun  # needs bun
-npm run test:all
+npm run test:all  # both
 npm run typecheck # tsc --noEmit against the fork's packages/*/src, must stay at 0 errors
 ```
 
@@ -82,10 +80,8 @@ Any change to the outgoing request must be covered in `wire-test.ts`, which
 captures the raw body/headers on a local server and re-verifies `cch`
 independently. Run `npm test` and `npm run typecheck` before finishing.
 
-Live-credential experiments belong in `diagnostics/` as a new probe file, with a
-header comment stating the hypothesis, the established facts and the run
-command — follow the existing files' shape. Never commit tokens or captured
-bodies.
+Live-credential experiments are one-off scripts that stay out of the repository.
+Never commit tokens or captured bodies.
 
 ## Documentation
 

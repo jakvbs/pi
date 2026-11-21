@@ -2,3 +2,16 @@
 	url = https://github.com/nicobailon/pi-web-access
 	branch = main
 	commit = 438e58be6307efb7cd539af3806757abe303aa0c
+	exclude = eval
+	exclude = docs/field-extract.md
+	exclude = docs/offtopic-judge.md
+	exclude = VISION.md
+	exclude = SECURITY.md
+	exclude = CONTRIBUTING.md
+	exclude = .github
+	exclude = banner.png
+	exclude = pi-web-fetch-demo.mp4
+	exclude = scripts/publish.js
+	exclude = scripts/pi-extensions-dist.js
+	exclude = test/publish-wrapper.test.mjs
+	exclude = test/package-typebox-dependency.test.mjs

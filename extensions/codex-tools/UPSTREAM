@@ -3,3 +3,9 @@
 	branch = main
 	path = packages/pi-codex-tools
 	commit = a916305a98d6ad5c54b3f43f34d9793f9960d931
+	exclude = CODE_OF_CONDUCT.md
+	exclude = SECURITY.md
+	exclude = CONTRIBUTING.md
+	exclude = .editorconfig
+	exclude = src/install-telemetry.ts
+	exclude = tests/install-telemetry.test.mjs

@@ -2,3 +2,7 @@
 	url = https://github.com/light4/pi-prompt-history
 	branch = main
 	commit = 995b7dec6459bc3e50bb672cde17e15e84cfad9a
+	exclude = .github
+	exclude = pnpm-lock.yaml
+	exclude = pnpm-workspace.yaml
+	exclude = prek.toml

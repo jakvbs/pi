@@ -133,7 +133,7 @@ npm test -w packages/pi-codex-tools
 npm run -w packages/pi-codex-tools pack:dry-run
 ```
 
-This fork removed upstream's install/update telemetry. See [SECURITY.md](./SECURITY.md).
+This fork removed upstream's install/update telemetry.
 
 ## License
 
