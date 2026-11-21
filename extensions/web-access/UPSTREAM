@@ -15,3 +15,8 @@
 	exclude = scripts/pi-extensions-dist.js
 	exclude = test/publish-wrapper.test.mjs
 	exclude = test/package-typebox-dependency.test.mjs
+	exclude = mcp-cli.ts
+	exclude = mcp-server.ts
+	exclude = mcp-tool-definitions.ts
+	exclude = scripts/build.js
+	exclude = test/mcp-server.test.mjs

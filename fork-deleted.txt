@@ -125,3 +125,23 @@ packages/coding-agent/test/restore-sandbox-env.test.ts
 packages/coding-agent/test/rpc-example.ts
 packages/coding-agent/test/sdk-codex-cache-probe-tool-loop.ts
 packages/coding-agent/test/streaming-render-debug.ts
+
+# MCP, codemode and tool-search (decision 2a): the packages, the coding-agent extensions, CLI, docs and tests.
+packages/agent/examples/mcp-codemode
+packages/codemode
+packages/coding-agent/docs/codemode.md
+packages/coding-agent/docs/mcp.md
+packages/coding-agent/src/core/mcp-servers.ts
+packages/coding-agent/src/core/radius-mcp.ts
+packages/coding-agent/src/extensions/codemode
+packages/coding-agent/src/extensions/mcp
+packages/coding-agent/src/extensions/tool-search
+packages/coding-agent/test/codemode-*.test.ts
+packages/coding-agent/test/mcp-*.test.ts
+packages/coding-agent/test/mcp-conformance
+packages/coding-agent/test/suite/agent-session-codemode.test.ts
+packages/coding-agent/test/suite/agent-session-mcp*.test.ts
+packages/coding-agent/test/suite/mcp-oauth-server.ts
+packages/coding-agent/test/suite/regressions/10285-mcp-tool-renderers.test.ts
+packages/coding-agent/test/tool-search.test.ts
+packages/mcp
