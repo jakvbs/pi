@@ -3,9 +3,6 @@ import { replaceControlCharacters } from "@earendil-works/pi-tui";
 import { APP_NAME, getAuthPath } from "../config.ts";
 import { CredentialSynchronizationError, type ModelRuntime } from "../core/model-runtime.ts";
 import { findMatchingProviders } from "../core/provider-matching.ts";
-import { RADIUS_PROVIDER_ID } from "../core/radius.ts";
-import { planRadiusMcpServer } from "../core/radius-mcp.ts";
-import { addMcpServerConfig } from "../extensions/mcp/config.ts";
 import { displayUrl, webUrl } from "../utils/web-url.ts";
 
 import type { LoginTerminal } from "./auth-terminal.ts";
@@ -87,7 +84,6 @@ export async function runAuthLogin(args: string[], options: AuthLoginOptions): P
 		`${authType.type === "oauth" ? `Logged in to ${provider.name}` : `Saved API key for ${provider.name}`}. Credentials saved to ${getAuthPath()}`,
 	);
 	await refreshProviderCatalog(provider, modelRuntime, terminal, signal);
-	if (provider.id === RADIUS_PROVIDER_ID) configureRadiusMcpServer(provider, options);
 	return 0;
 }
 
@@ -255,23 +251,5 @@ async function refreshProviderCatalog(
 		terminal.write(
 			`The ${provider.name} model catalog could not be refreshed: ${error instanceof Error ? error.message : String(error)}`,
 		);
-	}
-}
-
-/**
- * Point the Radius MCP server in the global mcp.json at the Radius login without asking, since the login is what the
- * server needs; /login asks instead. Nothing changes when a global server already uses this login.
- */
-function configureRadiusMcpServer(provider: Provider, options: AuthLoginOptions): void {
-	const { terminal } = options;
-	const plan = planRadiusMcpServer(provider.id, options.agentDir, options.cwd);
-	if (!plan) return;
-	try {
-		const replaced = addMcpServerConfig(plan.mcpPath, plan.name, plan.config);
-		terminal.write(
-			`${replaced ? "Updated" : "Added"} MCP server "${plan.name}" in ${plan.mcpPath} to use the ${provider.name} login.`,
-		);
-	} catch (error: unknown) {
-		terminal.error(`Could not update ${plan.mcpPath}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }

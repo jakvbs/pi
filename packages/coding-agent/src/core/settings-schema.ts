@@ -145,29 +145,6 @@ const WarningSettingsSchema = Type.Object({
 	anthropicExtraUsage: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.warnings.anthropicExtraUsage })),
 });
 
-function codemodeMode(options?: TSchemaOptions) {
-	return Type.Union([Type.Literal("on"), Type.Literal("only")], options);
-}
-
-const CodemodeModeSchema = codemodeMode();
-
-const CodemodeSettingsSchema = Type.Object({
-	mode: Type.Optional(
-		codemodeMode({
-			description:
-				'How codemode presents tools. "on" keeps direct tools declared and annotates tools callable from scripts; codemode lists only tools without direct exposure. "only" lists every script-callable tool in codemode and does not declare active direct tools.',
-			default: SETTINGS_DEFAULTS.codemode.mode,
-		}),
-	),
-	inlineBudget: Type.Optional(
-		Type.Number({
-			minimum: 0,
-			description: "Estimated tokens available for inline codemode tool declarations.",
-			default: SETTINGS_DEFAULTS.codemode.inlineBudget,
-		}),
-	),
-});
-
 const PackageSourceSchema = Type.Union(
 	[
 		Type.String({ description: "Load all resources from the package." }),
@@ -424,7 +401,6 @@ export const SettingsSchema = Type.Object(
 		),
 		markdown: Type.Optional(MarkdownSettingsSchema),
 		warnings: Type.Optional(WarningSettingsSchema),
-		codemode: Type.Optional(CodemodeSettingsSchema),
 		sessionDir: Type.Optional(
 			Type.String({
 				description: "Custom session storage directory, in the same format as the --session-dir CLI flag.",
@@ -505,8 +481,6 @@ export interface ThinkingBudgetsSettings extends Static<typeof ThinkingBudgetsSe
 export type MermaidRenderingMode = NonNullable<Static<typeof MarkdownSettingsSchema>["mermaid"]>;
 export interface MarkdownSettings extends Static<typeof MarkdownSettingsSchema> {}
 export interface WarningSettings extends Static<typeof WarningSettingsSchema> {}
-export type CodemodeMode = Static<typeof CodemodeModeSchema>;
-export interface CodemodeSettings extends Static<typeof CodemodeSettingsSchema> {}
 export type DefaultProjectTrust = NonNullable<SettingsInput["defaultProjectTrust"]>;
 export type QuietStartup = NonNullable<SettingsInput["quietStartup"]>;
 export type TranscriptDetail = NonNullable<SettingsInput["transcriptDetail"]>;

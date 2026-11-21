@@ -398,7 +398,6 @@ describe("defaultTools setting", () => {
 		});
 
 		it("keeps registered tools outside the tools allowlist inactive on tree navigation", async () => {
-			// An allowlist without mcp__ entries keeps MCP tools registered but inactive.
 			const sessionManager = createRecordedSession(["read"]);
 			const target = sessionManager.appendMessage({ role: "user", content: "first", timestamp: Date.now() });
 			const session = await resume(sessionManager, {

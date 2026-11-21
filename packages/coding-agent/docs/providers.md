@@ -109,8 +109,6 @@ Radius is a service crafted for Pi by the builders of Pi, Earendil Works. It pro
 
 To get started, run `/login radius` in Pi. This adds Radius as a provider, and its models appear in `/model` like any other provider's.
 
-Radius also has an MCP server, so Pi can manage Radius for you.
-
 Radius is currently in early alpha and evolving quickly. See [radius.earendil.com](https://radius.earendil.com) for more.
 
 Radius authentication uses its gateway catalog and caches refreshed model metadata for later offline startup. A custom Radius gateway configured in `models.json` uses its own catalog rather than inheriting the public `radius.pi.dev` catalog.

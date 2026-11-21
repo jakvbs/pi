@@ -1,7 +1,6 @@
 import type { TUI } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { writeRenderers } from "../src/core/tools/renderers/write.ts";
-import { codemodeRenderers } from "../src/extensions/codemode/renderer.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { CodeHighlighter, highlightCode, initTheme } from "../src/modes/interactive/theme/theme.ts";
 import * as syntaxHighlight from "../src/utils/syntax-highlight.ts";
@@ -27,28 +26,6 @@ describe("CodeHighlighter", () => {
 		const light = highlighter.highlight(code, "javascript");
 		await syntaxHighlight.loadAllHighlightLanguages();
 		expect(highlighter.highlight(code, "javascript")).not.toEqual(light);
-	});
-
-	it("codemode highlights the script once across progress, timer ticks, expanding and completion", () => {
-		vi.useFakeTimers();
-		const highlight = vi.spyOn(syntaxHighlight, "highlight");
-		const row = new ToolExecutionComponent(
-			"codemode",
-			"c",
-			{ code: "await tools.read({});" },
-			{},
-			codemodeRenderers,
-			tui,
-			"/",
-		);
-		row.setArgsComplete();
-		row.markExecutionStarted();
-		row.updateResult({ content: [], details: { calls: [] }, isError: false }, true);
-		vi.advanceTimersByTime(2_000);
-		row.setExpanded(true);
-		row.updateResult({ content: [{ type: "text", text: "done" }], details: { calls: [] }, isError: false }, false);
-		row.render(80);
-		expect(highlight).toHaveBeenCalledTimes(1);
 	});
 
 	it("write highlights unchanged first lines and a complete file only once", () => {

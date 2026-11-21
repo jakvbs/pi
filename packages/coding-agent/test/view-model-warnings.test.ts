@@ -78,7 +78,7 @@ describe("view model warnings", () => {
 			await main(
 				view
 					? ["--view", file, "--model", "missing-provider/missing-model", "--api-key", "unused"]
-					: ["--no-extensions", "--no-mcp", "--no-session", "--model", "faux/local"],
+					: ["--no-extensions", "--no-session", "--model", "faux/local"],
 			);
 			const output = [...stderr.mock.calls, ...errors.mock.calls].flat().join("\n");
 			expect(started.mock.calls).toHaveLength(1);

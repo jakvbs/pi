@@ -120,7 +120,7 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).toContain(
 				"- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory",
 			);
-			expect(prompt).toContain("environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md)");
+			expect(prompt).toContain("environment variables (docs/environment-variables.md)");
 			expect(prompt).toContain(
 				"Before implementing harness changes, read the relevant docs and examples in full, following related cross-references.",
 			);

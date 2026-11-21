@@ -16,7 +16,7 @@ An extension runs inside the Pi process with the same operating-system permissio
 - **Custom commands** - Register commands like `/mycommand` via `pi.registerCommand()`
 - **Session persistence** - Store state that survives restarts via `pi.appendEntry()`
 - **Custom rendering** - Control how tool calls/results and messages appear in TUI
-- **Providers and MCP servers** - Register model providers, virtual models, and MCP servers
+- **Providers** - Register model providers and virtual models
 
 **Example use cases:**
 - Permission gates (confirm before `rm -rf`, `sudo`, etc.)
@@ -57,7 +57,6 @@ See [examples/extensions/](../examples/extensions/) for working implementations.
   - [Tool Exposure](#tool-exposure)
   - [Calling Other Tools](#calling-other-tools)
   - [Dynamic Tool Loading](#dynamic-tool-loading)
-- [MCP Servers](#mcp-servers)
 - [Custom UI](#custom-ui)
 - [Error Handling](#error-handling)
 - [Mode Behavior](#mode-behavior)
@@ -404,7 +403,6 @@ Other operations change the current session without replacing the runtime:
 | `!` or `!!` command | `user_bash` (can intercept) |
 | Extension dialog or custom screen waits for the user | `ui_prompt_start`, `ui_prompt_end` |
 | Idle prompt-cache refresh | `cache_warming_decision` |
-| Extension registers or removes an MCP server after startup | `mcp_servers_change` |
 
 <a id="events-and-concurrency"></a>
 <a id="work-with-events"></a>
@@ -461,10 +459,6 @@ pi.on("resources_discover", async (event, _ctx) => {
   };
 });
 ```
-
-#### mcp_servers_change
-
-Fired when an extension registers or unregisters an MCP server after extensions are bound. `event.servers` lists every registered server after the change. Handling this event marks the extension as the one that connects registered servers; see [MCP Servers](#mcp-servers).
 
 ### Session Events
 
@@ -1919,7 +1913,7 @@ const all = pi.getAllTools();
 //   exposure: "direct",
 //   sourceInfo: { path: "builtin:read", source: "builtin", scope: "temporary", origin: "top-level" }
 // }, ...]
-// Tools shipped with Pi: core tools and tools from built-in extensions such as builtin:mcp
+// Tools shipped with Pi: core tools and tools from built-in extensions such as builtin:llama.cpp
 const shippedTools = all.filter((t) => t.sourceInfo.source === "builtin");
 // Tools from installed or local extensions
 const extensionTools = all.filter((t) => t.sourceInfo.source !== "builtin" && t.sourceInfo.source !== "sdk");
@@ -1930,7 +1924,7 @@ pi.setActiveTools(["read", "bash"]); // Only read and bash
 `pi.getAllTools()` returns `name`, `description`, `parameters`, `promptGuidelines`, `exposure`, `sourceInfo`, and, when set, `namespace`, `annotations`, and `reachesTools`.
 
 Typical `sourceInfo` values:
-- `source: "builtin"` for tools shipped with Pi: core tools (`path: "builtin:<tool>"`) and tools registered by built-in extensions such as `builtin:mcp` (`path: "builtin:<extension>"`)
+- `source: "builtin"` for tools shipped with Pi: core tools (`path: "builtin:<tool>"`) and tools registered by built-in extensions such as `builtin:llama.cpp` (`path: "builtin:<extension>"`)
 - `source: "sdk"` for tools passed via `createAgentSession({ customTools })`
 - extension source metadata for tools registered by extensions
 
@@ -2114,10 +2108,6 @@ pi.registerCommand("my-setup-teardown", {
 ### pi.registerVirtualModel(model) / pi.unregisterVirtualModel(provider, id)
 
 Register a selectable catalog entry that routes each request to a physical model. `ctx.model` and the session's model selection name the virtual model; assistant messages record the physical model and thinking level the router picked. Registering the same provider and ID again replaces the virtual model. See [Virtual Models](virtual-models.md).
-
-### pi.registerMcpServer(name, config) / pi.unregisterMcpServer(name) / pi.getMcpServers()
-
-Register an MCP server for the current session. See [MCP Servers](#mcp-servers).
 
 ### pi.registerToolRenderer(resolver)
 
@@ -2632,8 +2622,6 @@ The lifecycle is:
 2. Keep loader tools, such as `search_tools`, active.
 3. During loader execution, call `pi.setActiveTools()` with the desired active tool names. Names must already be registered; unknown and `hidden` names are ignored.
 
-Pi also ships a built-in `tool_search` tool. Register tools with `exposure: "deferred"` to make them findable by it instead of writing your own loader; see [Tool Exposure](#tool-exposure).
-
 #### Search tool example
 
 The following extension registers two inactive searchable tools and keeps `search_tools` active as their loader. The example uses simple keyword matching, but the search implementation could use BM25, embeddings, a remote catalog, or project-specific routing.
@@ -2759,7 +2747,7 @@ pi.on("tool_call", async (event, ctx) => {
 
 A tool that orchestrates other tools can adjust what the model sees while it is active with `prepareLoadout(loadout)`. It runs whenever the active tools change and receives the declared tools, the callable tools, and every registered tool with its exposure, namespace, and prompt guidelines. It returns replacement `descriptions` for declared tools (including its own) and `hiddenDeclarations`: active tools whose declarations requests leave out while they stay active and callable. The default system prompt leaves hidden tools out of its tool list and rules, and names no tool in the skills hint when the file reader is hidden, so the orchestrating tool should present their guidelines itself. `codemode` uses only this hook, `exposure`, `reachesTools`, and `ctx.executeTool()`, so another tool can implement the same behavior under a different name.
 
-A tool that reaches other tools declares which ones a call may reach with `reachesTools(input)`: `"all"`, or the words of the input that may name them, where a word refers to every tool or namespace whose name it contains. `codemode` returns `"all"` for scripts that search or list tools and the words of the script otherwise; `tool_search` always returns `"all"`. Extensions that register tools late use it from their `tool_call` handler to finish registering the tools a call needs before it runs, as the MCP extension does for servers that are still connecting. The MCP extension also activates `codemode` or `tool_search` for MCP tools only when the tool of that name declares `reachesTools`.
+A tool that reaches other tools declares which ones a call may reach with `reachesTools(input)`: `"all"`, or the words of the input that may name them, where a word refers to every tool or namespace whose name it contains. `codemode` returns `"all"` for scripts that search or list tools and the words of the script otherwise; `tool_search` always returns `"all"`. Extensions that register tools late use it from their `tool_call` handler to finish registering the tools a call needs before it runs.
 
 ### Calling Other Tools
 
@@ -2770,19 +2758,6 @@ Nested calls go through argument validation and the `tool_call` and `tool_result
 Nested calls do not add transcript entries: their results only reach the calling tool, which reports them itself, for example through `onUpdate` and `details`. The session keeps a bounded record of them (name, arguments, status, duration, error; never results) as `nestedCalls` on the calling tool's result message. It is used for compaction file lists and shown in HTML exports. Arguments over 8 KiB per call or 32 KiB per tool result are omitted, at most 256 calls are kept, and `complete: false` marks a record that lost anything.
 
 The `usage` of nested results, at every depth, is added to the calling tool's result `usage`, so a tool reports only its own usage, not that of the tools it called.
-
-## MCP Servers
-
-`pi.registerMcpServer(name, config)` adds an MCP server for the current session. `config` has the shape of an `mcpServers` entry in [`mcp.json`](mcp.md): `command`, `args`, `env`, and `cwd` for stdio servers, `url`, `headers`, and `oauth` for HTTP servers, plus `exposure`, `toolExposure`, `description`, `enabled`, and `timeout`.
-
-```typescript
-pi.registerMcpServer("jira", { url: "https://mcp.example.com/jira", exposure: "codemode" });
-pi.unregisterMcpServer("jira");
-```
-
-Servers registered while the extension loads connect when the session starts, together with the `mcp.json` servers; servers registered later connect right away, and `pi.unregisterMcpServer()` closes the connection and makes the server's tools unreachable. Registrations are not saved: register again on every load, for example based on the extension's own settings. A server in `mcp.json` with the same name takes precedence, and `/mcp` shows the override. Registering the same name again replaces the extension's earlier registration; names registered by another extension, invalid names, and invalid configs throw.
-
-The built-in MCP support connects registered servers. When nothing does, because another extension replaced it (see [MCP](mcp.md#replace-the-built-in-mcp-support)), each registration is reported as an extension error. Other MCP extensions can connect registered servers too: read them with `pi.getMcpServers()` on `session_start` and handle the `mcp_servers_change` event for later changes.
 
 <a id="interact-with-the-user"></a>
 

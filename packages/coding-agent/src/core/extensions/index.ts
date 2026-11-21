@@ -119,7 +119,6 @@ export type {
 	MarkdownTransformer,
 	MarkdownTransformerOptions,
 	MarkdownTransformerRegistration,
-	McpServersChangeEvent,
 	// Events - Message
 	MessageEndEvent,
 	MessageEndEventResult,

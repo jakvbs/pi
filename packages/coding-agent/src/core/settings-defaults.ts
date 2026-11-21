@@ -58,10 +58,6 @@ export const SETTINGS_DEFAULTS = {
 	warnings: {
 		anthropicExtraUsage: true,
 	},
-	codemode: {
-		mode: "on",
-		inlineBudget: 3000,
-	},
 	cacheWarming: "idle",
 	tuiMode: "fullscreen",
 	fullscreenExitOutput: "transcript",

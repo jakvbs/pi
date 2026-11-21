@@ -114,7 +114,6 @@ import {
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
 import { type BeforeAgentStartTrigger, emitSessionShutdownEvent } from "./extensions/runner.ts";
-import { createToolNameMatcher, isMcpToolName } from "./mcp-servers.ts";
 import { type BashExecutionMessage, type CustomMessage, convertToLlm } from "./messages.ts";
 import { ModelRegistry, type RequestOptionsTransform } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
@@ -148,6 +147,7 @@ import {
 	type NormalizedBuildSystemPromptOptions,
 	normalizeBuildSystemPromptOptions,
 } from "./system-prompt.ts";
+import { createToolNameMatcher } from "./tool-name-matcher.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { limitContextText, toolOutputBudgetBytes, toolOutputMaxBytes } from "./tools/output-limit.ts";
@@ -263,9 +263,7 @@ export interface AgentSessionConfig {
 	defaultToolModifiers?: string[];
 	/**
 	 * Optional allowlist of tool names or patterns (`*` matches any characters). When provided, only
-	 * matching tools are exposed. A non-empty list without `mcp__` entries also keeps MCP tools
-	 * registered for codemode and tool_search; only tool_search can declare them. An empty list
-	 * exposes no tools.
+	 * matching tools are exposed. An empty list exposes no tools.
 	 */
 	allowedToolNames?: string[];
 	/** Optional denylist of tool names or patterns. When provided, matching tools are not exposed. */
@@ -477,11 +475,6 @@ export class AgentSession {
 	private _defaultToolModifiers: string[];
 	/** Matches the `--tools` entries: tool names or patterns. */
 	private _allowedTools?: (name: string) => boolean;
-	/**
-	 * Whether the allowlist filters MCP tools: it is empty (`--no-tools`) or names an MCP tool
-	 * (`mcp__*`). Otherwise it keeps MCP tools registered for codemode and tool_search.
-	 */
-	private _allowlistFiltersMcp = false;
 	private _excludedTools?: (name: string) => boolean;
 	private _baseToolsOverride?: Record<string, AgentTool>;
 	private _sessionStartEvent: SessionStartEvent;
@@ -532,8 +525,6 @@ export class AgentSession {
 		this._defaultToolModifiers = config.defaultToolModifiers ?? [];
 		if (config.allowedToolNames) {
 			this._allowedTools = createToolNameMatcher(config.allowedToolNames);
-			this._allowlistFiltersMcp =
-				config.allowedToolNames.length === 0 || config.allowedToolNames.some((entry) => entry.startsWith("mcp__"));
 		}
 		this._excludedTools = config.excludedToolNames ? createToolNameMatcher(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
@@ -1640,25 +1631,10 @@ export class AgentSession {
 		this._rebuildSystemPrompt(tools.map((tool) => tool.name));
 	}
 
-	/**
-	 * Whether `--tools` and `--exclude-tools` keep the tool registered. MCP tools stay registered
-	 * unless the allowlist filters them (see `_allowlistFiltersMcp`).
-	 */
+	/** Whether `--tools` and `--exclude-tools` keep the tool registered. */
 	private _isAllowedTool(name: string): boolean {
 		if (this._excludedTools?.(name)) return false;
-		if (!this._allowedTools || this._allowedTools(name)) return true;
-		return !this._allowlistFiltersMcp && isMcpToolName(name);
-	}
-
-	/**
-	 * Whether the tool may be active, which declares it to the model. MCP tools the allowlist keeps
-	 * without matching them are only for codemode and tool_search: they may be declared only when
-	 * tool_search can load them (non-`direct` exposure and tool_search registered). This also applies
-	 * to tools restored from the transcript or set by extensions.
-	 */
-	private _isActivatable(name: string): boolean {
-		if (!this._allowedTools || this._allowedTools(name) || !isMcpToolName(name)) return true;
-		return this._getToolExposure(name) !== "direct" && this._toolRegistry.has("tool_search");
+		return !this._allowedTools || this._allowedTools(name);
 	}
 
 	private _getToolExposure(name: string): ToolExposure {
@@ -1690,7 +1666,7 @@ export class AgentSession {
 		const kept = this.getActiveToolNames().filter((name) => requested.has(name));
 		const tools = [...new Set([...kept, ...requested])].flatMap((name) => {
 			const tool = this._toolRegistry.get(name);
-			return tool && this._getToolExposure(name) !== "hidden" && this._isActivatable(name) ? [tool] : [];
+			return tool && this._getToolExposure(name) !== "hidden" ? [tool] : [];
 		});
 		const hooks = tools.flatMap((tool) => {
 			const entry = this._toolDefinitions.get(tool.name);
@@ -3406,7 +3382,6 @@ export class AgentSession {
 		this._extensionsBound = true;
 		this._applyExtensionBindings(this._extensionRunner);
 		await this._extensionRunner.emit(this._sessionStartEvent);
-		this._extensionRunner.reportUnhandledMcpServers();
 		await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
 	}
 
@@ -3830,7 +3805,6 @@ export class AgentSession {
 		if (this._extensionsBound) {
 			await options?.beforeSessionStart?.();
 			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
-			this._extensionRunner.reportUnhandledMcpServers();
 			await this.extendResourcesFromExtensions("reload");
 		}
 	}

@@ -1,6 +1,3 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { InMemoryModelsStore, type Model, type Provider } from "@earendil-works/pi-ai";
 import { describe, expect, test, vi } from "vitest";
 import { runAuthLogin } from "../src/cli/auth-login.ts";
@@ -433,49 +430,5 @@ describe("pi auth login", () => {
 		expect(await run([PROVIDER_ID], modelRuntime, terminal, controller.signal)).toBe(1);
 		expect(terminal.errors).toEqual(["Login cancelled."]);
 		expect(await credentials.read(PROVIDER_ID)).toBeUndefined();
-	});
-
-	test.each(["radius-mcp", "radius_mcp"])("keeps unrelated MCP servers when %s is occupied", async (fallback) => {
-		const agentDir = mkdtempSync(join(tmpdir(), "pi-auth-login-"));
-		try {
-			const { modelRuntime } = await setup({ apiKey: bothMethods.apiKey }, "radius");
-			const mcpPath = join(agentDir, "mcp.json");
-			const servers = {
-				radius: { command: "original-one" },
-				[fallback]: { command: "original-two" },
-				"radius-mcp-2": { command: "original-three" },
-			};
-			writeFileSync(mcpPath, JSON.stringify({ mcpServers: servers }));
-			const terminal = scriptedTerminal(["sk-test"]);
-			expect(await run(["radius"], modelRuntime, terminal, undefined, agentDir)).toBe(0);
-			expect(JSON.parse(readFileSync(mcpPath, "utf8")).mcpServers).toEqual({
-				...servers,
-				"radius-mcp-3": { url: "https://radius.pi.dev/mcp", auth: { provider: "radius" } },
-			});
-			expect(terminal.lines).toContain(`Added MCP server "radius-mcp-3" in ${mcpPath} to use the Login Test login.`);
-		} finally {
-			rmSync(agentDir, { recursive: true, force: true });
-		}
-	});
-
-	test("configures the Radius MCP server without asking, once", async () => {
-		const agentDir = mkdtempSync(join(tmpdir(), "pi-auth-login-"));
-		try {
-			const { modelRuntime } = await setup({ apiKey: bothMethods.apiKey }, "radius");
-			const mcpPath = join(agentDir, "mcp.json");
-			const first = scriptedTerminal(["sk-test"]);
-			expect(await run(["radius"], modelRuntime, first, undefined, agentDir)).toBe(0);
-			expect(first.questions).toEqual(["Enter Login Test API key: "]);
-			expect(first.lines).toContain(`Added MCP server "radius" in ${mcpPath} to use the Login Test login.`);
-			expect(JSON.parse(readFileSync(mcpPath, "utf8")).mcpServers.radius).toMatchObject({
-				auth: { provider: "radius" },
-			});
-
-			const second = scriptedTerminal(["sk-test"]);
-			expect(await run(["radius"], modelRuntime, second, undefined, agentDir)).toBe(0);
-			expect(second.lines.some((line) => line.includes("MCP server"))).toBe(false);
-		} finally {
-			rmSync(agentDir, { recursive: true, force: true });
-		}
 	});
 });

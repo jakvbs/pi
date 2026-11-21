@@ -67,7 +67,6 @@ import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
-import { loadMcpCommand } from "./extensions/mcp/cli.lazy.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { writeDiagnosticsToStderr } from "./modes/diagnostics-stderr.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
@@ -379,7 +378,7 @@ function validateSessionIdFlags(parsed: Args): void {
 
 /**
  * A view only shows a session: it cannot pick, create, name or fork one, and it needs the terminal.
- * It loads no extensions, MCP servers, skills, prompt templates, context files or project-local files,
+ * It loads no extensions, skills, prompt templates, context files or project-local files,
  * and does no startup network work, so it starts without a provider login or any agent configuration.
  */
 function prepareViewFlags(parsed: Args, appMode: AppMode): void {
@@ -406,7 +405,6 @@ function prepareViewFlags(parsed: Args, appMode: AppMode): void {
 
 	parsed.noExtensions = true;
 	parsed.extensions = undefined;
-	parsed.noMcp = true;
 	parsed.noSkills = true;
 	parsed.noPromptTemplates = true;
 	parsed.noContextFiles = true;
@@ -715,12 +713,6 @@ export async function main(args: string[], options?: MainOptions) {
 		return;
 	}
 
-	if (args[0] === "mcp") {
-		const { runMcpCommand } = await loadMcpCommand();
-		process.exitCode = await runMcpCommand(args.slice(1), { cwd, agentDir });
-		return;
-	}
-
 	const parsed = parseArgs(args);
 	if (parsed.diagnostics.length > 0) {
 		for (const d of parsed.diagnostics) {
@@ -917,7 +909,6 @@ export async function main(args: string[], options?: MainOptions) {
 				additionalPromptTemplatePaths: resolvedPromptTemplatePaths,
 				additionalThemePaths: resolvedThemePaths,
 				noExtensions: parsed.noExtensions,
-				disabledBuiltinExtensions: parsed.noMcp ? ["mcp"] : undefined,
 				noSkills: parsed.noSkills,
 				noPromptTemplates: parsed.noPromptTemplates,
 				noThemes: parsed.noThemes,
