@@ -23,7 +23,10 @@ export interface ModelLookup<M extends { provider: string; id: string }> {
 
 function findSubagentModel<M extends { provider: string; id: string }>(models: ModelLookup<M>, reference: string): M | undefined {
   const slash = reference.indexOf("/");
-  if (slash > 0) return models.getModel(reference.slice(0, slash), reference.slice(slash + 1));
+  // `provider/modelId` is a hint, as in pi's `--model`: the whole text may also be one provider's
+  // own id that contains a slash (`zai/glm-5` on a gateway, OpenRouter's `anthropic/...` ids).
+  const named = slash > 0 ? models.getModel(reference.slice(0, slash), reference.slice(slash + 1)) : undefined;
+  if (named) return named;
   const matches = models.getModels().filter((model) => model.id === reference);
   if (matches.length > 1) throw new Error(`Subagent model is ambiguous; use provider/modelId: ${reference}`);
   return matches[0];

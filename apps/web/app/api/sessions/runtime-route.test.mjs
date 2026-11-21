@@ -113,8 +113,10 @@ test("the running poll carries the sidebar state revision and deleting a session
   assert.equal(await revision(), 2);
 });
 
-test("session listing returns uncompressed JSON so Next.js compresses it once", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "pi-web-list-gzip-"));
+// Next compresses responses itself and, from 16.4.6, drops a handler's own
+// Content-Encoding, so a body the handler gzips goes out gzipped twice (#1729).
+test("session listing leaves compression to Next when the client accepts gzip", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-list-encoding-"));
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = dir;
   invalidateSessionListCache();
@@ -126,7 +128,7 @@ test("session listing returns uncompressed JSON so Next.js compresses it once", 
   });
 
   // The list carries at most 500 characters of each first message, so a few
-  // sessions make the body large enough to compress.
+  // sessions make the body larger than any compression threshold.
   const firstMessage = "compressible session content ".repeat(500);
   for (let index = 0; index < 4; index++) {
     const manager = SessionManager.create(dir);
@@ -319,9 +321,9 @@ test("live detail and state routes work without a persisted JSONL file", async (
   });
 });
 
-test("session detail returns uncompressed JSON so Next.js compresses it once", async (t) => {
+test("session detail leaves compression to Next when the client accepts gzip", async (t) => {
   const previousRegistry = globalThis.__piSessions;
-  const id = "live-route-gzip-test";
+  const id = "live-route-encoding-test";
   const timestamp = "2026-09-05T00:00:00.000Z";
   const firstMessage = "large session detail content ".repeat(500);
   const entry = {
@@ -337,7 +339,7 @@ test("session detail returns uncompressed JSON so Next.js compresses it once", a
     getLeafId: () => entry.id,
     getTree: () => [],
     getSessionName: () => undefined,
-    getSessionFile: () => `/tmp/pi-web-live-route-gzip-${process.pid}.jsonl`,
+    getSessionFile: () => `/tmp/pi-web-live-route-encoding-${process.pid}.jsonl`,
   };
   globalThis.__piSessions = new Map([[id, {
     isAlive: () => true,

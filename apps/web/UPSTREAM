@@ -1,4 +1,4 @@
 [upstream]
 	url = https://github.com/agegr/pi-web
 	branch = main
-	commit = f97292eee7957e8d166d94433ec8df554fe0c9f3
+	commit = 432366bd510c72ce7b678a6cb1220f9cac1ed56c
