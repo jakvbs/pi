@@ -67,6 +67,6 @@ Use `--no-session` for an ephemeral run. An ephemeral session cannot be resumed 
 
 ## Export a session
 
-Use `/export` to write the current session as HTML or JSONL.
+Use `/export [path]` to write the current session branch as JSONL.
 
 Review exported sessions first. They can contain prompts, model responses, tool arguments, command output, file contents, and extension messages.

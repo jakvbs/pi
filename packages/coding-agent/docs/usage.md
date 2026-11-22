@@ -77,7 +77,7 @@ Use `!!` when you want to run a command without sending its output to the model.
 
 ## Copy or export results
 
-Press `Ctrl+X` or run `/copy` to copy the last assistant response. Use `/export` to save the session as HTML or JSONL.
+Press `Ctrl+X` or run `/copy` to copy the last assistant response. Use `/export` to save the session branch as JSONL.
 
 ## Adjust the terminal
 

@@ -1,6 +1,6 @@
 # Customize Pi with themes
 
-Themes control the colors Pi uses in interactive mode and HTML exports. Pi includes the `system`, `dark`, and `light` themes. You can select one theme, follow your terminal's light or dark appearance, or create your own palette.
+Themes control the colors Pi uses in interactive mode. Pi includes the `system`, `dark`, and `light` themes. You can select one theme, follow your terminal's light or dark appearance, or create your own palette.
 
 ## Use your terminal's colors
 
@@ -76,7 +76,7 @@ Use the theme name as the filename. Pi hot-reloads the active user theme only fr
 | `appearance` | No | `"dark"` or `"light"`: the background the theme is designed for. Pi detects it from the theme colors when omitted. |
 | `vars` | No | Defines reusable color values. Variables can reference other variables. |
 | `colors` | Yes | Assigns colors to terminal UI roles. The schema identifies required and optional roles. |
-| `export` | No | Overrides page and panel backgrounds in HTML exports. |
+| `export` | No | Ignored. It held the colors of the removed HTML export and is still accepted so existing themes stay valid. |
 
 Theme objects are strict: only documented top-level fields and color tokens are accepted. Define reusable custom colors under `vars`; custom keys under `colors` or `export` and additional top-level metadata are rejected.
 
@@ -91,9 +91,9 @@ A color can be written in six forms:
 | Variable reference | `"primary"` | The value of an entry in `vars`. |
 | Terminal default | `""` | The terminal's default foreground or background color. |
 
-Terminal default colors render as the terminal's own colors. Where Pi needs a concrete value, such as HTML export or extension color math, it uses the default colors the terminal reports, or a black or white guess based on the theme's appearance.
+Terminal default colors render as the terminal's own colors. Where Pi needs a concrete value, such as extension color math, it uses the default colors the terminal reports, or a black or white guess based on the theme's appearance.
 
-Pi resolves chained variable references. A missing variable or circular reference makes the theme invalid. Pi uses truecolor when available, gamut-maps OKLCH to sRGB, and approximates colors for 256-color terminals. HTML exports convert OKHSL values to hexadecimal because CSS does not support them. If colors differ from their source values, check your terminal's truecolor detection and contrast settings. See [Configure Your Terminal](terminal-setup.md#override-detected-capabilities).
+Pi resolves chained variable references. A missing variable or circular reference makes the theme invalid. Pi uses truecolor when available, gamut-maps OKLCH to sRGB, and approximates colors for 256-color terminals. If colors differ from their source values, check your terminal's truecolor detection and contrast settings. See [Configure Your Terminal](terminal-setup.md#override-detected-capabilities).
 
 Use the [theme JSON schema](https://pi.dev/schemas/theme.schema.json) for the exact properties, required colors, and accepted value types.
 
@@ -113,7 +113,6 @@ Theme colors describe interface roles rather than individual components. Use the
 | Tool diffs | `toolDiff*` |
 | Syntax highlighting | `syntax*` |
 | Editor modes | `thinking*`, `bashMode` |
-| HTML export | `export.pageBg`, `export.cardBg`, `export.infoBg` |
 
 The schema is the format reference. The built-in themes provide complete values that you can copy and adjust.
 
@@ -126,8 +125,6 @@ Five colors are optional and inherit another color when omitted:
 | `searchMatchBg` | `selectedBg` |
 | `searchMatchText` | `text` |
 | `thinkingMax` | `thinkingXhigh` |
-
-If `export` colors are omitted, Pi derives HTML page and panel backgrounds from `userMessageBg`.
 
 ## Load a theme from a project or package
 

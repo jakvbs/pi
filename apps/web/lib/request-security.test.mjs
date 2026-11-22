@@ -99,44 +99,19 @@ test("does not globally trust opaque iframe or alternate loopback origins", asyn
   assert.equal(isApiRequestAllowed(alternateLoopback), false);
 });
 
-test("allows only user-initiated session export document navigations from a PWA", async () => {
+test("refuses a user-initiated document navigation to a route other than a PDF read", async () => {
   const { isApiRequestAllowed } = await loadSubject();
-  const navigationHeaders = {
-    host: "127.0.0.1:30141",
-    "sec-fetch-site": "cross-site",
-    "sec-fetch-mode": "navigate",
-    "sec-fetch-dest": "document",
-    "sec-fetch-user": "?1",
-  };
-
   assert.equal(isApiRequestAllowed(new Request(
-    "http://127.0.0.1:30141/api/sessions/session-id/export?inline=1",
-    { headers: navigationHeaders },
-  )), true);
-  assert.equal(isApiRequestAllowed(new Request(
-    "http://127.0.0.1:30141/api/sessions",
-    { headers: navigationHeaders },
-  )), false);
-  assert.equal(isApiRequestAllowed(new Request(
-    "http://127.0.0.1:30141/api/sessions/session-id/export?inline=1",
-    { headers: { ...navigationHeaders, "sec-fetch-dest": "empty" } },
-  )), false);
-  assert.equal(isApiRequestAllowed(new Request(
-    "http://127.0.0.1:30141/api/sessions/session-id/export?inline=1",
+    "http://127.0.0.1:30141/api/sessions/session-id",
     {
       headers: {
-        ...navigationHeaders,
-        "sec-fetch-user": "",
+        host: "127.0.0.1:30141",
+        "sec-fetch-site": "cross-site",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "document",
+        "sec-fetch-user": "?1",
       },
     },
-  )), false);
-  assert.equal(isApiRequestAllowed(new Request(
-    "http://127.0.0.1:30141/api/sessions/session-id/export?inline=1",
-    { method: "POST", headers: navigationHeaders },
-  )), false);
-  assert.equal(isApiRequestAllowed(new Request(
-    "http://127.0.0.1:30141/api/sessions/session-id/export?inline=1",
-    { headers: { ...navigationHeaders, host: "attacker.example:30141" } },
   )), false);
 });
 

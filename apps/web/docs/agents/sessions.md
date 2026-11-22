@@ -323,9 +323,6 @@ Files: `lib/markdown.ts` (`markdownClobberPrefix`, `rehypeMatchClobberedIds`, `j
 ## A reply's terminal escapes are dropped (`stripAnsi()`, `lib/ansi.ts`, #1753)
 - A provider can put ANSI escape sequences in a reply's text or thinking (one returned `\x1b[38;5;5mThinking:\x1b[39m \x1b[2m…` as reasoning). pi stores them as they came and its TUI hands them to the terminal, which draws them as styling. A browser draws ESC as nothing and the rest as text (`[38;5;5mThinking:[39m`), so `TextBlock`, `ThinkingText` and `getThinkingPreview()` (the folded header, and the server's deferred thinking) show the text with them stripped, without colours, and the reply's Copy copies what shows. The message and the session file keep them. `stripAnsi()` returns text with no ESC as it is, before either scan, since it now runs on every streamed chunk of a reply.
 
-## Exported session HTML
-- `/api/sessions/[id]/export` delegates to pi's export helper and returns its HTML unchanged. pi 1.5.0's template walks the tree iteratively, so very deep linear sessions no longer overflow the browser call stack; pi-web's string patch for that was removed when it stopped matching.
-
 ## Deleting the selected session outlives the delete click (`components/AppShell.tsx`)
 - `SessionItem.performDelete` captures `onDeleted` at the delete click, and `handleSessionDeleted` is a `useCallback` whose `selectedSession` closure is from that same render. The DELETE request can complete **after** the user has switched sessions, so the captured selection still names the session being deleted.
 - The empty-composer fallback therefore guards on the latest selection read from a render-synced ref (`selectedSessionRef.current`), not the captured state, and takes the fallback cwd from that ref too: a user who navigated away stays on their new chat, and a user who lands on the deleting session in flight still gets a fresh composer in its cwd.

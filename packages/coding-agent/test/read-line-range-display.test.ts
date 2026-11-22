@@ -1,11 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import { runInNewContext } from "node:vm";
 import type { TUI } from "@earendil-works/pi-tui";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { exportFromFile } from "../src/core/export-html/index.ts";
 import {
 	CURRENT_SESSION_VERSION,
 	type SessionHeader,
@@ -17,32 +15,6 @@ import { formatReadLineRange } from "../src/core/tools/render-utils.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { TreeSelectorComponent } from "../src/modes/interactive/components/tree-selector.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
-
-interface HtmlViewer {
-	formatReadLineRange: typeof formatReadLineRange;
-	getTreeNodeDisplayHtml(entry: SessionMessageEntry): string;
-	renderEntry(entry: SessionMessageEntry): string;
-}
-
-// Runs the exported viewer's real data loading and renderers, stopping before DOM initialization.
-function loadHtmlViewer(html: string): HtmlViewer {
-	const sessionData = html.match(/<script id="session-data" type="application\/json">([^<]+)<\/script>/)?.[1];
-	const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)?.[1];
-	if (!sessionData || !script) throw new Error("Missing exported session data or viewer script");
-	return runInNewContext(
-		script.replace(
-			"marked.use({",
-			"return { formatReadLineRange, getTreeNodeDisplayHtml, renderEntry }; marked.use({",
-		),
-		{
-			atob,
-			TextDecoder,
-			URLSearchParams,
-			document: { getElementById: () => ({ textContent: sessionData }), querySelector: () => null },
-			window: { location: { search: "" } },
-		},
-	);
-}
 
 // #9887
 describe("read line range display", () => {
@@ -73,7 +45,7 @@ describe("read line range display", () => {
 		}
 	});
 
-	it("shows string ranges in the TUI, session tree, and HTML export", async () => {
+	it("shows string ranges in the TUI and session tree", async () => {
 		const args = { path: "notes.txt", offset: "25", limit: "13" };
 		const assistant: SessionMessageEntry = {
 			type: "message",
@@ -144,12 +116,5 @@ describe("read line range display", () => {
 		expect(tree.getTreeList().render(120).map(stripVTControlCharacters).join("\n")).toContain(
 			"[read: notes.txt:25-37]",
 		);
-
-		const viewer = loadHtmlViewer(readFileSync(await exportFromFile(sessionPath, join(tempDir, "out.html")), "utf8"));
-		for (const [offset, limit, range] of cases) {
-			expect(viewer.formatReadLineRange(offset, limit), `${offset}, ${limit}`).toBe(range);
-		}
-		expect(viewer.getTreeNodeDisplayHtml(result)).toBe('<span class="tree-role-tool">[read: notes.txt:25-37]</span>');
-		expect(viewer.renderEntry(assistant)).toContain('<span class="line-numbers">:25-37</span>');
 	});
 });

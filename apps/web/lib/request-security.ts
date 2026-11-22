@@ -77,13 +77,11 @@ function isPdfFileReadUrl(url: URL): boolean {
 
 /**
  * A top-level GET the user clicked can arrive marked cross-site with no Origin
- * when the page holding the link has an opaque origin: a PWA's own window
- * opening the session export, or Android Chrome's `data:` placeholder for a PDF
- * it will not render in the viewer's iframe (#1298). Only routes with no side
- * effect whose response cannot run script in the Pi Web origin qualify: the
- * export page (framing denied) and `type=read` of a `.pdf`, which the route
- * always serves as `application/pdf` with nosniff. The opening page cannot
- * read either response.
+ * when the page holding the link has an opaque origin: Android Chrome's `data:`
+ * placeholder for a PDF it will not render in the viewer's iframe (#1298). Only
+ * routes with no side effect whose response cannot run script in the Pi Web
+ * origin qualify: `type=read` of a `.pdf`, which the route always serves as
+ * `application/pdf` with nosniff. The opening page cannot read the response.
  */
 function isUserInitiatedDocumentNavigation(request: Request): boolean {
   if (
@@ -97,7 +95,7 @@ function isUserInitiatedDocumentNavigation(request: Request): boolean {
 
   try {
     const url = new URL(request.url);
-    return /^\/api\/sessions\/[^/]+\/export$/.test(url.pathname) || isPdfFileReadUrl(url);
+    return isPdfFileReadUrl(url);
   } catch {
     return false;
   }

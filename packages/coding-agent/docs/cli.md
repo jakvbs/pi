@@ -35,7 +35,6 @@ Pi resolves `@path` from the current working directory. The working directory al
 | Option | Behavior |
 |---|---|
 | `-p`, `--print` | Run the supplied prompts, write the final assistant text to stdout, then exit |
-| `--export <input> [output]` | Export a session file to HTML and exit; derive the destination when `output` is omitted |
 
 <a id="model-options"></a>
 

@@ -188,3 +188,9 @@ packages/coding-agent/test/config-selector.test.ts
 packages/coding-agent/test/git-update.test.ts
 packages/coding-agent/test/package-command-paths.test.ts
 packages/coding-agent/test/version-check.test.ts
+
+# HTML export: `pi --export`, `/export <file>.html` and AgentSession.exportToHtml. `/export` writes JSONL only.
+packages/coding-agent/src/core/export-html
+packages/coding-agent/test/export-html-*.test.ts
+packages/coding-agent/test/suite/regressions/5596-missing-theme-export.test.ts
+packages/coding-agent/test/theme-export.test.ts

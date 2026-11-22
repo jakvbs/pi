@@ -52,3 +52,5 @@
 	exclude = lib/subagent-mcp.integration.test.mjs
 	exclude = app/api/plugins/check
 	exclude = lib/plugin-updates*
+	exclude = app/api/sessions/*/export
+	exclude = app/api/sessions/export-route.test.mjs

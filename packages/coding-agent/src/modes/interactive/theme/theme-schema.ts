@@ -76,7 +76,7 @@ export const ThemeJsonSchema = Type.Object(
 					infoBg: Type.Optional(colorValue("Info sections background (system prompt, notices)")),
 				},
 				{
-					description: "Optional colors for HTML export (defaults derived from userMessageBg if not specified)",
+					description: "Ignored. Colors of the removed HTML export, still accepted so existing themes stay valid",
 					additionalProperties: false,
 				},
 			),
