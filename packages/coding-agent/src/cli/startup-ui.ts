@@ -79,7 +79,7 @@ async function loadStartupThemes(settingsManager: SettingsManager): Promise<Them
 		agentDir: getAgentDir(),
 		settingsManager: globalSettingsManager,
 	});
-	const resolvedPaths = await packageManager.resolve(async () => "skip");
+	const resolvedPaths = await packageManager.resolve();
 	return loadThemes(resolvedPaths.themes);
 }
 

@@ -37,27 +37,10 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
 	mkdirSync(agentDir, { recursive: true });
 	mkdirSync(projectConfigDir, { recursive: true });
 
-	const fakeNpmPath = join(tempRoot, "fake-npm.mjs");
-	writeFileSync(
-		fakeNpmPath,
-		[
-			'console.log("changed 1 package in 471ms");',
-			'console.log("found 0 vulnerabilities");',
-			"process.exit(0);",
-		].join("\n"),
-		"utf-8",
-	);
-
+	// An npm source is skipped with a startup warning: chatter that must not reach stdout.
 	writeFileSync(
 		join(projectConfigDir, "settings.json"),
-		JSON.stringify(
-			{
-				packages: ["npm:fake-package"],
-				npmCommand: [process.execPath, fakeNpmPath],
-			},
-			null,
-			2,
-		),
+		JSON.stringify({ packages: ["npm:fake-package"] }, null, 2),
 		"utf-8",
 	);
 
@@ -93,8 +76,7 @@ describe("stdout cleanliness in non-interactive modes", () => {
 		expect(result.code).toBe(0);
 		expect(result.stdout).toContain("Usage:");
 		expect(result.stderr).not.toContain("Usage:");
-		expect(result.stderr).not.toContain("changed 1 package in 471ms");
-		expect(result.stderr).not.toContain("found 0 vulnerabilities");
+		expect(result.stderr).not.toContain("npm:fake-package");
 	});
 
 	it("keeps stdout empty for --print --help while routing trusted startup chatter to stderr", async () => {
@@ -102,8 +84,7 @@ describe("stdout cleanliness in non-interactive modes", () => {
 
 		expect(result.code).toBe(0);
 		expect(result.stdout).toBe("");
-		expect(result.stderr).toContain("changed 1 package in 471ms");
-		expect(result.stderr).toContain("found 0 vulnerabilities");
+		expect(result.stderr).toContain('Extension package "npm:fake-package": skipped');
 		expect(result.stderr).toContain("Usage:");
 	});
 });

@@ -85,16 +85,11 @@ describe("DefaultResourceLoader", () => {
 		});
 
 		// #11088
-		it("should warn and keep loading when a configured package cannot be installed", async () => {
-			vi.stubEnv("PI_OFFLINE", "");
+		it("should warn and keep loading when a configured package is an npm source", async () => {
 			const loader = new DefaultResourceLoader({
 				cwd,
 				agentDir,
-				settingsManager: SettingsManager.inMemory({
-					packages: ["npm:broken-package"],
-					// Any non-zero exit stands in for an npm install that cannot reach the registry.
-					npmCommand: [process.execPath, "-e", "process.exit(1)"],
-				}),
+				settingsManager: SettingsManager.inMemory({ packages: ["npm:broken-package"] }),
 			});
 
 			await loader.reload();
@@ -102,20 +97,17 @@ describe("DefaultResourceLoader", () => {
 			const warnings = loader.getExtensions().warnings ?? [];
 			expect(warnings).toHaveLength(1);
 			expect(warnings[0].path).toBe("npm:broken-package");
-			expect(warnings[0].warning).toMatch(/^failed to install \(.*failed with code 1\)\./);
-			expect(warnings[0].warning).toContain('Run "pi remove npm:broken-package" to remove it from settings.json.');
+			expect(warnings[0].warning).toMatch(/^skipped \(npm and git package sources are not supported/);
+			expect(warnings[0].warning).toContain("Remove it from the global settings.json.");
 		});
 
 		// #11088
-		it("should point temporary extension sources at the source instead of pi remove", async () => {
-			vi.stubEnv("PI_OFFLINE", "");
+		it("should point temporary extension sources at the source instead of settings.json", async () => {
 			const loader = new DefaultResourceLoader({
 				cwd,
 				agentDir,
 				additionalExtensionPaths: ["npm:broken-package"],
-				settingsManager: SettingsManager.inMemory({
-					npmCommand: [process.execPath, "-e", "process.exit(1)"],
-				}),
+				settingsManager: SettingsManager.inMemory({}),
 			});
 
 			await loader.reload();
@@ -124,16 +116,11 @@ describe("DefaultResourceLoader", () => {
 			expect(warnings).toHaveLength(1);
 			expect(warnings[0].path).toBe("npm:broken-package");
 			expect(warnings[0].warning).toContain("Check the source and try again.");
-			expect(warnings[0].warning).not.toContain("pi remove");
+			expect(warnings[0].warning).not.toContain("settings.json");
 		});
 
 		// #11088
-		it("should point project extension packages at pi remove --local", async () => {
-			vi.stubEnv("PI_OFFLINE", "");
-			writeFileSync(
-				join(agentDir, "settings.json"),
-				JSON.stringify({ npmCommand: [process.execPath, "-e", "process.exit(1)"] }),
-			);
+		it("should point project extension packages at the project settings.json", async () => {
 			mkdirSync(join(cwd, ".pi"), { recursive: true });
 			writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:broken-package"] }));
 			const loader = new DefaultResourceLoader({
@@ -146,19 +133,15 @@ describe("DefaultResourceLoader", () => {
 
 			const warnings = loader.getExtensions().warnings ?? [];
 			expect(warnings).toHaveLength(1);
-			expect(warnings[0].warning).toContain('Run "pi remove npm:broken-package --local"');
+			expect(warnings[0].warning).toContain("Remove it from the project settings.json.");
 		});
 
 		// #11088
-		it("should warn once about a failing install when project trust is resolved", async () => {
-			vi.stubEnv("PI_OFFLINE", "");
+		it("should warn once about a skipped package when project trust is resolved", async () => {
 			const loader = new DefaultResourceLoader({
 				cwd,
 				agentDir,
-				settingsManager: SettingsManager.inMemory({
-					packages: ["npm:broken-package"],
-					npmCommand: [process.execPath, "-e", "process.exit(1)"],
-				}),
+				settingsManager: SettingsManager.inMemory({ packages: ["npm:broken-package"] }),
 			});
 
 			await loader.reload({ resolveProjectTrust: async () => false });
@@ -827,7 +810,7 @@ Extra content`,
 		// Regression: extension discovery used to drop package scope/source, collapsing every
 		// autocomplete source tag to [t]. See issue #6968.
 		it("should keep package metadata for skills, prompts, and themes", async () => {
-			const packageRoot = join(agentDir, "npm", "node_modules", "metadata-pkg");
+			const packageRoot = join(tempDir, "metadata-pkg");
 			const packageSkillDir = join(packageRoot, "skills", "package-skill");
 			const packagePromptsDir = join(packageRoot, "prompts");
 			const packageThemesDir = join(packageRoot, "themes");
@@ -888,7 +871,7 @@ Extension prompt content`,
 			const loader = new DefaultResourceLoader({
 				cwd,
 				agentDir,
-				settingsManager: SettingsManager.inMemory({ packages: ["npm:metadata-pkg"] }),
+				settingsManager: SettingsManager.inMemory({ packages: [packageRoot] }),
 			});
 			await loader.reload();
 
@@ -903,7 +886,7 @@ Extension prompt content`,
 				themePaths: [{ path: extensionThemesDir, metadata: extensionMetadata }],
 			});
 
-			const packageSourceInfo = { source: "npm:metadata-pkg", scope: "user", origin: "package" };
+			const packageSourceInfo = { source: packageRoot, scope: "user", origin: "package" };
 			expect(loader.getSkills().skills.find((skill) => skill.name === "package-skill")?.sourceInfo).toMatchObject(
 				packageSourceInfo,
 			);

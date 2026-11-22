@@ -1047,16 +1047,6 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getNpmCommand(): string[] | undefined {
-		return this.settings.npmCommand ? [...this.settings.npmCommand] : undefined;
-	}
-
-	setNpmCommand(command: string[] | undefined): void {
-		this.globalSettings.npmCommand = command ? [...command] : undefined;
-		this.markModified("npmCommand");
-		this.save();
-	}
-
 	getCollapseChangelog(): boolean {
 		return this.settings.collapseChangelog ?? SETTINGS_DEFAULTS.collapseChangelog;
 	}

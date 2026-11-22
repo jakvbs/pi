@@ -238,8 +238,6 @@ export type {
 	PackageInstallFailure,
 	PackageManager,
 	PathMetadata,
-	ProgressCallback,
-	ProgressEvent,
 	ResolvedPaths,
 	ResolvedResource,
 } from "./core/package-manager.ts";

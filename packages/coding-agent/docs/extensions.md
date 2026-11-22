@@ -166,7 +166,7 @@ Pi maps these imports to its own copies, so extensions share Pi's classes and re
 
 npm dependencies work too. Add a `package.json` next to your extension (or in a parent directory), run `npm install`, and imports from `node_modules/` are resolved automatically.
 
-For distributed Pi packages installed with `pi install` (npm or git), runtime deps must be in `dependencies`; `devDependencies` are not installed. Do not list the host-provided packages above in `dependencies`. See [Declare dependencies](packages.md#declare-dependencies).
+For Pi packages, runtime deps must be in `dependencies`. Do not list the host-provided packages above in `dependencies`. See [Declare dependencies](packages.md#declare-dependencies).
 
 ### Tool parameter schemas and TypeBox
 

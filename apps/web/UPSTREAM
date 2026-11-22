@@ -50,3 +50,5 @@
 	exclude = lib/shell-words*
 	exclude = lib/subagent-codemode-scope.integration.test.mjs
 	exclude = lib/subagent-mcp.integration.test.mjs
+	exclude = app/api/plugins/check
+	exclude = lib/plugin-updates*

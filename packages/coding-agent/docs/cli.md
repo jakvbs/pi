@@ -6,12 +6,6 @@ This page documents Pi's built-in command-line commands and options. Run `pi --h
 
 ```sh
 pi [options] [--] [@files...] [messages...]
-pi install <source> [options]
-pi remove <source> [options]
-pi uninstall <source> [options]
-pi update [target] [options]
-pi list
-pi config [options]
 pi auth login <provider> [--api-key] [--no-browser]
 pi auth logout <provider>
 pi auth <check|print-api-key|print-bearer-token> [options]
@@ -197,58 +191,9 @@ See [Configuration](configuration.md) for saved configuration, [Security](securi
 
 Extensions may register additional long-form options. Unknown short options are rejected.
 
-## Package commands
+## Packages
 
-```sh
-pi install npm:@scope/package
-```
-
-See [Pi Packages](packages.md) for source formats, filtering, installation, and project scope.
-
-### Common tasks
-
-| Task | Command |
-|---|---|
-| Install a package | `pi install <source>` |
-| List configured packages | `pi list` |
-| Remove a package and its settings entry | `pi remove <source>` |
-| Configure which package resources load | `pi config` |
-
-Add `--local` or `-l` to `install`, `remove`, `uninstall`, or `config` to use project settings instead of global settings.
-
-### Update Pi or packages
-
-Running `pi update` without a target updates Pi itself.
-
-| Task | Command |
-|---|---|
-| Update Pi | `pi update` |
-| Update all installed packages | `pi update --extensions` |
-| Update one installed package | `pi update <source>` |
-| Refresh model catalogs | `pi update --models` |
-| Update Pi and all installed packages | `pi update --all` |
-
-Add `--force` to reinstall Pi when the selected update includes Pi.
-
-`pi update` cannot update Pi when another package manager provides it, such as Nix. Update Pi with that package manager, for example `nix profile upgrade pi`. Package and model catalog updates still work.
-
-#### Custom update command
-
-If a wrapper or another package manager provides Pi, set `PI_SELF_UPDATE_COMMAND` so `pi update` runs its update command:
-
-```sh
-export PI_SELF_UPDATE_COMMAND="mise use -g npm:{packageName}@{version}"
-```
-
-`pi update` runs it only when pi.dev has a newer release, replacing `{packageName}`, `{version}`, and `{installSpec}` (`{packageName}@{version}`) with that release. The value is split on spaces. For arguments with spaces, use the `selfUpdateCommand` setting in `~/.pi/agent/settings.json` instead, an argv array such as `["nix", "profile", "upgrade", "pi"]`.
-
-### Aliases and command options
-
-- `pi uninstall <source>` is an alias for `pi remove <source>`.
-- `pi update --self`, `pi update self`, and `pi update pi` are aliases for `pi update`.
-- `pi update --extension <source>` is an alias for `pi update <source>`.
-- `-a`, `--approve` trusts project-local files for one command. `-na`, `--no-approve` ignores trust-gated project-local files.
-- Append `-h` or `--help` to a command for its exact usage and option constraints.
+Pi loads packages from local paths listed under `packages` in `settings.json`; it has no package install or update commands. See [Pi Packages](packages.md) for the layout, filtering, and project scope.
 
 ## Credential commands
 

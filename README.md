@@ -34,7 +34,7 @@ On Windows:
 powershell -c "irm https://pi.dev/install.ps1 | iex"
 ```
 
-The installer pins all dependencies and updates Pi with `pi update`. Alternatively, install directly with npm, which does not pin transitive dependencies:
+The installer pins all dependencies. Alternatively, install directly with npm, which does not pin transitive dependencies:
 
 ```bash
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent
@@ -175,7 +175,7 @@ We treat npm dependency changes as reviewed code changes.
 - `npm run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent install lock.
 - The pi.dev installer installs from `packages/coding-agent/install-lock/`, generated from the root lockfile, to pin transitive deps. The npm package does not pin transitive deps.
 - Local release smoke tests and npm publication use the same tarball packer; npm publishes the validated tarballs rather than repacking workspace directories.
-- Local release installs, documented npm installs, and `pi update --self` use `--ignore-scripts` where supported.
+- Local release installs and documented npm installs use `--ignore-scripts` where supported.
 - CI installs with `npm ci --ignore-scripts`, and a scheduled GitHub workflow runs `npm audit --omit=dev` plus `npm audit signatures --omit=dev`.
 - Install lock generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.
 

@@ -2076,8 +2076,8 @@ export type InlineExtension =
 			replaceable?: boolean;
 			/**
 			 * Supply the code of the `builtin:<name>` extension instead of loading as an inline extension.
-			 * `builtin:<name>` is an extension resource like a file: it loads by default, `pi config` lists
-			 * it, `-builtin:<name>` in the `extensions` setting and `--no-extensions` disable it, and
+			 * `builtin:<name>` is an extension resource like a file: it loads by default,
+			 * `-builtin:<name>` in the `extensions` setting and `--no-extensions` disable it, and
 			 * `-e builtin:<name>` loads it explicitly. It is hidden from the startup Extensions list and
 			 * loads after project trust is resolved, so it cannot handle `project_trust`. The CLI's built-in
 			 * extensions use it.

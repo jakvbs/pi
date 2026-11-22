@@ -12,7 +12,6 @@ import {
 import { cwdAccessRefusal, getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import { getProjectTrustStatus } from "@/lib/project-trust";
-import { isPluginSourceCheckable } from "@/lib/plugin-updates";
 import { invalidateModelRuntimeWithExtensions } from "@/lib/model-runtime";
 import type {
   PluginDiagnostic,
@@ -29,7 +28,7 @@ import type {
 
 export const dynamic = "force-dynamic";
 
-type PluginAction = "install" | "remove" | "update" | "disable" | "enable";
+type PluginAction = "install" | "remove" | "disable" | "enable";
 
 function emptyCounts(): PluginResourceCounts {
   return { extensions: 0, skills: 0, prompts: 0, themes: 0 };
@@ -342,14 +341,10 @@ async function readPlugins(cwd: string): Promise<PluginsResponse> {
   const disabledByPackage = getDisabledPackages(settingsManager);
 
   try {
-    const resolved = await packageManager.resolve(async (source) => {
-      diagnostics.push({
-        type: "warning",
-        source,
-        message: "Package is configured but not installed yet.",
-      });
-      return "skip";
-    });
+    const resolved = await packageManager.resolve();
+    for (const failure of resolved.installFailures ?? []) {
+      diagnostics.push({ type: "warning", source: failure.source, message: failure.message });
+    }
     ({ countsByPackage, resourcesByPackage, standaloneExtensions, totals } = collectResources(resolved));
   } catch (error) {
     diagnostics.push({
@@ -376,7 +371,6 @@ async function readPlugins(cwd: string): Promise<PluginsResponse> {
     return {
       source: pkg.source,
       scope,
-      canCheckForUpdates: isPluginSourceCheckable(pkg.source),
       filtered: pkg.filtered,
       disabled,
       installedPath: pkg.installedPath,
@@ -486,14 +480,6 @@ export async function POST(req: Request) {
     } else if (body.action === "remove") {
       if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
       await packageManager.removeAndPersist(source, { local });
-    } else if (body.action === "update") {
-      if (!source && !projectTrust.trusted && packageManager.listConfiguredPackages().some((pkg) => pkg.scope === "project")) {
-        return NextResponse.json(
-          { error: "Project resources must be trusted before updating project plugins" },
-          { status: 403 },
-        );
-      }
-      await packageManager.update(source);
     } else if (body.action === "disable") {
       if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
       setPackagesDisabled(settingsManager, [source], scope, true);
@@ -511,11 +497,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   } finally {
     // The provider lists share one extension-loaded runtime, and a package can
-    // add or drop a provider; an update that failed halfway may have, too. An
-    // in-place update keeps the package's path, so its new code shows after
-    // /reload, or once a session start in a project has moved the SDK's
-    // extension factory cache, when the runtime is next built (at the latest
-    // when it expires).
+    // add or drop a provider.
     invalidateModelRuntimeWithExtensions();
   }
 }

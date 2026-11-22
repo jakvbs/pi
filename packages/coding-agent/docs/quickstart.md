@@ -16,7 +16,7 @@ curl -fsSL https://pi.dev/install.sh | sh
 powershell -c "irm https://pi.dev/install.ps1 | iex"
 ```
 
-Both installers pin all dependencies and update Pi with `pi update`. Alternatively, install Pi from npm, which does not pin transitive dependencies. This requires Node.js 22.19 or newer:
+Both installers pin all dependencies. Alternatively, install Pi from npm, which does not pin transitive dependencies. This requires Node.js 22.19 or newer:
 
 ```bash
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent
@@ -30,7 +30,7 @@ With Nix on macOS or Linux, install the latest release from Pi's flake. Nix buil
 nix profile add github:earendil-works/pi/stable
 ```
 
-Older Nix versions use `nix profile install` instead. Update with `nix profile upgrade pi`; `pi update` cannot update a Nix installation. To pin a release, use a tag such as `github:earendil-works/pi/v1.0.0`.
+Older Nix versions use `nix profile install` instead. Update with `nix profile upgrade pi`. To pin a release, use a tag such as `github:earendil-works/pi/v1.0.0`.
 
 Verify the installation:
 

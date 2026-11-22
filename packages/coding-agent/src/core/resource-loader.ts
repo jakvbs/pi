@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { detectCapabilities, getTerminalColorMode, type TerminalColorMode } from "@earendil-works/pi-tui";
 import chalk from "chalk";
-import { APP_NAME, CONFIG_DIR_NAME } from "../config.ts";
+import { CONFIG_DIR_NAME } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 
@@ -27,10 +27,8 @@ import type {
 import { findGitPaths } from "./footer-data-provider.ts";
 import {
 	DefaultPackageManager,
-	type PackageCommandOutput,
 	type PackageInstallFailure,
 	type PathMetadata,
-	type ProgressCallback,
 	type ResolvedResource,
 } from "./package-manager.ts";
 import type { PromptTemplate } from "./prompt-templates.ts";
@@ -104,18 +102,13 @@ function collectExtensionPackageWarnings(
 	return warnings;
 }
 
-/** Describe a package that was skipped because it could not be installed, including how to drop it. */
+/** Describe a package that was skipped because it could not be loaded, including how to drop it. */
 function describePackageInstallFailure(failure: PackageInstallFailure): string {
 	const hint =
 		failure.scope === "temporary"
 			? "Check the source and try again."
-			: `Run "${APP_NAME} remove ${failure.source}${failure.scope === "project" ? " --local" : ""}" to remove it from settings.json.`;
-	return `failed to install (${failure.message}). ${hint}`;
-}
-
-/** One-line startup warning for a package that could not be installed. */
-export function formatPackageInstallWarning(failure: PackageInstallFailure): string {
-	return `Extension package "${failure.source}": ${describePackageInstallFailure(failure)}`;
+			: `Remove it from the ${failure.scope === "project" ? "project" : "global"} settings.json.`;
+	return `skipped (${failure.message}). ${hint}`;
 }
 
 function collectPackageInstallWarnings(
@@ -173,7 +166,7 @@ function omitReplacedExtensions(
 			const registeredName = kind === "command" ? `/${rawName}` : kind === "flag" ? `--${rawName}` : rawName;
 			warnings?.push({
 				path: extension.path,
-				warning: `Extension ${replacement.extension.path} registers ${kind} \`${registeredName}\`, so built-in extension \`${builtinName}\` was not loaded. To use \`${builtinName}\`, run \`pi config\` and make sure it is enabled under Built-in extensions, then disable or remove the existing extension. We recommend only having one or the other loaded at a time.`,
+				warning: `Extension ${replacement.extension.path} registers ${kind} \`${registeredName}\`, so built-in extension \`${builtinName}\` was not loaded. To use \`${builtinName}\`, make sure \`-builtin:${builtinName}\` is not in the \`extensions\` setting, then disable or remove the existing extension. We recommend only having one or the other loaded at a time.`,
 			});
 		}
 		return false;
@@ -308,10 +301,6 @@ export interface DefaultResourceLoaderOptions {
 	agentDir: string;
 	settingsManager?: SettingsManager;
 	eventBus?: EventBus;
-	/** Where git and npm output goes when packages are installed or refreshed. Default `inherit`. */
-	packageCommandOutput?: PackageCommandOutput;
-	/** Called when packages are installed or refreshed, e.g. to show `Installing npm:foo...`. */
-	onPackageProgress?: ProgressCallback;
 	additionalExtensionPaths?: string[];
 	additionalSkillPaths?: string[];
 	additionalPromptTemplatePaths?: string[];
@@ -419,9 +408,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			agentDir: this.agentDir,
 			settingsManager: this.settingsManager,
 			builtinExtensions: [...this.builtinExtensions.keys()],
-			commandOutput: options.packageCommandOutput,
 		});
-		this.packageManager.setProgressCallback(options.onPackageProgress);
 		this.additionalExtensionPaths = options.additionalExtensionPaths ?? [];
 		this.additionalSkillPaths = options.additionalSkillPaths ?? [];
 		this.additionalPromptTemplatePaths = options.additionalPromptTemplatePaths ?? [];
