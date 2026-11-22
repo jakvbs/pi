@@ -25,10 +25,9 @@ pi auth <check|print-api-key|print-bearer-token> [options]
 pi
 pi --print "Summarize this repository"
 git diff | pi --print "Review this change"
-pi --mode json "Inspect this repository" > events.jsonl
 ```
 
-With terminal stdin and stdout, Pi opens the terminal UI unless `--print`, `--mode json`, or `--mode rpc` selects another interface. When either stream is redirected and neither JSON nor RPC mode is selected, Pi uses print mode. See [CLI Integration](cli-integration.md) for choosing between interactive, print, JSON, RPC, and SDK integration.
+With terminal stdin and stdout, Pi opens the terminal UI unless `--print` is given. When either stream is redirected, Pi uses print mode. To embed Pi in an application, use the [SDK](sdk.md).
 
 | Input | Behavior |
 |---|---|
@@ -39,17 +38,10 @@ With terminal stdin and stdout, Pi opens the terminal UI unless `--print`, `--mo
 
 Pi resolves `@path` from the current working directory. The working directory also controls project configuration, resource discovery, and session grouping.
 
-`--print` controls whether Pi runs once and exits. `--mode` selects the output interface. `--mode text` does not force one-shot execution when stdin and stdout are terminals; use `--print` for that behavior.
-
 | Option | Behavior |
 |---|---|
 | `-p`, `--print` | Run the supplied prompts, write the final assistant text to stdout, then exit |
-| `--mode text` | Select text output; still open the terminal UI when stdin and stdout are terminals |
-| `--mode json` | Run the supplied prompts, write JSONL events to stdout, then exit |
-| `--mode rpc` | Read JSONL commands from stdin and write responses and events to stdout until shutdown |
 | `--export <input> [output]` | Export a session file to HTML and exit; derive the destination when `output` is omitted |
-
-RPC mode rejects `@file` arguments. JSON and RPC modes reserve stdout for protocol records. See [JSON Event Stream](json.md) and [RPC Protocol](rpc.md).
 
 <a id="model-options"></a>
 

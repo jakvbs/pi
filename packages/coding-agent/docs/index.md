@@ -24,8 +24,6 @@ Use the [Quickstart customization chooser](quickstart.md#choose-how-to-customize
 ## Automate or embed Pi
 
 - Use [print mode](cli.md#invocation-and-output) for one-off and scripted tasks.
-- Use [JSON event stream mode](json.md) to consume structured events from one run.
-- Use [RPC mode](rpc.md) to control a separate Pi process.
 - Use the [TypeScript SDK](sdk.md) to run Pi inside an application.
 
 ## Find reference and setup information

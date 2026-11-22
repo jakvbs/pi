@@ -118,10 +118,6 @@
               "path": "tui.md"
             },
             {
-              "title": "Integrate with the CLI",
-              "path": "cli-integration.md"
-            },
-            {
               "title": "Use the SDK",
               "path": "sdk.md"
             }
@@ -169,22 +165,6 @@
           "path": "compaction.md"
         },
         {
-          "title": "JSON Event Stream",
-          "path": "json.md"
-        },
-        {
-          "title": "RPC Protocol",
-          "path": "rpc.md"
-        },
-        {
-          "title": "RPC Commands",
-          "path": "rpc-commands.md"
-        },
-        {
-          "title": "RPC Extension UI",
-          "path": "rpc-extension-ui.md"
-        },
-        {
           "title": "Message Types",
           "path": "message-types.md"
         }
@@ -203,10 +183,6 @@
     {
       "from": "tree.md",
       "to": "sessions.md"
-    },
-    {
-      "from": "process-integration.md",
-      "to": "cli-integration.md"
     }
   ]
 }

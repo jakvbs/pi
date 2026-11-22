@@ -145,3 +145,19 @@ packages/coding-agent/test/suite/mcp-oauth-server.ts
 packages/coding-agent/test/suite/regressions/10285-mcp-tool-renderers.test.ts
 packages/coding-agent/test/tool-search.test.ts
 packages/mcp
+
+# RPC and JSON modes: nothing spawns `pi --mode rpc|json`; pi-web and subagents run the SDK in-process. Print and
+# interactive mode stay.
+packages/coding-agent/docs/cli-integration.md
+packages/coding-agent/docs/json.md
+packages/coding-agent/docs/rpc.md
+packages/coding-agent/docs/rpc-*.md
+packages/coding-agent/src/modes/rpc
+packages/coding-agent/src/rpc-entry.ts
+packages/coding-agent/test/model-fallback-diagnostic.test.ts
+packages/coding-agent/test/model-scope-session-replacement.test.ts
+packages/coding-agent/test/rpc-*.test.ts
+packages/coding-agent/test/rpc.test.ts
+packages/coding-agent/test/suite/print-mode-session-start-events.test.ts
+packages/coding-agent/test/suite/regressions/10470-rpc-session-replacement-start-once.test.ts
+packages/coding-agent/test/suite/regressions/5868-rpc-unknown-command-id.test.ts

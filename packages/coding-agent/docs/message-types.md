@@ -200,7 +200,7 @@ The coding-agent package extends `AgentMessage` with four roles.
 
 ### BashExecutionMessage
 
-Created by direct shell commands, including the RPC [`bash`](rpc-commands.md#bash) command. It is not an LLM tool result.
+Created by direct shell commands (`!command` in the editor). It is not an LLM tool result.
 
 ```typescript
 interface BashExecutionMessage {

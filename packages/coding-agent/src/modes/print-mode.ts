@@ -1,24 +1,19 @@
 /**
  * Print mode (single-shot): Send prompts, output result, exit.
  *
- * Used for:
- * - `pi -p "prompt"` - text output
- * - `pi --mode json "prompt"` - JSON event stream
+ * Used for `pi -p "prompt"`: prints the final response text.
  */
 
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
-import { flushRawStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../core/output-guard.ts";
+import { flushRawStdout, writeRawStdout } from "../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../utils/shell.ts";
 import { writeDiagnosticsToStderr } from "./diagnostics-stderr.ts";
-import { toJsonEvent } from "./json-event.ts";
 
 /**
  * Options for print mode.
  */
 export interface PrintModeOptions {
-	/** Output mode: "text" for final response only, "json" for all events */
-	mode: "text" | "json";
 	/** Array of additional prompts to send after initialMessage */
 	messages?: string[];
 	/** First message to send (may contain @file content) */
@@ -32,11 +27,9 @@ export interface PrintModeOptions {
  * Sends prompts to the agent and outputs the result.
  */
 export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: PrintModeOptions): Promise<number> {
-	const { mode, messages = [], initialMessage, initialImages } = options;
+	const { messages = [], initialMessage, initialImages } = options;
 	let exitCode = 0;
 	let session = runtimeHost.session;
-	let unsubscribe: (() => void) | undefined;
-	let unsubscribeBackpressure: (() => void) | undefined;
 	let disposing: Promise<void> | undefined;
 	// SIGTERM/SIGHUP received so far. Only a repeated signal forces exit during disposal.
 	let signalCount = 0;
@@ -45,8 +38,6 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 	// Callers share one disposal, so a signal during the final disposal waits for it to finish.
 	const disposeRuntime = (): Promise<void> => {
 		disposing ??= (async () => {
-			unsubscribe?.();
-			unsubscribeBackpressure?.();
 			await runtimeHost.dispose();
 		})();
 		return disposing;
@@ -79,22 +70,8 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 
 	const rebindSession = async (): Promise<void> => {
 		session = runtimeHost.session;
-		// Subscribe before binding so events emitted by session_start handlers (e.g. appended entries) reach the JSON output.
-		unsubscribe?.();
-		unsubscribeBackpressure?.();
-		unsubscribe = session.subscribe((event) => {
-			if (mode === "json") {
-				writeRawStdout(`${JSON.stringify(toJsonEvent(event))}\n`);
-			}
-		});
-		unsubscribeBackpressure =
-			mode === "json"
-				? session.agent.subscribe(async () => {
-						await waitForRawStdoutBackpressure();
-					})
-				: undefined;
 		await session.bindExtensions({
-			mode: mode === "json" ? "json" : "print",
+			mode: "print",
 			commandContextActions: {
 				waitForIdle: () => session.waitForIdle(),
 				newSession: async (newSessionOptions) => runtimeHost.newSession(newSessionOptions),
@@ -125,13 +102,6 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 	};
 
 	try {
-		if (mode === "json") {
-			const header = session.sessionManager.getHeader();
-			if (header) {
-				writeRawStdout(`${JSON.stringify(header)}\n`);
-			}
-		}
-
 		await rebindSession();
 
 		if (initialMessage) {
@@ -142,25 +112,23 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 			await session.prompt(message);
 		}
 
-		if (mode === "text") {
-			const state = session.state;
-			const lastMessage = state.messages[state.messages.length - 1];
+		const state = session.state;
+		const lastMessage = state.messages[state.messages.length - 1];
 
-			if (lastMessage?.role === "assistant") {
-				const assistantMsg = lastMessage as AssistantMessage;
-				if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
-					console.error(assistantMsg.errorMessage || `Request ${assistantMsg.stopReason}`);
+		if (lastMessage?.role === "assistant") {
+			const assistantMsg = lastMessage as AssistantMessage;
+			if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
+				console.error(assistantMsg.errorMessage || `Request ${assistantMsg.stopReason}`);
+				exitCode = 1;
+			} else {
+				for (const content of assistantMsg.content) {
+					if (content.type === "text") {
+						writeRawStdout(`${content.text}\n`);
+					}
+				}
+				if (assistantMsg.stopReason === "length") {
+					console.error("Response was truncated: the model reached its output token limit.");
 					exitCode = 1;
-				} else {
-					for (const content of assistantMsg.content) {
-						if (content.type === "text") {
-							writeRawStdout(`${content.text}\n`);
-						}
-					}
-					if (assistantMsg.stopReason === "length") {
-						console.error("Response was truncated: the model reached its output token limit.");
-						exitCode = 1;
-					}
 				}
 			}
 		}

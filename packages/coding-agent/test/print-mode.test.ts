@@ -97,28 +97,12 @@ describe("runPrintMode", () => {
 		const images: ImageContent[] = [{ type: "image", mimeType: "image/png", data: "abc" }];
 
 		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
-			mode: "text",
 			initialMessage: "Say done",
 			initialImages: images,
 		});
 
 		expect(exitCode).toBe(0);
 		expect(session.prompt).toHaveBeenCalledWith("Say done", { images });
-		expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
-		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
-	});
-
-	it("emits session_shutdown in json mode", async () => {
-		const runtimeHost = createRuntimeHost(createAssistantMessage({ text: "done" }));
-		const { session } = runtimeHost;
-
-		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
-			mode: "json",
-			messages: ["hello"],
-		});
-
-		expect(exitCode).toBe(0);
-		expect(session.prompt).toHaveBeenCalledWith("hello");
 		expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
 		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
 	});
@@ -130,9 +114,7 @@ describe("runPrintMode", () => {
 		const { session } = runtimeHost;
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
-			mode: "text",
-		});
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {});
 
 		expect(exitCode).toBe(1);
 		expect(errorSpy).toHaveBeenCalledWith("provider failure");
@@ -145,9 +127,7 @@ describe("runPrintMode", () => {
 		const runtimeHost = createRuntimeHost(createAssistantMessage({ stopReason: "length" }));
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
-			mode: "text",
-		});
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {});
 
 		expect(exitCode).toBe(1);
 		expect(errorSpy).toHaveBeenCalled();
@@ -167,7 +147,6 @@ describe("runPrintMode", () => {
 		const listenersBefore = process.listenerCount("SIGTERM");
 
 		const run = runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
-			mode: "text",
 			initialMessage: "Say done",
 		});
 		await vi.waitFor(() => expect(runtimeHost.dispose).toHaveBeenCalledTimes(1));
@@ -204,7 +183,6 @@ describe("runPrintMode", () => {
 			const listenersBefore = process.listenerCount("SIGHUP");
 
 			const run = runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
-				mode: "text",
 				initialMessage: "Say done",
 			});
 			await vi.waitFor(() => expect(runtimeHost.session.prompt).toHaveBeenCalledTimes(1));

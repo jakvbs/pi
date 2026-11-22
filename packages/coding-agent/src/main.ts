@@ -9,7 +9,7 @@ import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import { setCapabilityOverrides } from "@earendil-works/pi-tui";
 import chalk from "chalk";
-import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
+import { type Args, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
 import {
 	type AuthCheckResult,
 	checkProviderAuth,
@@ -69,7 +69,7 @@ import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/tru
 import { builtInExtensions } from "./extensions/index.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { writeDiagnosticsToStderr } from "./modes/diagnostics-stderr.ts";
-import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
+import { InteractiveMode, runPrintMode } from "./modes/index.ts";
 import { initTheme, setThemeJsonValidator, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { validateThemeJson } from "./modes/interactive/theme/theme-schema.ts";
 import { cleanupManagedInstall, handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
@@ -107,24 +107,14 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 }
 
 function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean): AppMode {
-	if (parsed.mode === "rpc") {
-		return "rpc";
-	}
-	if (parsed.mode === "json") {
-		return "json";
-	}
 	if (parsed.print || !stdinIsTTY || !stdoutIsTTY) {
 		return "print";
 	}
 	return "interactive";
 }
 
-function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc"> {
-	return appMode === "json" ? "json" : "text";
-}
-
 function isPlainRuntimeMetadataCommand(parsed: Args): boolean {
-	return !parsed.print && parsed.mode === undefined && (parsed.help === true || parsed.listModels !== undefined);
+	return !parsed.print && (parsed.help === true || parsed.listModels !== undefined);
 }
 
 async function runAuthLoginCommand(args: string[]): Promise<number> {
@@ -750,11 +740,6 @@ export async function main(args: string[], options?: MainOptions) {
 		takeOverStdout();
 	}
 
-	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {
-		console.error(chalk.red("Error: @file arguments are not supported in RPC mode"));
-		process.exit(1);
-	}
-
 	validateForkFlags(parsed);
 	validateSessionIdFlags(parsed);
 	prepareViewFlags(parsed, appMode);
@@ -1032,13 +1017,10 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(0);
 	}
 
-	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
-	let stdinContent: string | undefined;
-	if (appMode !== "rpc") {
-		stdinContent = await readPipedStdin();
-		if (stdinContent !== undefined && appMode === "interactive") {
-			appMode = "print";
-		}
+	// Read piped stdin content (if any)
+	const stdinContent = await readPipedStdin();
+	if (stdinContent !== undefined && appMode === "interactive") {
+		appMode = "print";
 	}
 	time("readPipedStdin");
 
@@ -1075,20 +1057,7 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(1);
 	}
 
-	// RPC refreshes catalogs here in the background; interactive mode starts its refresh after TUI initialization.
-	if (!offlineMode && appMode === "rpc") {
-		const controller = new AbortController();
-		const timeout = setTimeout(() => controller.abort(), 15_000);
-		void modelRuntime
-			.refresh({ signal: controller.signal })
-			.catch(() => {})
-			.finally(() => clearTimeout(timeout));
-	}
-
-	if (appMode === "rpc") {
-		printTimings();
-		await runRpcMode(runtime);
-	} else if (appMode === "interactive") {
+	if (appMode === "interactive") {
 		announcePackageInstalls = false;
 		const interactiveMode = new InteractiveMode(runtime, {
 			migratedProviders,
@@ -1128,7 +1097,6 @@ export async function main(args: string[], options?: MainOptions) {
 	} else {
 		printTimings();
 		const exitCode = await runPrintMode(runtime, {
-			mode: toPrintOutputMode(appMode),
 			messages: parsed.messages,
 			initialMessage,
 			initialImages,
