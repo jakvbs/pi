@@ -2,7 +2,6 @@
 export { ArminComponent } from "./armin.ts";
 export { AssistantMessageComponent } from "./assistant-message.ts";
 export { BashExecutionComponent } from "./bash-execution.ts";
-export { BorderedLoader } from "./bordered-loader.ts";
 export { BranchSummaryMessageComponent } from "./branch-summary-message.ts";
 export { CompactionSummaryMessageComponent } from "./compaction-summary-message.ts";
 export { CustomEditor, type CustomEditorOptions } from "./custom-editor.ts";

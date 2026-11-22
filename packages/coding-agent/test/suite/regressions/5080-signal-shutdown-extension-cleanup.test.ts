@@ -196,8 +196,7 @@ describe("InteractiveMode.shutdown ordering (#5080)", () => {
 // When the terminal goes away, stdin reads and setRawMode fail with EIO (pi is
 // left in an orphaned background process group) or ENOTTY (macOS revoked the
 // tty). Node emits these as `error` events on process.stdin. Without a stdin
-// listener they became uncaught exceptions that were recorded as crashes and
-// prompted users to run /bug on the next launch.
+// listener they became uncaught exceptions.
 
 type HandlerContext = {
 	isShuttingDown: boolean;
@@ -206,9 +205,6 @@ type HandlerContext = {
 	unregisterSignalHandlers: () => void;
 	emergencyTerminalExit: () => never;
 	uncaughtCrash: (error: Error) => never;
-	recordCrash: () => boolean;
-	getCrashExtensionHint: () => string | undefined;
-	crashReportInstructions: () => string;
 	ui: { stop: () => void };
 };
 
@@ -229,9 +225,6 @@ function createHandlerContext(): HandlerContext {
 		unregisterSignalHandlers: () => proto.unregisterSignalHandlers.call(context),
 		emergencyTerminalExit: () => proto.emergencyTerminalExit.call(context),
 		uncaughtCrash: (error: Error) => proto.uncaughtCrash.call(context, error),
-		recordCrash: vi.fn(() => true),
-		getCrashExtensionHint: () => undefined,
-		crashReportInstructions: () => "",
 		ui: { stop: vi.fn() },
 	};
 	return context;
@@ -274,13 +267,12 @@ describe("dead terminal errors on stdin", () => {
 		["read EIO", "EIO"],
 		["setRawMode EIO", "EIO"],
 		["setRawMode ENOTTY", "ENOTTY"],
-	])("stdin %s exits quietly without recording a crash", (message, code) => {
+	])("stdin %s exits quietly", (message, code) => {
 		const ctx = setup();
 
 		const exitCode = captureExit(() => process.stdin.emit("error", errnoError(message, code)));
 
 		expect(exitCode).toBe(129);
-		expect(ctx.recordCrash).not.toHaveBeenCalled();
 		expect(ctx.ui.stop).not.toHaveBeenCalled();
 	});
 
@@ -291,22 +283,22 @@ describe("dead terminal errors on stdin", () => {
 		expect(() => process.stdin.emit("error", error)).toThrow(error);
 	});
 
-	test("uncaught dead terminal errors are not recorded as crashes", () => {
+	test("uncaught dead terminal errors exit without restoring the terminal", () => {
 		const ctx = setup();
 
 		const exitCode = captureExit(() => ctx.uncaughtCrash(errnoError("read EIO", "EIO")));
 
 		expect(exitCode).toBe(129);
-		expect(ctx.recordCrash).not.toHaveBeenCalled();
+		expect(ctx.ui.stop).not.toHaveBeenCalled();
 	});
 
-	test("other uncaught errors are still recorded as crashes", () => {
+	test("other uncaught errors restore the terminal and exit", () => {
 		const ctx = setup();
 
 		const exitCode = captureExit(() => ctx.uncaughtCrash(new Error("boom")));
 
 		expect(exitCode).toBe(1);
-		expect(ctx.recordCrash).toHaveBeenCalledOnce();
+		expect(ctx.ui.stop).toHaveBeenCalledOnce();
 	});
 
 	test("handlers are removed on unregister", () => {

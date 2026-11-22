@@ -428,7 +428,6 @@ export {
 	ArminComponent,
 	AssistantMessageComponent,
 	BashExecutionComponent,
-	BorderedLoader,
 	BranchSummaryMessageComponent,
 	CompactionSummaryMessageComponent,
 	CustomEditor,

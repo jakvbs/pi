@@ -161,3 +161,17 @@ packages/coding-agent/test/rpc.test.ts
 packages/coding-agent/test/suite/print-mode-session-start-events.test.ts
 packages/coding-agent/test/suite/regressions/10470-rpc-session-replacement-start-once.test.ts
 packages/coding-agent/test/suite/regressions/5868-rpc-unknown-command-id.test.ts
+
+# /share, /bug and the crash log: they upload sessions and reports to upstream's Radius and GitHub gists.
+packages/coding-agent/src/core/bug-report.ts
+packages/coding-agent/src/core/bug-report-upload.ts
+packages/coding-agent/src/core/crash-log.ts
+packages/coding-agent/src/modes/interactive/bug-report.ts
+packages/coding-agent/src/modes/interactive/components/bordered-loader.ts
+packages/coding-agent/src/modes/interactive/session-share.ts
+packages/coding-agent/src/utils/zip.ts
+packages/coding-agent/test/bug-report.test.ts
+packages/coding-agent/test/crash-log.test.ts
+packages/coding-agent/test/export-jsonl-share.test.ts
+packages/coding-agent/test/interactive-mode-bug-report-hint.test.ts
+packages/coding-agent/test/session-share.test.ts

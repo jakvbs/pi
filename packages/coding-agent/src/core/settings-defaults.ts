@@ -4,7 +4,6 @@ import { DEFAULT_TOOL_OUTPUT_MAX_TOKENS } from "./tools/output-limit.ts";
 /** Runtime defaults shared by settings accessors and the published JSON Schema. */
 export const SETTINGS_DEFAULTS = {
 	transport: "auto",
-	sessionShareDestination: "auto",
 	steeringMode: "one-at-a-time",
 	followUpMode: "one-at-a-time",
 	compaction: {
