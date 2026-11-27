@@ -2,7 +2,7 @@
 	url = https://github.com/jvm/pi-mono
 	branch = main
 	path = packages/pi-codex-tools
-	commit = a916305a98d6ad5c54b3f43f34d9793f9960d931
+	commit = 4ccdee22d48d74c6912985854db57b4392926a69
 	exclude = CODE_OF_CONDUCT.md
 	exclude = SECURITY.md
 	exclude = CONTRIBUTING.md
