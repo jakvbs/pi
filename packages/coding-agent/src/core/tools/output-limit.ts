@@ -37,6 +37,8 @@ export function toolOutputBudgetBytes(maxTokens = DEFAULT_TOOL_OUTPUT_MAX_TOKENS
 /** The file that holds the whole output, and where the limited text starts in it. */
 export interface OutputLocation {
 	path: string;
+	/** Why the whole output could not be saved to a file. The notice then says so instead of naming `path`. */
+	saveError?: string;
 	/** Line of `path` the text starts at, 1-indexed. */
 	firstLine: number;
 	/** Lines of `path` in total. */
@@ -105,11 +107,18 @@ export function headWithin(output: OutputHead, maxBytes: number): { text: string
 }
 
 function formatNotice(
-	{ path, firstLine, totalLines }: OutputLocation,
+	{ path, saveError, firstLine, totalLines }: OutputLocation,
 	{ lastLine, partialLine }: { lastLine: number; partialLine: boolean },
 	maxBytes: number,
 ): string {
 	const limit = `${formatSize(maxBytes)} output limit`;
+	if (saveError !== undefined) {
+		// No file to continue in: what is shown is all that is left of the output.
+		const unsaved = `Could not save the full output: ${saveError}`;
+		return partialLine
+			? `[Line ${firstLine} alone exceeds the ${limit}; showing its start. ${unsaved}]`
+			: `[Showing lines ${firstLine}-${lastLine} of ${totalLines} (${limit}). ${unsaved}]`;
+	}
 	if (partialLine) {
 		return `[Line ${firstLine} alone exceeds the ${limit}; showing its start. Full output: ${path}. Search it with grep, or cut the line with bash.]`;
 	}

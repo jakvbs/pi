@@ -9,7 +9,7 @@ import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
 describe("InteractiveMode compaction events", () => {
-	test("uses the cache miss notice setting for compaction and branch summary costs", () => {
+	test("uses the compaction cost notice setting for compaction and branch summary costs", () => {
 		const usage: Usage = {
 			input: 10,
 			output: 20,
@@ -21,7 +21,7 @@ describe("InteractiveMode compaction events", () => {
 		const addCompactionCostNotice = Reflect.get(InteractiveMode.prototype, "addCompactionCostNotice") as (
 			this: {
 				chatContainer: Container;
-				settingsManager: { getShowCacheMissNotices(): boolean };
+				settingsManager: { getNotices(): { compactionCosts: boolean } };
 				turnFolds: { keepWithOpener(): void };
 			},
 			notice: {
@@ -34,7 +34,7 @@ describe("InteractiveMode compaction events", () => {
 		initTheme("dark");
 		const enabled = {
 			chatContainer: new Container(),
-			settingsManager: { getShowCacheMissNotices: () => true },
+			settingsManager: { getNotices: () => ({ compactionCosts: true }) },
 			turnFolds: { keepWithOpener: vi.fn() },
 		};
 		addCompactionCostNotice.call(enabled, { type: "compaction_cost", kind: "compaction", usage });
@@ -49,7 +49,7 @@ describe("InteractiveMode compaction events", () => {
 
 		const disabled = {
 			chatContainer: new Container(),
-			settingsManager: { getShowCacheMissNotices: () => false },
+			settingsManager: { getNotices: () => ({ compactionCosts: false }) },
 			turnFolds: { keepWithOpener: vi.fn() },
 		};
 		addCompactionCostNotice.call(disabled, { type: "compaction_cost", kind: "compaction", usage });
@@ -161,7 +161,14 @@ describe("InteractiveMode compaction events", () => {
 			sessionManager,
 			pendingTools: new Map(),
 			footer: { invalidate: vi.fn() },
-			settingsManager: { getShowCacheMissNotices: () => false },
+			settingsManager: {
+				getNotices: () => ({
+					cacheMisses: false,
+					cacheWarming: false,
+					compactionCosts: false,
+					reasoningDrops: false,
+				}),
+			},
 			ui: { requestRender: vi.fn() },
 			updateEditorBorderColor: vi.fn(),
 			renderProjectTrustWarningIfNeeded: vi.fn(),
@@ -230,7 +237,7 @@ describe("InteractiveMode compaction events", () => {
 			addCompactionCostNotice: Reflect.get(InteractiveMode.prototype, "addCompactionCostNotice"),
 			clearStatusIndicator: vi.fn(),
 			flushCompactionQueue: vi.fn().mockResolvedValue(undefined),
-			settingsManager: { getShowTerminalProgress: () => false, getShowCacheMissNotices: () => true },
+			settingsManager: { getShowTerminalProgress: () => false, getNotices: () => ({ compactionCosts: true }) },
 			turnFolds: { keepWithOpener: vi.fn() },
 			ui: { requestRender: vi.fn(), terminal: { setProgress: vi.fn() } },
 		};

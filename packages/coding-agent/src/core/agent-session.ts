@@ -3993,6 +3993,7 @@ export class AgentSession {
 			cancelled: kept.cancelled,
 			truncated: kept.truncated,
 			fullOutputPath: kept.fullOutputPath,
+			...(kept.fullOutputError === undefined ? {} : { fullOutputError: kept.fullOutputError }),
 			timestamp: Date.now(),
 			excludeFromContext: options?.excludeFromContext,
 		};

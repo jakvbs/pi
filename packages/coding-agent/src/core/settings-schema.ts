@@ -145,6 +145,33 @@ const WarningSettingsSchema = Type.Object({
 	anthropicExtraUsage: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.warnings.anthropicExtraUsage })),
 });
 
+const NoticeSettingsSchema = Type.Object({
+	cacheMisses: Type.Optional(
+		Type.Boolean({
+			description: "Show a notice when a response re-bills a significant part of the prompt cache.",
+			default: SETTINGS_DEFAULTS.notices.cacheMisses,
+		}),
+	),
+	cacheWarming: Type.Optional(
+		Type.Boolean({
+			description: "Show the cost of cache warming requests.",
+			default: SETTINGS_DEFAULTS.notices.cacheWarming,
+		}),
+	),
+	compactionCosts: Type.Optional(
+		Type.Boolean({
+			description: "Show the cost of compactions and branch summaries.",
+			default: SETTINGS_DEFAULTS.notices.compactionCosts,
+		}),
+	),
+	reasoningDrops: Type.Optional(
+		Type.Boolean({
+			description: "Show a notice when a provider drops reasoning items from a request.",
+			default: SETTINGS_DEFAULTS.notices.reasoningDrops,
+		}),
+	),
+});
+
 const PackageSourceSchema = Type.Union(
 	[
 		Type.String({ description: "Load all resources from the package." }),
@@ -228,12 +255,6 @@ export const SettingsSchema = Type.Object(
 				},
 			),
 		),
-		showCacheMissNotices: Type.Optional(
-			Type.Boolean({
-				description: "Show cache cost and provider recovery notices.",
-				default: SETTINGS_DEFAULTS.showCacheMissNotices,
-			}),
-		),
 		showTokenUsage: Type.Optional(
 			Type.Boolean({
 				description:
@@ -268,12 +289,6 @@ export const SettingsSchema = Type.Object(
 			Type.Boolean({
 				description: "Show the condensed changelog after update; use /changelog for the full changelog.",
 				default: SETTINGS_DEFAULTS.collapseChangelog,
-			}),
-		),
-		enableInstallTelemetry: Type.Optional(
-			Type.Boolean({
-				description: "Send an anonymous version and update ping after changelog-detected updates.",
-				default: SETTINGS_DEFAULTS.enableInstallTelemetry,
 			}),
 		),
 		enableAnalytics: Type.Optional(
@@ -381,6 +396,7 @@ export const SettingsSchema = Type.Object(
 		),
 		markdown: Type.Optional(MarkdownSettingsSchema),
 		warnings: Type.Optional(WarningSettingsSchema),
+		notices: Type.Optional(NoticeSettingsSchema),
 		sessionDir: Type.Optional(
 			Type.String({
 				description: "Custom session storage directory, in the same format as the --session-dir CLI flag.",
@@ -444,6 +460,12 @@ export const SettingsSchema = Type.Object(
 		websockets: Type.Optional(
 			Type.Boolean({ description: "Legacy setting migrated to transport.", deprecated: true }),
 		),
+		showCacheMissNotices: Type.Optional(
+			Type.Boolean({
+				description: "Legacy setting migrated to notices.",
+				deprecated: true,
+			}),
+		),
 	},
 	{ additionalProperties: true },
 );
@@ -461,6 +483,7 @@ export interface ThinkingBudgetsSettings extends Static<typeof ThinkingBudgetsSe
 export type MermaidRenderingMode = NonNullable<Static<typeof MarkdownSettingsSchema>["mermaid"]>;
 export interface MarkdownSettings extends Static<typeof MarkdownSettingsSchema> {}
 export interface WarningSettings extends Static<typeof WarningSettingsSchema> {}
+export interface NoticeSettings extends Static<typeof NoticeSettingsSchema> {}
 export type DefaultProjectTrust = NonNullable<SettingsInput["defaultProjectTrust"]>;
 export type QuietStartup = NonNullable<SettingsInput["quietStartup"]>;
 export type TranscriptDetail = NonNullable<SettingsInput["transcriptDetail"]>;
@@ -469,7 +492,8 @@ export type PackageSource = Static<typeof PackageSourceSchema>;
 export type FullscreenExitOutput = NonNullable<SettingsInput["fullscreenExitOutput"]>;
 export type TuiMode = NonNullable<SettingsInput["tuiMode"]>;
 export type CacheWarmingMode = NonNullable<SettingsInput["cacheWarming"]>;
-export interface Settings extends Omit<SettingsInput, "queueMode" | "retry" | "skills" | "websockets"> {
+export interface Settings
+	extends Omit<SettingsInput, "queueMode" | "retry" | "showCacheMissNotices" | "skills" | "websockets"> {
 	retry?: RetrySettings;
 	skills?: string[];
 }

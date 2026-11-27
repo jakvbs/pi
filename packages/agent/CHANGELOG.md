@@ -2,13 +2,11 @@
 
 ## [Unreleased]
 
-### Added
-
-- `streamProxy` carries `errorCode` from the proxy `error` event to the assistant message
+## [1.6.1] - 2026-11-25
 
 ### Fixed
 
-- Fixed the agent loop running a shell and a file-writing tool from one assistant message in parallel, so one tool's write could replace the other's. `AgentTool` takes a new `fileWrites` field (`ToolFileWrites`): `"argument"` for a tool that writes only files named in its arguments, `"any"` for a shell. A batch that holds both kinds runs sequentially in the model's order; other batches keep their execution mode
+- Fixed `streamProxy()` rescanning an incomplete line on every chunk, which made large proxy events take time quadratic in their size ([#12224](https://github.com/earendil-works/pi/issues/12224))
 
 ## [1.6.0] - 2026-11-20
 

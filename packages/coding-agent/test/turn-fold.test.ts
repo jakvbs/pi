@@ -28,7 +28,7 @@ function createMode(
 	options: {
 		folding?: boolean;
 		isStreaming?: boolean;
-		showCacheMissNotices?: boolean;
+		notices?: boolean;
 		showTokenUsage?: boolean;
 		subscription?: boolean;
 		view?: boolean;
@@ -57,7 +57,10 @@ function createMode(
 		settingsManager: {
 			getShowImages: () => false,
 			getImageWidthCells: () => 60,
-			getShowCacheMissNotices: () => options.showCacheMissNotices ?? false,
+			getNotices: () => {
+				const shown = options.notices ?? false;
+				return { cacheMisses: shown, cacheWarming: shown, compactionCosts: shown, reasoningDrops: shown };
+			},
 			getShowTokenUsage: () => options.showTokenUsage ?? true,
 			getShowTerminalProgress: () => false,
 		},
@@ -668,7 +671,7 @@ describe("TurnFolds", () => {
 
 	test("the compaction cost notice stays beside its marker, outside any fold", async () => {
 		vi.useFakeTimers({ toFake: ["Date"] });
-		const mode = createMode({ showCacheMissNotices: true });
+		const mode = createMode({ notices: true });
 		const usage = {
 			input: 1_000,
 			output: 200,

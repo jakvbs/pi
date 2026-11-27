@@ -20,11 +20,18 @@ import type {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
+import { applyOpenRouterReportedCost, type OpenRouterUsageAccounting } from "../utils/openrouter-cost.ts";
+import { readOpenRouterNativeFinishReason } from "../utils/openrouter-finish-reason.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
 interface OpenRouterGeneratedImage {
 	image_url?: string | { url?: string };
+}
+
+interface OpenRouterChoiceError {
+	message?: string | null;
+	code?: string | number | null;
 }
 
 type OpenRouterImageGenerationMessage = ChatCompletion["choices"][number]["message"] & {
@@ -33,11 +40,24 @@ type OpenRouterImageGenerationMessage = ChatCompletion["choices"][number]["messa
 
 type OpenRouterImageGenerationChoice = ChatCompletion["choices"][number] & {
 	message: OpenRouterImageGenerationMessage;
+	error?: OpenRouterChoiceError;
 };
 
-type OpenRouterImageGenerationResponse = ChatCompletion & {
-	choices: OpenRouterImageGenerationChoice[];
+type OpenRouterImageGenerationResponse = Omit<ChatCompletion, "choices"> & {
+	choices?: OpenRouterImageGenerationChoice[];
+	error?: OpenRouterChoiceError;
 };
+
+function formatOpenRouterError(error: OpenRouterChoiceError | undefined): string | undefined {
+	if (!error) return undefined;
+	if (typeof error.message === "string" && error.message.trim().length > 0) {
+		return error.message.trim();
+	}
+	if (error.code !== undefined && error.code !== null && String(error.code).trim().length > 0) {
+		return `Provider error (${String(error.code).trim()})`;
+	}
+	return undefined;
+}
 
 /** Image generation over OpenRouter's chat completions endpoint. */
 export const generateImages: ImagesFunction<ImagesOptions> = async (
@@ -60,7 +80,7 @@ export const generateImages: ImagesFunction<ImagesOptions> = async (
 			throw new Error(`No API key for provider: ${model.provider}`);
 		}
 		const client = createClient(model, apiKey, options?.headers, options?.fetch, options?.identity);
-		let params = buildParams(model, context);
+		let params = buildParams(model, context, options);
 		const nextParams = await options?.onPayload?.(params, model);
 		if (nextParams !== undefined) {
 			params = nextParams as typeof params;
@@ -79,6 +99,7 @@ export const generateImages: ImagesFunction<ImagesOptions> = async (
 				maxRetries: options?.maxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs,
 				signal: options?.signal,
+				onErrorResponse: (errorResponse) => options?.onResponse?.(errorResponse, model),
 			},
 		);
 		await options?.onResponse?.({ status: rawResponse.status, headers: headersToRecord(rawResponse.headers) }, model);
@@ -89,24 +110,46 @@ export const generateImages: ImagesFunction<ImagesOptions> = async (
 			output.usage = parseUsage(imageResponse.usage, model);
 		}
 
-		const choice = imageResponse.choices[0];
-		if (choice) {
-			const content = choice.message.content;
-			if (typeof content === "string" && content.length > 0) {
-				output.output.push({ type: "text", text: content } satisfies TextContent);
-			}
+		const choice = imageResponse.choices?.[0];
+		if (!choice) {
+			output.stopReason = "error";
+			output.errorMessage = formatOpenRouterError(imageResponse.error) ?? "Provider returned no choices";
+			return output;
+		}
 
-			for (const image of choice.message.images ?? []) {
-				const imageUrl = typeof image.image_url === "string" ? image.image_url : image.image_url?.url;
-				if (!imageUrl?.startsWith("data:")) continue;
-				const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
-				if (!matches) continue;
-				output.output.push({
-					type: "image",
-					mimeType: matches[1],
-					data: matches[2],
-				} satisfies ImageContent);
-			}
+		const choiceError = formatOpenRouterError(choice.error) ?? formatOpenRouterError(imageResponse.error);
+		if (choiceError) {
+			output.stopReason = "error";
+			output.errorMessage = choiceError;
+			return output;
+		}
+
+		const finishReason = choice.finish_reason as string | null | undefined;
+		if (finishReason && finishReason !== "stop" && finishReason !== "end") {
+			output.stopReason = "error";
+			const nativeReason = readOpenRouterNativeFinishReason(choice);
+			output.errorMessage =
+				nativeReason && nativeReason !== finishReason
+					? `Provider finish_reason: ${finishReason} (native_finish_reason: ${nativeReason})`
+					: `Provider finish_reason: ${finishReason}`;
+			return output;
+		}
+
+		const content = choice.message.content;
+		if (typeof content === "string" && content.length > 0) {
+			output.output.push({ type: "text", text: content } satisfies TextContent);
+		}
+
+		for (const image of choice.message.images ?? []) {
+			const imageUrl = typeof image.image_url === "string" ? image.image_url : image.image_url?.url;
+			if (!imageUrl?.startsWith("data:")) continue;
+			const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+			if (!matches) continue;
+			output.output.push({
+				type: "image",
+				mimeType: matches[1],
+				data: matches[2],
+			} satisfies ImageContent);
 		}
 
 		return output;
@@ -135,9 +178,17 @@ function createClient(
 
 type OpenRouterImagesCreateParams = Omit<ChatCompletionCreateParamsNonStreaming, "modalities"> & {
 	modalities: Array<"image" | "text">;
+	image_config?: {
+		aspect_ratio?: string;
+		image_size?: string;
+	};
 };
 
-function buildParams(model: ImageModel<ImageApi>, context: ImagesContext): OpenRouterImagesCreateParams {
+function buildParams(
+	model: ImageModel<ImageApi>,
+	context: ImagesContext,
+	options?: ImagesOptions,
+): OpenRouterImagesCreateParams {
 	const content: ChatCompletionContentPart[] = context.input.map((item): ChatCompletionContentPart => {
 		if (item.type === "text") {
 			return {
@@ -153,6 +204,11 @@ function buildParams(model: ImageModel<ImageApi>, context: ImagesContext): OpenR
 		} satisfies ChatCompletionContentPartImage;
 	});
 
+	const imageConfig = {
+		...(options?.aspectRatio ? { aspect_ratio: options.aspectRatio } : {}),
+		...(options?.size ? { image_size: options.size } : {}),
+	};
+
 	return {
 		model: model.id,
 		messages: [
@@ -163,6 +219,7 @@ function buildParams(model: ImageModel<ImageApi>, context: ImagesContext): OpenR
 		],
 		stream: false,
 		modalities: model.output.includes("text") ? ["image", "text"] : ["image"],
+		...(Object.keys(imageConfig).length > 0 ? { image_config: imageConfig } : {}),
 	};
 }
 
@@ -197,5 +254,6 @@ function parseUsage(
 		},
 	};
 	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
+	applyOpenRouterReportedCost(usage, rawUsage as typeof rawUsage & OpenRouterUsageAccounting);
 	return usage;
 }

@@ -18,7 +18,10 @@ Add `"$schema": "https://pi.dev/schemas/settings.schema.json"` to `settings.json
 | `enabledModels` | `string[]` | All available models | Model patterns used for startup selection and model cycling. Uses the same format as `--models`. |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in the transcript. |
 | `transcriptDetail` | `"folded"` \| `"compact"` \| `"collapsed"` \| `"expanded"` | `"folded"` | How much of the agent's work the transcript shows. `folded`: each turn folds into rows between the user message and the reply, also while it runs; text the model wrote before it called tools ends a part of the turn and stays visible below that part's row, the response being written shows the last lines of its thinking, and running tool calls show on one line. `compact`: every tool call on one line. `collapsed`: with a preview of its output. `expanded`: with all of it, and other expandable entries open. `app.tools.expand` cycles it in this order and saves the choice. |
-| `showCacheMissNotices` | boolean | `false` | Show notices for significant cache misses, successful cache warming, compaction usage, and provider recovery. |
+| `notices.cacheMisses` | boolean | `false` | Show a notice when a response re-bills a significant part of the prompt cache, such as after a model switch or an idle gap. |
+| `notices.cacheWarming` | boolean | `false` | Show the cost of cache warming requests. |
+| `notices.compactionCosts` | boolean | `false` | Show the cost of compactions and branch summaries. |
+| `notices.reasoningDrops` | boolean | `false` | Show a notice when a provider drops reasoning items from a request, such as OpenAI reasoning items after a prefix mismatch or Anthropic thinking blocks during recovery. |
 | `showTokenUsage` | boolean | `true` | Show what each step added to the context window and what its model call cost, at the right of its first tool row or below a reply, summed on each folded turn's row. Costs are hidden for subscriptions. |
 | `cacheWarming` | `"off" \| "streaming" \| "idle"` | `"idle"` | Keep eligible provider prompt caches warm during active runs and, with `"idle"`, for up to 30 minutes between runs. `"streaming"` warms only during active runs. Global setting only. |
 
@@ -161,11 +164,10 @@ Resource arrays support glob exclusions with `!pattern`, exact inclusion with `+
 
 The built-in extension is named `builtin:llama.cpp` in `extensions`. It loads by default; `-builtin:llama.cpp` disables it. A `+builtin:<name>` or `-builtin:<name>` entry in project settings overrides the user setting. `--no-extensions` disables them too, and `-e builtin:<name>` loads one explicitly.
 
-## Updates, telemetry, and warnings
+## Updates and warnings
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
 | `collapseChangelog` | boolean | `false` | Show a condensed changelog after an update. Also condenses extension package changelogs to one line per package. |
-| `enableInstallTelemetry` | boolean | `true` | Enable anonymous install/update reporting and selected provider attribution headers. Does not control update checks. |
 | `enableAnalytics` | boolean | `false` | Opt in to analytics data sharing. Currently used only by the experimental first-run setup. |
 | `warnings.anthropicExtraUsage` | boolean | `true` | Warn when Anthropic subscription authentication may use paid extra usage. |

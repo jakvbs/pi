@@ -39,8 +39,10 @@ export interface BashResult {
 	cancelled: boolean;
 	/** Whether the output was truncated */
 	truncated: boolean;
-	/** Path to temp file containing full output (if output exceeded truncation threshold) */
+	/** Path to temp file containing full output (if output exceeded truncation threshold and the file could be saved) */
 	fullOutputPath?: string;
+	/** Why the full output could not be saved to a temp file (if output exceeded truncation threshold) */
+	fullOutputError?: string;
 }
 
 // ============================================================================
@@ -60,6 +62,8 @@ export async function executeBashWithOperations(
 	const maxBytes = options?.maxBytes ?? toolOutputBudgetBytes();
 	// Lines are not limited, so output within `maxBytes` is never saved to a file.
 	const output = new OutputAccumulator({ maxBytes, maxLines: Number.MAX_SAFE_INTEGER, tempFilePrefix: "pi-bash" });
+	// Output after the command ended (from processes it left running) is not part of its result.
+	let acceptingOutput = true;
 	const decoder = new TextDecoder();
 	// Unfinished escape sequence at the end of the previous chunk, completed by the next chunk.
 	let pendingAnsi = "";
@@ -75,6 +79,9 @@ export async function executeBashWithOperations(
 	};
 
 	const onData = (data: Buffer) => {
+		if (!acceptingOutput) {
+			return;
+		}
 		const { complete, pending } = splitIncompleteAnsiSuffix(pendingAnsi + decoder.decode(data, { stream: true }));
 		pendingAnsi = pending;
 		appendText(complete);
@@ -92,22 +99,28 @@ export async function executeBashWithOperations(
 	} catch (err) {
 		// An aborted command still returns the output it produced so far
 		if (!options?.signal?.aborted) {
+			acceptingOutput = false;
 			await output.close();
 			throw err;
 		}
 	}
+	// The result is decided when the command ends: closing the file below takes time, and an abort or
+	// output during it must not change the result.
+	acceptingOutput = false;
+	const cancelled = options?.signal?.aborted ?? false;
 
 	flushOutput();
-	const { fullOutputPath } = await output.close();
+	// A file that could not be written leaves the kept start of the output without a path.
+	const { fullOutputFile } = await output.close();
 	const { text, truncation } = headWithin(output.head(), maxBytes);
-	const cancelled = options?.signal?.aborted ?? false;
 
 	return {
 		output: text,
 		exitCode: cancelled ? undefined : (exitCode ?? undefined),
 		cancelled,
 		truncated: truncation.truncated,
-		fullOutputPath,
+		fullOutputPath: fullOutputFile?.kind === "saved" ? fullOutputFile.path : undefined,
+		...(fullOutputFile?.kind === "failed" ? { fullOutputError: fullOutputFile.error } : {}),
 	};
 }
 

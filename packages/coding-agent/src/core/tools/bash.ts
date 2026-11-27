@@ -13,7 +13,7 @@ import {
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
-import { OutputAccumulator } from "./output-accumulator.ts";
+import { OutputAccumulator, type OutputSnapshot } from "./output-accumulator.ts";
 import { limitOutput, toolOutputBudgetBytes } from "./output-limit.ts";
 import { BASH_UPDATE_THROTTLE_MS, createShellRenderers } from "./renderers/bash.ts";
 import { type TypeBoxAgentTool, wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -58,6 +58,9 @@ const bashOutputSchema = Type.Object({
 	output: Type.String({ description: "Combined stdout and stderr, possibly truncated" }),
 	truncated: Type.Boolean(),
 	full_output_path: Type.Optional(Type.String({ description: "Full output, when truncated" })),
+	full_output_error: Type.Optional(
+		Type.String({ description: "Why the full output could not be saved, when truncated and saving failed" }),
+	),
 	exit_code: Type.Number(),
 	wall_time_seconds: Type.Number(),
 });
@@ -67,6 +70,8 @@ export type BashToolOutput = Static<typeof bashOutputSchema>;
 export interface BashToolDetails {
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
+	/** Why the full output could not be saved to a temp file, when it could not. */
+	fullOutputError?: string;
 }
 
 /**
@@ -323,7 +328,7 @@ export function createShellToolDefinition(
 					content: [{ type: "text", text: snapshot.content || "" }],
 					details: {
 						truncation: snapshot.truncation.truncated ? snapshot.truncation : undefined,
-						fullOutputPath: snapshot.fullOutputPath,
+						...outputFileDetails(snapshot),
 					},
 				});
 			};
@@ -368,16 +373,21 @@ export function createShellToolDefinition(
 				return snapshot;
 			};
 
-			/** The output's start and a notice, within `maxBytes`. The accumulator saved longer output to `fullOutputPath`. */
-			const formatOutput = (fullOutputPath: string | undefined, emptyText = "(no output)") => {
+			/**
+			 * The output's start and a notice, within `maxBytes`. The notice names the file the accumulator saved
+			 * longer output to, or says why it could not be saved.
+			 */
+			const formatOutput = (snapshot: OutputSnapshot, emptyText = "(no output)") => {
 				const head = output.head();
+				const file = snapshot.fullOutputFile;
 				const limited = limitOutput(head, maxBytes, {
-					path: fullOutputPath ?? "",
+					path: file?.kind === "saved" ? file.path : "",
+					saveError: file?.kind === "failed" ? file.error : undefined,
 					firstLine: 1,
 					totalLines: head.totalLines,
 				});
 				const details: BashToolDetails | undefined = limited.truncation.truncated
-					? { truncation: limited.truncation, fullOutputPath }
+					? { truncation: limited.truncation, ...outputFileDetails(snapshot) }
 					: undefined;
 				return { text: limited.text || emptyText, details };
 			};
@@ -397,7 +407,7 @@ export function createShellToolDefinition(
 					exitCode = result.exitCode;
 				} catch (err) {
 					const snapshot = await finishOutput();
-					const { text } = formatOutput(snapshot.fullOutputPath, "");
+					const { text } = formatOutput(snapshot, "");
 					if (err instanceof Error && err.message === "aborted") {
 						throw new Error(appendStatus(text, "Command aborted"));
 					}
@@ -415,7 +425,7 @@ export function createShellToolDefinition(
 				}
 
 				const snapshot = await finishOutput();
-				const { text: outputText, details } = formatOutput(snapshot.fullOutputPath);
+				const { text: outputText, details } = formatOutput(snapshot);
 				const fullOutput = await output.readFullOutput(STRUCTURED_OUTPUT_MAX_BYTES);
 				if (exitCode === null) {
 					throw new Error(appendStatus(outputText, "Command terminated without an exit code"));
@@ -424,8 +434,11 @@ export function createShellToolDefinition(
 				const structuredContent: BashToolOutput = {
 					output: fullOutput.content,
 					truncated: fullOutput.truncated,
-					...(fullOutput.truncated && snapshot.fullOutputPath
-						? { full_output_path: snapshot.fullOutputPath }
+					...(fullOutput.truncated && snapshot.fullOutputFile?.kind === "saved"
+						? { full_output_path: snapshot.fullOutputFile.path }
+						: {}),
+					...(fullOutput.truncated && snapshot.fullOutputFile?.kind === "failed"
+						? { full_output_error: snapshot.fullOutputFile.error }
 						: {}),
 					exit_code: exitCode,
 					wall_time_seconds: wallTimeSeconds,
@@ -445,6 +458,13 @@ export function createShellToolDefinition(
 		},
 		...createShellRenderers(config.prompt),
 	};
+}
+
+/** Where a snapshot's full output went: its file, or why it could not be saved. */
+function outputFileDetails(snapshot: OutputSnapshot): Pick<BashToolDetails, "fullOutputPath" | "fullOutputError"> {
+	const file = snapshot.fullOutputFile;
+	if (file === undefined) return {};
+	return file.kind === "saved" ? { fullOutputPath: file.path } : { fullOutputError: file.error };
 }
 
 const bashToolConfig: ShellToolConfig = {
