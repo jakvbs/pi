@@ -62,6 +62,7 @@ import {
 	createBashTool,
 	createBashToolDefinition,
 } from "../src/core/tools/bash.ts";
+import { toolOutputBudgetBytes } from "../src/core/tools/output-limit.ts";
 import type { TruncationResult } from "../src/core/tools/truncate.ts";
 import { BashExecutionComponent } from "../src/modes/interactive/components/bash-execution.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
@@ -301,6 +302,20 @@ describe("user bash executor", () => {
 		const colored = `${"\x1b[31m\x1b[0m".repeat(7000)}done\n`;
 		const result = await executeBashWithOperations("build", tempRoot, printing(colored));
 
+		expect(result.truncated).toBe(false);
+		expect(result.fullOutputError).toBeUndefined();
+	});
+
+	it("reports no failure when the temp file opened for output within the limit", async () => {
+		failOutputFiles("open");
+		// The fork counts bytes after stripping ANSI codes, so the output above opens no temp file. A
+		// byte-order mark still opens one: the executor's decoder drops the first mark, and the second
+		// is counted before the accumulator's decoder drops it. Output of exactly the limit is then 3
+		// bytes over it when the file opens, and not truncated.
+		const text = `${"x".repeat(toolOutputBudgetBytes() - 1)}\n`;
+		const result = await executeBashWithOperations("cat notes.txt", tempRoot, printing(`\uFEFF\uFEFF${text}`));
+
+		expect(result.output).toBe(text);
 		expect(result.truncated).toBe(false);
 		expect(result.fullOutputError).toBeUndefined();
 	});

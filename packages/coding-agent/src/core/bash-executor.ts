@@ -120,7 +120,9 @@ export async function executeBashWithOperations(
 		cancelled,
 		truncated: truncation.truncated,
 		fullOutputPath: fullOutputFile?.kind === "saved" ? fullOutputFile.path : undefined,
-		...(fullOutputFile?.kind === "failed" ? { fullOutputError: fullOutputFile.error } : {}),
+		// The file opens on the bytes appended. A byte-order mark is among them but not in the text, so the
+		// file can open, and fail, for output that turns out not to be truncated; nothing is missing then.
+		...(truncation.truncated && fullOutputFile?.kind === "failed" ? { fullOutputError: fullOutputFile.error } : {}),
 	};
 }
 
