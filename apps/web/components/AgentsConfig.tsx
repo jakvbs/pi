@@ -39,6 +39,7 @@ import {
 import { ModelSelector } from "./ModelSelector";
 import { projectTrustReloadKey } from "./settings-ui-helpers";
 import { readJsonOrThrow } from "@/lib/fetch-json";
+import { errorMessage } from "@/lib/errors";
 
 const TOOL_OPTIONS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const THINKING_OPTIONS = ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -144,10 +145,6 @@ function displayProfilePath(profile: SubagentProfile, cwd: string): string | nul
     : shortenPath(profile.filePath);
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <ConfigField label={label}>{children}</ConfigField>;
-}
-
 function Toggle({ checked, disabled, label, onChange }: { checked: boolean; disabled: boolean; label: string; onChange: (checked: boolean) => void }) {
   return (
     <label style={{ display: "flex", alignItems: "center", gap: 7, color: disabled ? "var(--text-dim)" : "var(--text-muted)", fontSize: 12, cursor: disabled ? "default" : "pointer" }}>
@@ -228,7 +225,7 @@ export function AgentsConfig({
         if (isWritableScope(chosen.scope)) setTargetScope(chosen.scope);
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     } finally {
       setLoading(false);
     }
@@ -254,7 +251,7 @@ export function AgentsConfig({
         if (typeof data.maxConcurrent === "number") setMaxConcurrent(data.maxConcurrent);
       } catch (cause) {
         if (controller.signal.aborted) return;
-        setSettingsError(cause instanceof Error ? cause.message : String(cause));
+        setSettingsError(errorMessage(cause));
       } finally {
         if (!controller.signal.aborted) setSettingsLoading(false);
       }
@@ -284,7 +281,7 @@ export function AgentsConfig({
         setModelsError(data.modelError ?? null);
       } catch (cause) {
         if (controller.signal.aborted) return;
-        setModelsError(cause instanceof Error ? cause.message : String(cause));
+        setModelsError(errorMessage(cause));
       } finally {
         if (!controller.signal.aborted) setModelsLoading(false);
       }
@@ -341,7 +338,7 @@ export function AgentsConfig({
       setSavedOk(true);
       setTimeout(() => setSavedOk(false), 2000);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     } finally {
       setSaving(false);
     }
@@ -361,7 +358,7 @@ export function AgentsConfig({
       await readJsonOrThrow(response);
       await loadProfiles();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     } finally {
       setSaving(false);
     }
@@ -418,7 +415,7 @@ export function AgentsConfig({
       setProfiles((current) => current.map((profile) => profileKey(profile) === profileKey(saved) ? saved : profile));
       setDraft((current) => ({ ...current, enabled: saved.enabled }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     } finally {
       setToggling(false);
     }
@@ -438,7 +435,7 @@ export function AgentsConfig({
       setBuiltInEnabled(data.enabled);
       setReloadNeeded(Boolean(sessionId));
     } catch (cause) {
-      setSettingsError(cause instanceof Error ? cause.message : String(cause));
+      setSettingsError(errorMessage(cause));
     } finally {
       setSettingsSaving(false);
     }
@@ -457,7 +454,7 @@ export function AgentsConfig({
       if (typeof data.maxConcurrent !== "number") throw new Error(`HTTP ${response.status}`);
       setMaxConcurrent(data.maxConcurrent);
     } catch (cause) {
-      setSettingsError(cause instanceof Error ? cause.message : String(cause));
+      setSettingsError(errorMessage(cause));
     }
   };
 
@@ -470,7 +467,7 @@ export function AgentsConfig({
       setReloadNeeded(false);
       onReloaded?.();
     } catch (cause) {
-      setSettingsError(cause instanceof Error ? cause.message : String(cause));
+      setSettingsError(errorMessage(cause));
     } finally {
       setReloading(false);
     }
@@ -589,7 +586,7 @@ export function AgentsConfig({
                   </ConfigDetailHeader>
 
                   <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(0, 1fr)", gap: 12 }}>
-                    <Field label={t("agents.name")}>
+                    <ConfigField label={t("agents.name")}>
                       {creating ? (
                         <input aria-label={t("agents.name")} value={draft.name} disabled={disabled} onChange={(event) => update("name", event.target.value)} style={inputStyle} />
                       ) : (
@@ -597,28 +594,28 @@ export function AgentsConfig({
                           {draft.name}
                         </code>
                       )}
-                    </Field>
-                    <Field label={t("agents.displayName")}>
+                    </ConfigField>
+                    <ConfigField label={t("agents.displayName")}>
                       <input aria-label={t("agents.displayName")} value={draft.displayName} disabled={disabled} onChange={(event) => update("displayName", event.target.value)} style={controlStyle} />
-                    </Field>
+                    </ConfigField>
                   </div>
-                  <Field label={t("agents.description")}>
+                  <ConfigField label={t("agents.description")}>
                     <input aria-label={t("agents.description")} value={draft.description} disabled={disabled} onChange={(event) => update("description", event.target.value)} style={controlStyle} />
-                  </Field>
-                  <Field label={t("agents.prompt")}>
+                  </ConfigField>
+                  <ConfigField label={t("agents.prompt")}>
                     <textarea className="agents-system-prompt" aria-label={t("agents.prompt")} value={draft.systemPrompt} disabled={disabled} onChange={(event) => update("systemPrompt", event.target.value)} style={{ ...controlStyle, height: 195, minHeight: 195, maxHeight: "60vh", padding: 9, overflow: "auto", resize: disabled ? "none" : "vertical", lineHeight: 1.5 }} />
-                  </Field>
+                  </ConfigField>
 
-                  <Field label={t("agents.tools")}>
+                  <ConfigField label={t("agents.tools")}>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px" }}>
                       {/* `powershell` gets a switch only when the profile names it, so it can be turned off. */}
                       {[...TOOL_OPTIONS, ...draft.tools.filter((tool) => tool === "powershell")].map((tool) => (
                         <Toggle key={tool} label={tool} disabled={disabled} checked={draft.tools.includes(tool)} onChange={(checked) => update("tools", checked ? [...draft.tools, tool] : draft.tools.filter((item) => item !== tool))} />
                       ))}
                     </div>
-                  </Field>
+                  </ConfigField>
 
-                  <Field label={t("agents.resources")}>
+                  <ConfigField label={t("agents.resources")}>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 20px" }}>
                       <Toggle label={t("agents.loadSkills")} disabled={disabled} checked={draft.loadSkills} onChange={(checked) => update("loadSkills", checked)} />
                       <Toggle label={t("agents.loadExtensions")} disabled={disabled} checked={draft.loadExtensions} onChange={(checked) => update("loadExtensions", checked)} />
@@ -638,10 +635,10 @@ export function AgentsConfig({
                           : t("agents.extensionsNone")}
                       </span>
                     )}
-                  </Field>
+                  </ConfigField>
 
                   <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1.5fr) minmax(120px, 0.75fr) minmax(100px, 0.5fr)", gap: 12 }}>
-                    <Field label={t("agents.model")}>
+                    <ConfigField label={t("agents.model")}>
                       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                         <ModelSelector
                           options={modelSelectorOptions}
@@ -659,15 +656,15 @@ export function AgentsConfig({
                         />
                         {modelsError && <span style={{ color: "#ef4444", fontSize: 10 }}>{modelsError}</span>}
                       </div>
-                    </Field>
-                    <Field label={t("agents.thinking")}>
+                    </ConfigField>
+                    <ConfigField label={t("agents.thinking")}>
                       <select aria-label={t("agents.thinking")} value={draft.thinking ?? ""} disabled={disabled} onChange={(event) => update("thinking", (event.target.value || undefined) as EditableProfile["thinking"])} style={controlStyle}>
                         {THINKING_OPTIONS.map((value) => <option key={value || "default"} value={value}>{value || t("agents.inherit")}</option>)}
                       </select>
-                    </Field>
-                    <Field label={t("agents.maxTurns")}>
+                    </ConfigField>
+                    <ConfigField label={t("agents.maxTurns")}>
                       <input aria-label={t("agents.maxTurns")} type="number" min={1} value={draft.maxTurns ?? ""} disabled={disabled} onChange={(event) => update("maxTurns", event.target.value ? Number(event.target.value) : undefined)} style={controlStyle} />
-                    </Field>
+                    </ConfigField>
                   </div>
 
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "10px 20px" }}>

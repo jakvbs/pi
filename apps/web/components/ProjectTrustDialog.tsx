@@ -10,6 +10,7 @@ import type {
 } from "@/lib/api-types";
 import { revealHiddenCharacters } from "@/lib/hidden-characters";
 import { openStackedDialog } from "@/lib/stacked-dialog";
+import { errorMessage } from "@/lib/errors";
 
 /** How long the dialog waits for the folder's fresh trust status before it stops holding Trust back. */
 export const TRUST_STATUS_TIMEOUT_MS = 10_000;
@@ -28,10 +29,6 @@ export type ProjectTrustDialogStatus =
 
 const STATUS_ID = "project-trust-status";
 const NOTICE_ID = "project-trust-notice";
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function trustStatusFrom(data: ProjectTrustResponse): ProjectTrustStatus {
   const status: ProjectTrustStatus = {

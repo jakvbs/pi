@@ -1,22 +1,11 @@
-import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
 import {
   hasTrustRequiringProjectResources,
   ProjectTrustStore,
   type ProjectTrustStoreEntry,
 } from "@earendil-works/pi-coding-agent";
 import type { ProjectTrustStatus } from "./api-types";
-import { samePath } from "./paths";
-
-/** The folder as `trust.json` keys it: resolved, then its real path when it exists. */
-function trustKeyPath(cwd: string): string {
-  const resolved = resolve(cwd);
-  try {
-    return realpathSync(resolved);
-  } catch {
-    return resolved;
-  }
-}
+import { realPathOrResolved, samePath } from "./paths";
+import { errorMessage } from "./errors";
 
 function describeDecision(
   cwd: string,
@@ -26,7 +15,7 @@ function describeDecision(
   return {
     decision: entry.decision,
     decisionPath: entry.path,
-    inherited: !samePath(entry.path, trustKeyPath(cwd)),
+    inherited: !samePath(entry.path, realPathOrResolved(cwd)),
   };
 }
 
@@ -57,7 +46,7 @@ export function getProjectTrustStatus(cwd: string, agentDir: string): ProjectTru
         trusted: true,
         decision: null,
         inherited: false,
-        decisionError: error instanceof Error ? error.message : String(error),
+        decisionError: errorMessage(error),
       };
     }
   }
@@ -78,7 +67,7 @@ export function trustProject(cwd: string, agentDir: string): ProjectTrustStatus 
   // Built from what was just written, not read back: a second read can fail
   // (the lock held past the store's wait), and the route would then report a
   // decision already on disk as a failure and skip rebuilding the cwd's wrappers.
-  return { requiresTrust: true, trusted: true, decision: true, decisionPath: trustKeyPath(cwd), inherited: false };
+  return { requiresTrust: true, trusted: true, decision: true, decisionPath: realPathOrResolved(cwd), inherited: false };
 }
 
 /**

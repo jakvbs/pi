@@ -1,7 +1,7 @@
 [upstream]
 	url = https://github.com/agegr/pi-web
 	branch = main
-	commit = 432366bd510c72ce7b678a6cb1220f9cac1ed56c
+	commit = 7b77aa1a01a74597280dd5bbc9221195411bddf4
 	exclude = .github
 	exclude = demo
 	exclude = e2e
@@ -54,3 +54,4 @@
 	exclude = lib/plugin-updates*
 	exclude = app/api/sessions/*/export
 	exclude = app/api/sessions/export-route.test.mjs
+	exclude = lib/subagent-package-scope.integration.test.mjs

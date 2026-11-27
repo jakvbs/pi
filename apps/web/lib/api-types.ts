@@ -10,6 +10,12 @@ export interface SubagentSettingsResponse {
   maxConcurrent: number;
 }
 
+export interface HttpProxySettingsResponse {
+  enabled: boolean;
+  displayAddress: string | null;
+  sources: { http: string; https: string };
+}
+
 export interface ToolSettingsResponse {
   isWindows: boolean;
   powerShellEnabled: boolean;

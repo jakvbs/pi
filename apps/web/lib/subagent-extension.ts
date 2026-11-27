@@ -17,6 +17,7 @@ import { MAX_SUBAGENT_INPUT_BYTES, MAX_SUBAGENT_INPUT_FILES } from "./subagent-i
 import { agentModelDescription, LEVELS_TEXT, parseThinkingLevel, referenceInScope } from "./subagent-model-scope";
 import { subagentRolesText } from "./subagent-roles";
 import { worktreeHasUncommittedFiles } from "./worktree";
+import { errorMessage } from "./errors";
 
 export const HOST_SUBAGENT_EXTENSION_NAME = "pi-web-subagents";
 const HOST_SUBAGENT_EXTENSION_PATH = `<inline:${HOST_SUBAGENT_EXTENSION_NAME}>`;
@@ -466,7 +467,7 @@ export function createSubagentExtension(
             };
           } catch (error) {
             return {
-              content: [{ type: "text", text: withSubagentCandidates(error instanceof Error ? error.message : String(error), ctx?.sessionManager) }],
+              content: [{ type: "text", text: withSubagentCandidates(errorMessage(error), ctx?.sessionManager) }],
               details: undefined,
               isError: true,
             };
@@ -553,7 +554,7 @@ export function createSubagentExtension(
             await runtime.steer(params.agent_id, params.message ?? "");
             return { content: [{ type: "text", text: `Steering message sent to ${params.agent_id}.` }], details: undefined };
           } catch (error) {
-            return { content: [{ type: "text", text: withSubagentCandidates(error instanceof Error ? error.message : String(error), ctx?.sessionManager) }], details: undefined, isError: true };
+            return { content: [{ type: "text", text: withSubagentCandidates(errorMessage(error), ctx?.sessionManager) }], details: undefined, isError: true };
           }
         },
       }));
