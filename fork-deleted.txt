@@ -199,3 +199,10 @@ packages/coding-agent/test/theme-export.test.ts
 # commands/ to prompts/, keybindings.json names, tools/ to bin/) and the deprecated hooks/ and tools/ prompt.
 # Session-file format migrations in session-manager stay; old keybinding names still load in memory.
 packages/coding-agent/src/migrations.ts
+
+# TUI easter eggs: /arminsayshi, /dementedelves (with its image) and the 3D pi logo on a header logo click.
+packages/coding-agent/src/modes/interactive/assets/clankolas.png
+packages/coding-agent/src/modes/interactive/components/armin.ts
+packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts
+packages/coding-agent/src/modes/interactive/components/easter-egg-3d.lazy.ts
+packages/coding-agent/src/modes/interactive/components/easter-egg-3d.ts
