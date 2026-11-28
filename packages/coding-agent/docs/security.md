@@ -20,8 +20,6 @@ The working folder controls resource discovery and the default location for tool
 
 Whichever option you choose, only provide the files and services required for the task. Keep credentials outside the environment where possible, or use narrowly scoped, short-lived credentials. Restrict network access when commands do not need it.
 
-For setup instructions and the limitations of each isolation method, see [Run Pi in an isolated environment](containerization.md).
-
 <a id="project-trust"></a>
 
 ## Understand project trust
@@ -72,7 +70,7 @@ Use `/trust` to save a decision for future Pi processes.
 
 ### Project trust without an interactive prompt
 
-Print, JSON, and RPC modes cannot show the built-in trust prompt. If no command-line override, extension, or saved decision applies:
+Print mode and SDK hosts cannot show the built-in trust prompt. If no command-line override, extension, or saved decision applies:
 
 - `defaultProjectTrust: "always"` loads protected project resources.
 - `defaultProjectTrust: "ask"` or `"never"` skips them.

@@ -40,18 +40,6 @@
               "path": "security.md"
             },
             {
-              "title": "Isolate Pi",
-              "path": "containerization.md"
-            },
-            {
-              "title": "Run Local Models",
-              "path": "llama-cpp.md"
-            },
-            {
-              "title": "Run Local Models on NVIDIA RTX",
-              "path": "nvidia-rtx-llama-cpp.md"
-            },
-            {
               "title": "Configure Your Terminal",
               "path": "terminal-setup.md"
             },
@@ -62,14 +50,6 @@
             {
               "title": "Run Pi in tmux",
               "path": "tmux.md"
-            },
-            {
-              "title": "Run Pi on Windows",
-              "path": "windows.md"
-            },
-            {
-              "title": "Run Pi on Android",
-              "path": "termux.md"
             }
           ]
         },

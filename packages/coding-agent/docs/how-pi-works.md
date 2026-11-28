@@ -32,9 +32,7 @@ Model context is reconstructed from the active branch. Compaction inserts a summ
 
 ## Interfaces
 
-Interactive mode renders session and agent events in the terminal. Print mode runs a prompt and writes the final response. JSON mode writes agent events as JSONL.
-
-RPC mode accepts JSONL commands on stdin and writes responses and events to stdout. The TypeScript SDK creates and controls agent sessions in process.
+Interactive mode renders session and agent events in the terminal. Print mode runs a prompt and writes the final response. The TypeScript SDK creates and controls agent sessions in process.
 
 All interfaces use the same agent and session mechanisms.
 

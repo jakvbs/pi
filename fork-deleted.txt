@@ -206,3 +206,11 @@ packages/coding-agent/src/modes/interactive/components/armin.ts
 packages/coding-agent/src/modes/interactive/components/earendil-announcement.ts
 packages/coding-agent/src/modes/interactive/components/easter-egg-3d.lazy.ts
 packages/coding-agent/src/modes/interactive/components/easter-egg-3d.ts
+
+# Docs of setups the fork does not use: native Windows, Termux, containers, local llama.cpp servers (the built-in
+# llama.cpp extension stays; its code links none of these pages).
+packages/coding-agent/docs/containerization.md
+packages/coding-agent/docs/llama-cpp.md
+packages/coding-agent/docs/nvidia-rtx-llama-cpp.md
+packages/coding-agent/docs/termux.md
+packages/coding-agent/docs/windows.md
