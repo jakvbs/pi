@@ -72,12 +72,10 @@ test("the brand is a button named for what its click shows, with the brand's tex
   const pi = process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0";
   assert.equal(html, `<button type="button" class="sidebar-brand" aria-label="Pi Web, versions: web ${app}, pi ${pi}">Pi Web</button>`);
   assert.doesNotMatch(html, /style=/, "no inline styles: its look is app/sidebar.css's");
-  // In every language, with the visible name in it.
-  for (const locale of ["en", "zh-CN", "zh-TW"]) {
-    const label = getLocalePlugin(locale).messages["sidebar.brandLabel"];
-    assert.ok(label?.startsWith("Pi Web"), `${locale}: ${label}`);
-    assert.match(label, /\{app\}[\s\S]*\{pi\}/);
-  }
+  // With the visible name in it.
+  const label = getLocalePlugin("en").messages["sidebar.brandLabel"];
+  assert.ok(label?.startsWith("Pi Web"), label);
+  assert.match(label, /\{app\}[\s\S]*\{pi\}/);
 });
 
 test("the brand's text sits in the chevron column and is never cut", async () => {

@@ -55,3 +55,6 @@
 	exclude = app/api/sessions/*/export
 	exclude = app/api/sessions/export-route.test.mjs
 	exclude = lib/subagent-package-scope.integration.test.mjs
+	exclude = lib/i18n/messages/zh-CN.ts
+	exclude = lib/i18n/messages/zh-TW.ts
+	exclude = docs/i18n.md

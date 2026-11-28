@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createJiti } from "jiti";
 import { enLocale } from "./i18n/messages/en.ts";
-import { zhCNLocale } from "./i18n/messages/zh-CN.ts";
-import { zhTWLocale } from "./i18n/messages/zh-TW.ts";
 
 // Through jiti: the module imports values of other modules without extensions.
 const jiti = createJiti(import.meta.url);
@@ -71,16 +69,8 @@ test("every saved session opens in a new tab, enabled, just before Delete and ne
     const ids = sessionMenuEntries(context, { ...idle, transient: true }).map((entry) => entry.id);
     assert.ok(!ids.includes("open-new-tab"));
   }
-  for (const locale of [enLocale, zhCNLocale, zhTWLocale]) {
-    assert.equal(typeof locale.messages["sidebar.openInNewTab"], "string", `${locale.id} has the label`);
-    assert.equal(typeof locale.messages["sidebar.insertIntoChat"], "string", `${locale.id} has the insert label`);
-  }
   assert.equal(enLocale.messages["sidebar.openInNewTab"], "Open in new tab");
-  assert.equal(zhCNLocale.messages["sidebar.openInNewTab"], "在新标签页打开");
-  assert.equal(zhTWLocale.messages["sidebar.openInNewTab"], "在新分頁開啟");
   assert.equal(enLocale.messages["sidebar.insertIntoChat"], "Insert into chat");
-  assert.equal(zhCNLocale.messages["sidebar.insertIntoChat"], "插入到对话");
-  assert.equal(zhTWLocale.messages["sidebar.insertIntoChat"], "插入到對話");
 });
 
 test("a transient session offers nothing that needs its file", () => {
@@ -125,10 +115,8 @@ test("New worktree on a branch checked out elsewhere names that checkout, anythi
   });
   assert.deepEqual(worktreeCreateFailure({ error: "fatal: 'a..b' is not a valid branch name" }, 400), { error: "fatal: 'a..b' is not a valid branch name" });
   assert.deepEqual(worktreeCreateFailure({}, 502), { error: "HTTP 502" });
-  for (const locale of [enLocale, zhCNLocale, zhTWLocale]) {
-    assert.match(locale.messages["sidebar.worktreeBranchInUse"], /\{branch\}.*\{path\}/);
-    assert.match(locale.messages["sidebar.worktreeBranchMissing"], /\{branch\}.*\{path\}.*git worktree prune/);
-  }
+  assert.match(enLocale.messages["sidebar.worktreeBranchInUse"], /\{branch\}.*\{path\}/);
+  assert.match(enLocale.messages["sidebar.worktreeBranchMissing"], /\{branch\}.*\{path\}.*git worktree prune/);
 });
 
 test("a group menu offers Rename… always and Reset name only while the project has a name of its own", () => {

@@ -6,9 +6,8 @@ const jiti = createJiti(import.meta.url);
 const { formatActiveDuration, formatCompactCount, formatCostShort, formatSessionSummary } = await jiti.import("./session-stats-format.ts");
 const { translateMessage } = await jiti.import("./i18n/format.ts");
 const { getLocalePlugin } = await jiti.import("./i18n/registry.ts");
-const messages = Object.fromEntries(["en", "zh-CN", "zh-TW"].map((locale) => [locale, getLocalePlugin(locale).messages]));
-const translate = (locale) => (key, params) => translateMessage(locale, key, messages, params);
-const t = translate("en");
+const messages = { en: getLocalePlugin("en").messages };
+const t = (key, params) => translateMessage("en", key, messages, params);
 
 test("a tab's /session says what the popover's first lines say", () => {
   assert.equal(formatSessionSummary({ totalMessages: 4, tokens: { total: 18_400 }, cost: 0.12 }, t), "4 messages · 18k tokens · $0.12");
@@ -16,12 +15,9 @@ test("a tab's /session says what the popover's first lines say", () => {
   assert.equal(formatSessionSummary(null, t), "No usage yet");
 });
 
-test("a tab's /session follows the locale for usage and the empty state", () => {
+test("a tab's /session rounds a small cost up and counts one message", () => {
   const stats = { totalMessages: 4, tokens: { total: 18_400 }, cost: 0.004 };
-  assert.equal(formatSessionSummary(stats, translate("zh-CN")), "4 条消息 · 18k Token · <$0.01");
-  assert.equal(formatSessionSummary(stats, translate("zh-TW")), "4 則訊息 · 18k Token · <$0.01");
-  assert.equal(formatSessionSummary(null, translate("zh-CN")), "暂无用量");
-  assert.equal(formatSessionSummary(null, translate("zh-TW")), "暫無用量");
+  assert.equal(formatSessionSummary(stats, t), "4 messages · 18k tokens · <$0.01");
   assert.equal(formatSessionSummary({ ...stats, totalMessages: 1, cost: 0 }, t), "1 message · 18k tokens");
 });
 

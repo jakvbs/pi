@@ -39,6 +39,7 @@ const SUB_EN = {
   keys: { p256dh: "p256dh-en", auth: "auth-en" },
   locale: "en",
 };
+// A subscription saved while pi-web still shipped a Chinese locale.
 const SUB_ZH = {
   endpoint: "https://push.example.com/zh",
   keys: { p256dh: "p256dh-zh", auth: "auth-zh" },
@@ -88,7 +89,7 @@ test("addSubscription persists even after getVapidPublicKey already saved", () =
   assert.equal(getSaved().subscriptions.length, 1);
 });
 
-test("notifySessionComplete sends localized payloads with the session name", async () => {
+test("notifySessionComplete sends English payloads with the session name, also to a dropped locale", async () => {
   const { notifier, sent } = makeEnvironment();
   notifier.addSubscription(SUB_EN);
   notifier.addSubscription(SUB_ZH);
@@ -106,21 +107,21 @@ test("notifySessionComplete sends localized payloads with the session name", asy
   });
   assert.deepEqual(JSON.parse(zh.payload), {
     title: "My session",
-    body: "任务已完成。",
+    body: "Task finished.",
     url: "/?session=session-1",
     tag: "pi-session-complete:session-1",
   });
 });
 
-test("notifySessionComplete falls back to the localized generic title", async () => {
+test("notifySessionComplete falls back to the generic title", async () => {
   const { notifier, sent } = makeEnvironment();
   notifier.addSubscription(SUB_ZH);
 
   await notifier.notifySessionComplete("unknown-session");
 
   assert.deepEqual(JSON.parse(sent[0].payload), {
-    title: "任务完成",
-    body: "任务已完成。",
+    title: "Session complete",
+    body: "Task finished.",
     url: "/?session=unknown-session",
     tag: "pi-session-complete:unknown-session",
   });
@@ -141,9 +142,8 @@ test("notifySessionComplete prunes subscriptions dropped by the push service", a
 });
 
 test("localeText falls back to English for unknown locales", () => {
-  assert.equal(localeText("zh-TW", "taskFinished"), "任務已完成。");
-  assert.equal(localeText("zh-TW", "sessionComplete"), "工作階段已完成");
-  assert.equal(localeText("zh-CN", "taskFinished"), "任务已完成。");
+  assert.equal(localeText("zh-TW", "sessionComplete"), "Session complete");
+  assert.equal(localeText("zh-CN", "taskFinished"), "Task finished.");
   assert.equal(localeText("ja", "taskFinished"), "Task finished.");
   assert.equal(localeText("en", "sessionComplete"), "Session complete");
 });

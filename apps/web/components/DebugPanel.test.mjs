@@ -14,7 +14,6 @@ const { DebugPanelView } = await jiti.import("./DebugPanel.tsx");
 const { EMPTY_DEBUG_SERVER_READING } = await jiti.import("./debug-panel-state.ts");
 const { focusIfLost } = await jiti.import("@/lib/stacked-dialog.ts");
 const { enLocale } = await jiti.import("@/lib/i18n/messages/en.ts");
-const { zhCNLocale } = await jiti.import("@/lib/i18n/messages/zh-CN.ts");
 const { interpolateMessage } = await jiti.import("@/lib/i18n/format.ts");
 const panelSource = await readFile(new URL("./DebugPanel.tsx", import.meta.url), "utf8");
 const shellSource = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
@@ -449,12 +448,6 @@ test("the meter's slots say what holds them: SSE, File, Term; a connecting one d
   ]);
   assert.match(meter, /title="Terminal · app · connecting · opened 1× · 0 errors · 30s ago">Term</);
   assert.match(panelSource, /\.debug-slot\.is-empty \{\s*border: 1px dotted var\(--border\);/);
-  // The words follow the language; "SSE" stays as it is.
-  const zh = (key, params) => interpolateMessage(zhCNLocale.messages[key], params);
-  const zhHtml = render({ page: page({ sources }), t: zh });
-  const zhFrom = zhHtml.indexOf('<span class="debug-meter"');
-  const zhMeter = zhHtml.slice(zhFrom, zhHtml.indexOf("</div>", zhFrom));
-  assert.deepEqual([...zhMeter.matchAll(/class="debug-badge[^"]*"[^>]*>([^<]*)</g)].map((match) => match[1]), ["SSE", "SSE", "文件", "终端"]);
 });
 
 test("sessions on the server: grouped by project, the chat's first and not repeated, subagents under their root", () => {
@@ -616,9 +609,8 @@ test("the sparklines draw the poll samples against the 5 s timeout", () => {
   });
   const labels = ariaLabels(html);
   assert.ok(labels.includes("3 answers · median 41 ms · max 1s"), labels.join("\n"));
-  // The values line up on the right, in ms in every language.
+  // The values line up on the right, in ms.
   assert.match(panelSource, /\.debug-measures > \.debug-value \{\s*justify-self: end;\s*text-align: right;/);
-  assert.equal(zhCNLocale.messages["debug.duration.ms"], "{count} ms");
   assert.ok(labels.includes("40 polls · 1 failed · not yet"));
   // A faint baseline under the bars, the chart's full width: a few short answers are no dashed line.
   assert.match(html, /<svg width="120" height="15" viewBox="0 0 120 15" aria-hidden="true"><rect x="0" y="14" width="120" height="1" style="fill:var\(--border\)"><\/rect><rect class="is-dim"/);

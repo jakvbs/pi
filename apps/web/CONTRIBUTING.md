@@ -1,7 +1,5 @@
 # Contributing to Pi Web
 
-[中文](./docs/CONTRIBUTING.zh-CN.md)
-
 Pi Web is a light web front end for the [pi coding agent](https://github.com/earendil-works/pi). It reads and writes the same agent directory as the pi CLI and runs sessions through pi's SDK. Most declined pull requests are well built but fall outside that scope, so please read this page before starting on a feature.
 
 ## What Pi Web is for
@@ -43,7 +41,7 @@ These are declined however well they are implemented:
 - **Keep it to one change per pull request.** Split unrelated fixes into separate ones.
 - **For a bug fix, explain how to reproduce it** on `main` and why the change fixes the cause.
 - **Run the checks:** `npm test`, `node_modules/.bin/tsc --noEmit`, and `npm run lint`. Do not run `next build` during development (see [AGENTS.md](./AGENTS.md)).
-- **Translate new UI text.** Add every new string in `en`, `zh-CN` and `zh-TW` ([Internationalization](./docs/i18n.md)).
+- **Put new UI text in `lib/i18n/messages/en.ts`** and read it through `useI18n()`'s `t()`.
 - **Read the relevant topic notes.** [AGENTS.md](./AGENTS.md) maps each area of the code to a note in `docs/agents/`. Read the notes for every file you change.
 - **Avoid new runtime dependencies.** If one is needed, say why.
 

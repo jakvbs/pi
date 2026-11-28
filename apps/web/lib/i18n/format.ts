@@ -78,8 +78,6 @@ export function formatUpdatedTime(timestamp: number, locale: Locale, now = new D
 
 const SHORT_TIME_UNITS: Record<Locale, { now: string; minute: string; hour: string; day: string; week: string; month: string; year: string }> = {
   en: { now: "now", minute: "m", hour: "h", day: "d", week: "w", month: "mo", year: "y" },
-  "zh-CN": { now: "刚刚", minute: "分", hour: "小时", day: "天", week: "周", month: "个月", year: "年" },
-  "zh-TW": { now: "剛剛", minute: "分", hour: "小時", day: "天", week: "週", month: "個月", year: "年" },
 };
 
 /**
