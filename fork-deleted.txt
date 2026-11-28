@@ -194,3 +194,8 @@ packages/coding-agent/src/core/export-html
 packages/coding-agent/test/export-html-*.test.ts
 packages/coding-agent/test/suite/regressions/5596-missing-theme-export.test.ts
 packages/coding-agent/test/theme-export.test.ts
+
+# Startup migrations of pre-1.0 layouts (oauth.json and settings apiKeys to auth.json, sessions in the agent root,
+# commands/ to prompts/, keybindings.json names, tools/ to bin/) and the deprecated hooks/ and tools/ prompt.
+# Session-file format migrations in session-manager stay; old keybinding names still load in memory.
+packages/coding-agent/src/migrations.ts
